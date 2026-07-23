@@ -54,6 +54,12 @@ export function createFieldworkExecutionIdentity(binding: FieldworkRuntimeBindin
         maxTokensPerAttempt: binding.maxTokensPerAttempt,
       }),
     },
+    providerOperations: {
+      concurrency: binding.concurrency ?? 1,
+      ...(binding.maxProviderCalls === undefined ? {} : {
+        maxProviderCalls: binding.maxProviderCalls,
+      }),
+    },
     minimumStructuredToolsFidelity: minimumFidelity,
     maxOutputTokens,
   };
@@ -137,6 +143,7 @@ export function createFieldworkRuntimeSession(
     onReceipt: (receipt) => {
       if (receipts.length >= MAX_RUNTIME_RECEIPTS) throw new Error("Fieldwork runtime receipt limit reached");
       receipts.push(receipt);
+      receipts.sort((left, right) => receiptSequence(left) - receiptSequence(right));
     },
   });
   const execution: FieldworkStoredExecution = { identity, receipts };
@@ -145,6 +152,11 @@ export function createFieldworkRuntimeSession(
     provider: createRelayExtractionProvider({ runtime, maxTokens: maxOutputTokens }),
     execution,
   };
+}
+
+function receiptSequence(receipt: DispatchReceipt): number {
+  const match = /^invoke-(\d+)-/.exec(receipt.authorization?.invocationId ?? "");
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 function remainingBudget(budget: FieldworkRuntimeBudget, receipts: readonly DispatchReceipt[]): ExecutionBudget {

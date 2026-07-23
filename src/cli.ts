@@ -71,11 +71,15 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
     ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
   };
   const maxOutputTokens = positiveInteger(args, "--max-output-tokens", 2_048);
+  const concurrency = positiveInteger(args, "--concurrency", 1);
+  const maxProviderCalls = optionalPositiveInteger(args, "--max-provider-calls");
   if (datumRole) {
     return createDatumRuntimeBinding({
       role: datumRole,
       budget,
       maxOutputTokens,
+      concurrency,
+      ...(maxProviderCalls === undefined ? {} : { maxProviderCalls }),
       ...(maxTokensPerAttempt === undefined ? {} : { maxTokensPerAttempt }),
       estimatedUsdPer1kTokens: estimatedUsdPer1kTokens!,
       resolve: { cwd: process.cwd() },
@@ -87,6 +91,8 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
     role: flag(args, "--role") ?? "fieldwork-extraction",
     budget,
     maxOutputTokens,
+    concurrency,
+    ...(maxProviderCalls === undefined ? {} : { maxProviderCalls }),
     ...(maxTokensPerAttempt === undefined ? {} : { maxTokensPerAttempt }),
     cwd: process.cwd(),
     ...(allowPrompted ? {

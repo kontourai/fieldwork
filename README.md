@@ -33,7 +33,8 @@ npm exec -- fieldwork run --task task.json --source source.txt --runtime claude-
 
 # Ordered local fallback:
 npm exec -- fieldwork run --task task.json --source source.txt \
-  --runtime codex:gpt-5 --runtime claude-code:sonnet --max-attempts 4 --json
+  --runtime codex:gpt-5 --runtime claude-code:sonnet \
+  --max-attempts 4 --concurrency 2 --max-provider-calls 8 --json
 
 # OpenCode exposes prompted rather than native schema enforcement, so opt in:
 npm exec -- fieldwork run --task task.json --source source.txt \
@@ -54,6 +55,8 @@ Relay owns invocation portability, Dispatch owns ordered fallback and durable au
 
 Portable Dispatch receipts are stored in `run.json`; they retain candidate, model-runtime, capability fidelity, usage, failure category, reservation state, and estimated-cost evidence without request content, credentials, raw diagnostics, or the machine-local ledger path. Provider-reported and estimated costs remain distinct. Elapsed time remains a per-session measured limit rather than durable capacity.
 
+`--concurrency` bounds chunk-level invocations in flight; completed chunks are normalized back into source order, and stored receipts are ordered by deterministic invocation sequence rather than scheduler completion. `--max-provider-calls` stops later Traverse provider operations while retaining already grounded results as a typed partial result. One such operation can still use multiple Dispatch fallback attempts, so durable `--max-attempts` is the model-launch ceiling. Cancellation likewise retains completed work. A failed chunk is preserved as a classified provider failure while successful chunks remain reviewable. Relay-backed execution currently performs one Dispatch invocation per chunk; Fieldwork does not label concurrent calls as provider-native batching.
+
 ## Examples
 
 - `examples/vendor-obligations`: extracts an agreement obligation and deadline for a vendor-management follow-up.
@@ -71,7 +74,9 @@ Each is verified through the same `run → Survey events → reviewed export` co
 
 The separate `conformance/long-input` tier deterministically assembles a 25,018-character source from a compact checked-in specification. Its independent oracle proves three default Traverse chunk calls, one deduplicated proposal in the overlap region, a late-document proposal, exact full-prepared-text locators, Survey review, and grounded export. Run it with `npm run test:conformance`.
 
-The corpus still covers one prepared source per run. It does not prove multiple-source batching, format-native PDF/image/transcript inspection, live-provider quality, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
+The provider conformance tier additionally proves two-call bounded concurrency, out-of-order completion with source-ordered proposals and invocation-ordered receipts, exact locators across three chunks, classified partial provider failure with conservative reservation, physical-call ceilings, and cancellation before launch. These are deterministic mechanics tests, not live-provider quality evidence.
+
+The corpus still covers one prepared source per run. It does not prove multiple-source or provider-native batching, format-native PDF/image/transcript inspection, live-provider quality, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
 
 ## Boundaries
 

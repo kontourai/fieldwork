@@ -12,6 +12,7 @@ export interface RunOptions {
   readonly sourcePath: string;
   readonly root?: string;
   readonly runtime?: FieldworkRuntimeBinding;
+  readonly signal?: AbortSignal;
 }
 export interface FieldworkRunResult {
   readonly apiVersion: "fieldwork.kontourai.io/v1";
