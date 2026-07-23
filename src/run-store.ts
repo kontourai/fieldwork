@@ -8,6 +8,7 @@ import type { ReviewSessionEvent } from "@kontourai/survey";
 import { z } from "zod";
 import { FIELDWORK_LIMITS, fieldworkTaskSchema, type FieldworkTask } from "./contracts.js";
 import { parsePersistedReview, persistedReviewEventSchema, persistedReviewSnapshotSchema } from "./survey-persistence.js";
+import { fieldworkStoredExecutionSchema, type FieldworkStoredExecution } from "./runtime-contracts.js";
 
 export interface StoredRun {
   schemaVersion: 1;
@@ -15,6 +16,7 @@ export interface StoredRun {
   createdAt: string;
   taskName: string;
   task: FieldworkTask;
+  execution: FieldworkStoredExecution;
   preparedArtifact: { ref: string; digest: string; contentLength: number; file: "prepared.txt" };
   envelopeFile: "extraction-envelope.json";
   review: { snapshot: ReviewQueueSessionState; events: ReviewSessionEvent[]; revision: number };
@@ -26,6 +28,7 @@ export const storedRunSchema = z.object({
   createdAt: z.string().datetime(),
   taskName: z.string().max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
   task: fieldworkTaskSchema,
+  execution: fieldworkStoredExecutionSchema,
   preparedArtifact: z.object({
     ref: z.string().max(FIELDWORK_LIMITS.string),
     digest: z.string().regex(/^[a-f0-9]{64}$/),

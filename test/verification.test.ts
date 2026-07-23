@@ -7,6 +7,7 @@ test("Veritas evidence invokes the non-recursive static gate", async () => {
   assert.equal(map.evidence.evidenceChecks[0].command, "npm run verify:static");
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const staticGate = packageJson.scripts["verify:static"];
+  assert.match(packageJson.scripts.build, /npm run clean/);
   assert.doesNotMatch(staticGate, /check:veritas/);
   const buildIndex = staticGate.indexOf("npm run build");
   assert.notEqual(buildIndex, -1);
@@ -16,6 +17,11 @@ test("Veritas evidence invokes the non-recursive static gate", async () => {
       `browser bundle must be built before ${renderedTest}`,
     );
   }
+});
+
+test("build removes obsolete declaration and runtime artifacts before emitting", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  assert.match(packageJson.scripts.clean, /rmSync\('dist'/);
 });
 
 test("package metadata keeps browser build inputs out of runtime dependencies", async () => {
