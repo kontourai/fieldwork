@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { failure } from "./contracts.js";
 import { reviewedExport, runFieldwork } from "./fieldwork.js";
 import { openRun } from "./server.js";
+import { createDatumRuntimeBinding, createProfileRuntimeBinding, type FieldworkRuntimeBinding } from "./runtime-contracts.js";
 
 async function main(argv: string[]): Promise<void> {
   const [command, ...args] = argv;
@@ -11,7 +12,8 @@ async function main(argv: string[]): Promise<void> {
     if (command === "run") {
       const taskPath = flag(args, "--task"), sourcePath = flag(args, "--source"), root = flag(args, "--root");
       if (!taskPath || !sourcePath) throw Object.assign(new Error("run requires --task <file> and --source <file>"), { code: "INVALID_ARGUMENT" });
-      return output({ ok: true, ...(await runFieldwork({ taskPath, sourcePath, root })) }, has(args, "--json"));
+      const runtime = runtimeBinding(args);
+      return output({ ok: true, ...(await runFieldwork({ taskPath, sourcePath, root, ...(runtime ? { runtime } : {}) })) }, has(args, "--json"));
     }
     if (command === "open") {
       const run = args.find((value) => !value.startsWith("--"));
@@ -34,6 +36,76 @@ async function main(argv: string[]): Promise<void> {
   }
 }
 function flag(args: string[], name: string): string | undefined { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; }
+function flags(args: string[], name: string): string[] {
+  return args.flatMap((value, index) => value === name && args[index + 1] ? [args[index + 1]] : []);
+}
 function has(args: string[], name: string): boolean { return args.includes(name); }
 function output(value: unknown, json: boolean): void { process.stdout.write(json ? `${JSON.stringify(value)}\n` : `${JSON.stringify(value, null, 2)}\n`); }
+
+function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
+  const profiles = flags(args, "--runtime");
+  const datumRole = flag(args, "--datum-role");
+  if (profiles.includes("fixture")) {
+    if (profiles.length !== 1 || datumRole) invalid("fixture cannot be combined with another runtime");
+    return undefined;
+  }
+  if (profiles.length && datumRole) invalid("--runtime and --datum-role are mutually exclusive");
+  if (!profiles.length && !datumRole) return undefined;
+  const estimatedUsdPer1kTokens = optionalPositiveNumber(args, "--estimated-usd-per-1k-tokens");
+  const maxCostUsd = optionalPositiveNumber(args, "--max-cost-usd");
+  if (maxCostUsd !== undefined && estimatedUsdPer1kTokens === undefined) {
+    invalid("--max-cost-usd requires --estimated-usd-per-1k-tokens so the ceiling is enforceable");
+  }
+  if (datumRole && (maxCostUsd === undefined || estimatedUsdPer1kTokens === undefined)) {
+    invalid("--datum-role requires --max-cost-usd and --estimated-usd-per-1k-tokens");
+  }
+  const budget = {
+    maxAttempts: positiveInteger(args, "--max-attempts", 16),
+    maxElapsedMs: positiveInteger(args, "--max-elapsed-ms", 600_000),
+    maxTotalTokens: positiveInteger(args, "--max-total-tokens", 100_000),
+    ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+  };
+  const maxOutputTokens = positiveInteger(args, "--max-output-tokens", 2_048);
+  if (datumRole) {
+    return createDatumRuntimeBinding({
+      role: datumRole,
+      budget,
+      maxOutputTokens,
+      estimatedUsdPer1kTokens: estimatedUsdPer1kTokens!,
+      resolve: { cwd: process.cwd() },
+    });
+  }
+  const allowPrompted = has(args, "--allow-prompted-structured-output");
+  return createProfileRuntimeBinding({
+    profiles,
+    role: flag(args, "--role") ?? "fieldwork-extraction",
+    budget,
+    maxOutputTokens,
+    cwd: process.cwd(),
+    ...(allowPrompted ? {
+      allowPromptedStructuredOutput: true,
+      minimumStructuredToolsFidelity: "prompted" as const,
+    } : {}),
+    ...(estimatedUsdPer1kTokens === undefined ? {} : { estimatedUsdPer1kTokens }),
+  });
+}
+
+function positiveInteger(args: string[], name: string, fallback: number): number {
+  const value = flag(args, name);
+  if (value === undefined) return fallback;
+  if (!/^[1-9]\d*$/.test(value)) invalid(`${name} must be a positive integer`);
+  return Number(value);
+}
+
+function optionalPositiveNumber(args: string[], name: string): number | undefined {
+  const value = flag(args, name);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) invalid(`${name} must be a positive number`);
+  return parsed;
+}
+
+function invalid(message: string): never {
+  throw Object.assign(new Error(message), { code: "INVALID_ARGUMENT" });
+}
 void main(process.argv.slice(2));

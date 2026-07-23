@@ -18,6 +18,10 @@
     "./host-descriptor": {
       "types": "./dist/host-descriptor.d.ts",
       "import": "./dist/host-descriptor.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime-contracts.d.ts",
+      "import": "./dist/runtime-contracts.js"
     }
   },
   "files": [
@@ -27,7 +31,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && vite build",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "test:examples": "tsx test/examples.test.ts",
@@ -44,12 +49,24 @@
     "verify": "npm run verify:static && npm run check:veritas"
   },
   "dependencies": {
+    "@kontourai/datum": "0.7.0",
+    "@kontourai/dispatch": "0.3.1",
+    "@kontourai/relay": "0.5.0",
     "@kontourai/surface": "2.13.0",
     "@kontourai/survey": "2.0.0",
     "@kontourai/traverse": "0.22.0",
     "zod": "3.24.1"
   },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.40.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.54.0",
     "@kontourai/ui": "^1.11.0",
     "@kontourai/veritas": "1.5.3",
     "@playwright/test": "^1.61.1",

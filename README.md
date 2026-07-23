@@ -22,6 +22,35 @@ npm exec -- fieldwork export /path/from/runDirectory --output reviewed.json --js
 
 The checked-in provider is deterministic and offline; no credential, network, or private configuration is required.
 
+## Runtime choice
+
+The task file does not name a provider or runtime. Choose execution when the run starts, so the same task can move between a credential-free fixture, an already-authenticated local harness, a Datum-resolved SDK target, or a host-supplied Relay runtime.
+
+```sh
+# Native structured output through local harness authentication:
+npm exec -- fieldwork run --task task.json --source source.txt --runtime codex:gpt-5 --json
+npm exec -- fieldwork run --task task.json --source source.txt --runtime claude-code:sonnet --json
+
+# Ordered local fallback:
+npm exec -- fieldwork run --task task.json --source source.txt \
+  --runtime codex:gpt-5 --runtime claude-code:sonnet --max-attempts 4 --json
+
+# OpenCode exposes prompted rather than native schema enforcement, so opt in:
+npm exec -- fieldwork run --task task.json --source source.txt \
+  --runtime opencode:zai/glm-5 --allow-prompted-structured-output --json
+```
+
+Direct SDK mode resolves a role through Datum. It currently supports `anthropic-compatible` targets, requires the optional `@anthropic-ai/sdk` peer, and requires both a cost ceiling and an explicit rate assumption; other provider kinds can be supplied through the typed Relay runtime API.
+
+```sh
+npm install @anthropic-ai/sdk
+npm exec -- fieldwork run --task task.json --source source.txt \
+  --datum-role extraction-default \
+  --max-cost-usd 1 --estimated-usd-per-1k-tokens 0.003 --json
+```
+
+Relay owns invocation portability, Dispatch owns ordered fallback and shared attempt/elapsed/token/estimated-cost accounting, and Traverse still owns the extraction prompt, schema, proposal interpretation, and exact grounding. Runtime selection participates in run identity. Portable Dispatch receipts are stored in `run.json`; they retain candidate, model-runtime, capability fidelity, usage, failure category, and estimated-cost evidence without request content, credentials, or raw diagnostics. Attempt limits are checked before another invocation; elapsed, token, and estimated-cost limits are measured from provider receipts and can terminate after an attempt reports usage. A cost ceiling additionally requires an explicit rate and native output-limit fidelity for every candidate. Provider-reported and estimated costs remain distinct. Crash-safe provider authorization reservations remain a separate conformance tier rather than an implied property of this local run record.
+
 ## Examples
 
 - `examples/vendor-obligations`: extracts an agreement obligation and deadline for a vendor-management follow-up.
@@ -57,7 +86,7 @@ Review writes use a canonical run-directory storage lock held across read, prefi
 
 `fieldwork export <run> --output <file> [--json]` refuses unresolved, stale, malformed, tampered, or ungrounded review state.
 
-The typed TypeScript API exports `runFieldwork`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, and versioned Fieldwork-owned run, view, mutation, prepared-artifact, and reviewed-export contracts and schemas. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
+The typed TypeScript API exports `runFieldwork`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, and versioned Fieldwork-owned run, view, mutation, prepared-artifact, and reviewed-export contracts and schemas. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
 
 ## Limits
 

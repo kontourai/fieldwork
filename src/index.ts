@@ -29,6 +29,11 @@ export const reviewMutationResponseSchema: z.ZodType<ReviewMutationResponseV1> =
 export const preparedArtifactViewSchema: z.ZodType<PreparedArtifactViewV1> = internalPreparedViewSchema;
 export const reviewedExportSchema: z.ZodType<ReviewedExportV1> = internalReviewedExportSchema;
 export { fieldworkHostDescriptor };
+export {
+  createDatumRuntimeBinding,
+  createProfileRuntimeBinding,
+  fieldworkStoredExecutionSchema
+} from "./runtime-contracts.js";
 
 export function parseFieldworkTask(value: unknown): FieldworkTask {
   return internalParseTask(value);
@@ -47,3 +52,8 @@ export type {
   JsonObject, JsonPrimitive, JsonValue, OpenRunService, PreparedArtifactViewV1,
   ReviewedExportV1, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
 } from "./api-contracts.js";
+export type {
+  DatumRuntimeBindingOptions, FieldworkExecutionIdentity, FieldworkRuntimeBinding,
+  FieldworkRuntimeBudget, FieldworkRuntimeCandidate,
+  FieldworkStoredExecution, ProfileRuntimeBindingOptions
+} from "./runtime-contracts.js";

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FieldworkRuntimeBinding } from "./runtime-contracts.js";
 
 const TRANSPORT_LIMITS = { sourceBytes: 2 * 1024 * 1024, projections: 128, events: 10_000 } as const;
 
@@ -6,7 +7,12 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export interface JsonObject { readonly [key: string]: JsonValue; }
 
-export interface RunOptions { readonly taskPath: string; readonly sourcePath: string; readonly root?: string; }
+export interface RunOptions {
+  readonly taskPath: string;
+  readonly sourcePath: string;
+  readonly root?: string;
+  readonly runtime?: FieldworkRuntimeBinding;
+}
 export interface FieldworkRunResult {
   readonly apiVersion: "fieldwork.kontourai.io/v1";
   readonly kind: "FieldworkRunResult";

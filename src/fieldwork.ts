@@ -12,13 +12,19 @@ import { FIELDWORK_LIMITS, parseFieldworkTask, traverseTask, type FieldworkTask 
 import { parseReviewedExport, type FieldworkRunResult, type ReviewedExportV1, type RunOptions } from "./api-contracts.js";
 import { createDeterministicProvider } from "./deterministic-provider.js";
 import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun } from "./run-store.js";
+import type { FieldworkStoredExecution } from "./runtime-contracts.js";
+import { createFieldworkRuntimeSession } from "./runtime-session.js";
 
 export async function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   const taskText = await boundedInput(options.taskPath, FIELDWORK_LIMITS.taskBytes, "task");
   const source = await boundedInput(options.sourcePath, FIELDWORK_LIMITS.sourceBytes, "source");
   const task = parseFieldworkTask(JSON.parse(taskText));
   const sourceDigest = createHash("sha256").update(source).digest("hex");
-  const runIdentity = createHash("sha256").update(`${sourceDigest}:${canonicalJson(task)}`).digest("hex").slice(0, 16);
+  const runtimeSession = options.runtime ? createFieldworkRuntimeSession(options.runtime) : undefined;
+  if (runtimeSession) assertPortableOutput(runtimeSession.execution);
+  const executionIdentity = runtimeSession?.execution.identity;
+  const identityInput = `${sourceDigest}:${canonicalJson(task)}${executionIdentity ? `:${canonicalJson(executionIdentity)}` : ""}`;
+  const runIdentity = createHash("sha256").update(identityInput).digest("hex").slice(0, 16);
   const runResource = `fieldwork-run:v1:${task.metadata.name}:${runIdentity}`;
   const root = resolve(options.root ?? defaultRunRoot);
   const runDirectory = join(root, `run-${runIdentity}`);
@@ -37,7 +43,7 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   const store = createInMemoryPreparedArtifactStore();
   const result = await extract({
     content: source, contentType: options.sourcePath.endsWith(".html") ? "html" : "text", sourceRef,
-    targetSchema: taskSpec.targetSchema, taskSpec, provider: createDeterministicProvider(task),
+    targetSchema: taskSpec.targetSchema, taskSpec, provider: runtimeSession?.provider ?? createDeterministicProvider(task),
     preparedArtifact: { store, sourceSnapshotRef: sourceRef }
   });
   if (result.error || !result.preparedArtifact) throw new Error(result.error ?? "Traverse did not produce a prepared artifact");
@@ -57,6 +63,7 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   if (imported.record.status.state !== "grounded") throw new Error("Survey refused ungrounded extraction envelope");
   const run: StoredRun = {
     schemaVersion: 1, runResource, createdAt: new Date().toISOString(), taskName: task.metadata.name, task,
+    execution: runtimeSession?.execution ?? fixtureExecution(),
     preparedArtifact: { ref: result.preparedArtifact.ref, digest: result.preparedArtifact.digest, contentLength: result.preparedArtifact.contentLength, file: "prepared.txt" },
     envelopeFile: "extraction-envelope.json", review: { snapshot: initialReviewQueueSessionState(canonicalReviewItems(imported.reviewItems, envelope)), events: [], revision: 0 }
   };
@@ -65,6 +72,10 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunResult",
     runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length
   };
+}
+
+function fixtureExecution(): FieldworkStoredExecution {
+  return { identity: { mode: "fixture-v1" }, receipts: [] };
 }
 
 export async function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {

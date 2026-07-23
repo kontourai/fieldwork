@@ -8,6 +8,14 @@ const tarball = join(work, readdirSync(work).find((name) => name.endsWith(".tgz"
 execFileSync("npm", ["install", "--prefix", work, tarball], { stdio: "inherit" });
 const installed = join(work, "node_modules/@kontourai/fieldwork");
 const manifest = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+for (const obsolete of ["dist/runtime.js", "dist/runtime.d.ts"]) {
+  try {
+    readFileSync(join(installed, obsolete));
+    throw new Error(`obsolete build artifact was packed: ${obsolete}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("obsolete build artifact")) throw error;
+  }
+}
 for (const dependency of ["@kontourai/ui", "react", "react-dom"]) {
   if (manifest.dependencies?.[dependency]) throw new Error(`${dependency} must remain a bundled-browser build input`);
 }
@@ -23,11 +31,20 @@ writeFileSync(join(work, "consumer.mts"), `import {
   type FieldworkRunViewV1, type FieldworkTask, type ReviewedExportV1
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
+import {
+  createProfileRuntimeBinding, fieldworkStoredExecutionSchema,
+  type FieldworkRuntimeBinding
+} from "@kontourai/fieldwork/runtime";
 const task: FieldworkTask = parseFieldworkTask({});
 const view: FieldworkRunViewV1 = fieldworkRunViewSchema.parse({});
 const reviewed: ReviewedExportV1 = reviewedExportSchema.parse({});
 void [FIELDWORK_LIMITS, fieldworkTaskSchema, preparedArtifactViewSchema, reviewMutationResponseSchema, fieldworkHostDescriptor, task, view, reviewed];
+const runtime: FieldworkRuntimeBinding = createProfileRuntimeBinding({
+  profiles: ["codex:gpt-5"], budget: { maxAttempts: 1 }
+});
+void fieldworkStoredExecutionSchema;
 void runFieldwork({ taskPath: "task.json", sourcePath: "source.txt" });
+void runFieldwork({ taskPath: "task.json", sourcePath: "source.txt", runtime });
 void openRun("run");
 void reviewedExport("run");
 `);
