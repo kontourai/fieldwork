@@ -1,0 +1,68 @@
+{
+  "apiVersion": "fieldwork.kontourai.io/v1alpha1",
+  "kind": "FieldworkTask",
+  "metadata": {
+    "name": "long-input-conformance"
+  },
+  "spec": {
+    "traverse": {
+      "version": "1.0.0",
+      "guidance": "Extract the three deterministic markers across the prepared source.",
+      "targetSchema": [
+        {
+          "path": "document.early",
+          "type": "string",
+          "required": true,
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "document.boundary",
+          "type": "string",
+          "required": true,
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "document.late",
+          "type": "string",
+          "required": true,
+          "inferenceType": "explicit"
+        }
+      ]
+    },
+    "projections": [
+      {
+        "fieldPath": "document.early",
+        "pattern": "Early: ([^\\n]+)",
+        "claim": {
+          "subjectType": "document",
+          "subjectId": "long-input",
+          "facet": "markers",
+          "claimType": "observed",
+          "impactLevel": "low"
+        }
+      },
+      {
+        "fieldPath": "document.boundary",
+        "pattern": "Boundary: ([^\\n]+)",
+        "claim": {
+          "subjectType": "document",
+          "subjectId": "long-input",
+          "facet": "markers",
+          "claimType": "observed",
+          "impactLevel": "low"
+        }
+      },
+      {
+        "fieldPath": "document.late",
+        "pattern": "Late: ([^\\n]+)",
+        "claim": {
+          "subjectType": "document",
+          "subjectId": "long-input",
+          "facet": "markers",
+          "claimType": "observed",
+          "impactLevel": "low"
+        }
+      }
+    ]
+  }
+}

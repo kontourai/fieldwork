@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "fixture": "long-input",
+  "source": {
+    "length": 25018,
+    "sha256": "f8de56bf95c8e8189f2154f85b4e0cb1248a5bb7e1c68253bafda6e73cc57470"
+  },
+  "run": {
+    "resource": "fieldwork-run:v1:long-input-conformance:d066d768832b833c"
+  },
+  "execution": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 3,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:61c23daabbb398c561dc797835196bbbe9c77f67575d5dee1e715f1e5909c882",
+    "exampleDigests": [],
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "proposals": [
+    {
+      "fieldPath": "document.early",
+      "value": "first-value",
+      "excerpt": "Early: first-value",
+      "locator": "chars:0-18",
+      "occurrence": {
+        "resolverVersion": "exact-occurrence-v1",
+        "count": 1,
+        "selected": {
+          "index": 0,
+          "start": 0,
+          "end": 18
+        },
+        "selection": "source-order",
+        "hintUsed": false,
+        "ambiguous": false
+      }
+    },
+    {
+      "fieldPath": "document.boundary",
+      "value": "overlap-value",
+      "excerpt": "Boundary: overlap-value",
+      "locator": "chars:11900-11923",
+      "occurrence": {
+        "resolverVersion": "exact-occurrence-v1",
+        "count": 1,
+        "selected": {
+          "index": 0,
+          "start": 11900,
+          "end": 11923
+        },
+        "selection": "source-order",
+        "hintUsed": false,
+        "ambiguous": false
+      }
+    },
+    {
+      "fieldPath": "document.late",
+      "value": "final-value",
+      "excerpt": "Late: final-value",
+      "locator": "chars:25000-25017",
+      "occurrence": {
+        "resolverVersion": "exact-occurrence-v1",
+        "count": 1,
+        "selected": {
+          "index": 0,
+          "start": 25000,
+          "end": 25017
+        },
+        "selection": "source-order",
+        "hintUsed": false,
+        "ambiguous": false
+      }
+    }
+  ],
+  "reviewedClaims": [
+    {
+      "fieldPath": "document.early",
+      "value": "first-value",
+      "excerpt": "Early: first-value",
+      "locator": "chars:0-18"
+    },
+    {
+      "fieldPath": "document.boundary",
+      "value": "overlap-value",
+      "excerpt": "Boundary: overlap-value",
+      "locator": "chars:11900-11923"
+    },
+    {
+      "fieldPath": "document.late",
+      "value": "final-value",
+      "excerpt": "Late: final-value",
+      "locator": "chars:25000-25017"
+    }
+  ]
+}

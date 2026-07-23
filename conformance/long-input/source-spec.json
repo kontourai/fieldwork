@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "sourceLength": 25018,
+  "segments": [
+    {
+      "offset": 0,
+      "text": "Early: first-value\n"
+    },
+    {
+      "offset": 11900,
+      "text": "Boundary: overlap-value\n"
+    },
+    {
+      "offset": 25000,
+      "text": "Late: final-value\n"
+    }
+  ],
+  "fillers": [
+    {
+      "from": 19,
+      "to": 11900,
+      "character": "a"
+    },
+    {
+      "from": 11924,
+      "to": 25000,
+      "character": "b"
+    }
+  ]
+}

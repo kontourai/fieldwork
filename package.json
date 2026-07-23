@@ -31,6 +31,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "test:examples": "tsx test/examples.test.ts",
+    "test:conformance": "tsx test/conformance.test.ts",
     "test:api": "tsx test/api.test.ts",
     "test:cli": "tsx test/cli.test.ts",
     "test:a11y": "playwright test test/browser/a11y.spec.ts",
@@ -39,7 +40,7 @@
     "check:content": "node scripts/check-content-boundary.mjs",
     "check:decisions": "node scripts/check-decisions.mjs",
     "check:veritas": "veritas readiness --working-tree",
-    "verify:static": "npm run typecheck && npm run build && npm test && npm run test:examples && npm run test:cli && npm run test:api && npm run test:a11y && npm run test:browser && npm run test:package && npm run check:content && npm run check:decisions",
+    "verify:static": "npm run typecheck && npm run build && npm test && npm run test:examples && npm run test:conformance && npm run test:cli && npm run test:api && npm run test:a11y && npm run test:browser && npm run test:package && npm run check:content && npm run check:decisions",
     "verify": "npm run verify:static && npm run check:veritas"
   },
   "dependencies": {

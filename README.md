@@ -37,7 +37,9 @@ The checked-in provider is deterministic and offline; no credential, network, or
 
 Each is verified through the same `run → Survey events → reviewed export` contract, including its expected claims. The seven corpus fixtures carry checked-in comparison-neutral `oracle.json` files that freeze typed values, proposal order, exact excerpts and `chars:` offsets, occurrence metadata, diagnostics and warnings posture, deterministic replay metadata, and reviewed claim evidence.
 
-This CI corpus is groundwork over one prepared source per run. It does not exercise source chunking, a full long document, multiple-document batching, out-of-order model emissions, chunk-boundary recovery, multipass extraction, or a live provider. Those parity lanes remain open in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run an example by passing its `task.json` and `source.txt` to `fieldwork run`.
+The separate `conformance/long-input` tier deterministically assembles a 25,018-character source from a compact checked-in specification. Its independent oracle proves three default Traverse chunk calls, one deduplicated proposal in the overlap region, a late-document proposal, exact full-prepared-text locators, Survey review, and grounded export. Run it with `npm run test:conformance`.
+
+The corpus still covers one prepared source per run. It does not prove multiple-source batching, format-native PDF/image/transcript inspection, out-of-order live-provider completion, provider-quality gains, authorization-wide cost control, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
 
 ## Boundaries
 
@@ -63,7 +65,7 @@ Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bo
 
 ## Verification
 
-Run `npm run verify` for type, unit, CLI, API, rendered keyboard accessibility, browser visual/conflict, build, pack/install/bin, content-boundary, decision, and Veritas checks. Install Chromium first with `npx playwright install chromium` when it is not already available.
+Run `npm run verify` for type, unit, example and long-input conformance, CLI, API, rendered keyboard accessibility, browser visual/conflict, build, pack/install/bin, content-boundary, decision, and Veritas checks. Install Chromium first with `npx playwright install chromium` when it is not already available.
 
 `npm audit` currently reports three linked moderate development-only entries under `@kontourai/veritas@1.5.3` through `@modelcontextprotocol/sdk` and `@hono/node-server`. npm offers only an incompatible Veritas `0.3.0` downgrade, so Fieldwork does not apply it. `npm audit --omit=dev` is clean. The packed runtime does not install Veritas, Playwright, Vite, tsx, `@kontourai/ui`, React, or React DOM; the latter three are bundled browser build inputs. This is an explicit upstream tooling residual, not a zero-advisory claim.
 
