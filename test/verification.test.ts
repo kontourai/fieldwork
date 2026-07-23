@@ -6,7 +6,16 @@ test("Veritas evidence invokes the non-recursive static gate", async () => {
   const map = JSON.parse(await readFile(".veritas/repo-map.json", "utf8"));
   assert.equal(map.evidence.evidenceChecks[0].command, "npm run verify:static");
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-  assert.doesNotMatch(packageJson.scripts["verify:static"], /check:veritas/);
+  const staticGate = packageJson.scripts["verify:static"];
+  assert.doesNotMatch(staticGate, /check:veritas/);
+  const buildIndex = staticGate.indexOf("npm run build");
+  assert.notEqual(buildIndex, -1);
+  for (const renderedTest of ["npm run test:a11y", "npm run test:browser"]) {
+    assert.ok(
+      buildIndex < staticGate.indexOf(renderedTest),
+      `browser bundle must be built before ${renderedTest}`,
+    );
+  }
 });
 
 test("package metadata keeps browser build inputs out of runtime dependencies", async () => {
