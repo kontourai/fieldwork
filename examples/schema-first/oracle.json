@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "fixture": "schema-first",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:f0e75b4869514a73f44610f0b91be57ed805603ae4ea65af440529dbf51cf1cf",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "priority",
+      "value": "high",
+      "valueType": "enum",
+      "enumValues": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "excerpt": "Priority: high",
+      "locator": "chars:19-33",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 33,
+          "index": 0,
+          "start": 19
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "tags",
+      "value": [
+        "security",
+        "privacy",
+        "review"
+      ],
+      "valueType": "array",
+      "excerpt": "Tags: [\"security\",\"privacy\",\"review\"]",
+      "locator": "chars:34-71",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 71,
+          "index": 0,
+          "start": 34
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "owner",
+      "value": "fieldwork",
+      "valueType": "string",
+      "excerpt": "Owner: fieldwork",
+      "locator": "chars:72-88",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 88,
+          "index": 0,
+          "start": 72
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "required",
+      "value": true,
+      "valueType": "boolean",
+      "excerpt": "Required: true",
+      "locator": "chars:89-103",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 103,
+          "index": 0,
+          "start": 89
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "assessment.score",
+      "value": 12.5,
+      "valueType": "number",
+      "excerpt": "Assessment score: 12.5",
+      "locator": "chars:104-126",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 126,
+          "index": 0,
+          "start": 104
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "summary.detail",
+      "value": {
+        "text": "review gate requires exact source evidence"
+      },
+      "valueType": "object",
+      "excerpt": "Nested summary: {\"text\":\"review gate requires exact source evidence\"}",
+      "locator": "chars:127-196",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 196,
+          "index": 0,
+          "start": 127
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "intake",
+      "subjectId": "schema-demo",
+      "facet": "schema",
+      "fieldPath": "priority",
+      "value": "high",
+      "impactLevel": "high",
+      "evidence": {
+        "locator": "chars:19-33",
+        "excerpt": "Priority: high",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "enum",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "intake",
+      "subjectId": "schema-demo",
+      "facet": "schema",
+      "fieldPath": "tags",
+      "value": [
+        "security",
+        "privacy",
+        "review"
+      ],
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:34-71",
+        "excerpt": "Tags: [\"security\",\"privacy\",\"review\"]",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "array",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "intake",
+      "subjectId": "schema-demo",
+      "facet": "schema",
+      "fieldPath": "owner",
+      "value": "fieldwork",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:72-88",
+        "excerpt": "Owner: fieldwork",
+        "proposalIndex": 2,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "intake",
+      "subjectId": "schema-demo",
+      "facet": "schema",
+      "fieldPath": "required",
+      "value": true,
+      "impactLevel": "high",
+      "evidence": {
+        "locator": "chars:89-103",
+        "excerpt": "Required: true",
+        "proposalIndex": 3,
+        "valueType": {
+          "type": "boolean",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "intake",
+      "subjectId": "schema-demo",
+      "facet": "schema",
+      "fieldPath": "assessment.score",
+      "value": 12.5,
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:104-126",
+        "excerpt": "Assessment score: 12.5",
+        "proposalIndex": 4,
+        "valueType": {
+          "type": "number",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "intake",
+      "subjectId": "schema-demo",
+      "facet": "schema",
+      "fieldPath": "summary.detail",
+      "value": {
+        "text": "review gate requires exact source evidence"
+      },
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:127-196",
+        "excerpt": "Nested summary: {\"text\":\"review gate requires exact source evidence\"}",
+        "proposalIndex": 5,
+        "valueType": {
+          "type": "object",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

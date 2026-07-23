@@ -1,0 +1,5 @@
+Synthetic Incident Postmortem
+Timeline: 09:12 UTC deployment began
+Impact: 18 minutes of delayed requests
+Root cause: Missing cache invalidation
+Corrective action: Add release cache checks

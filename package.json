@@ -1,0 +1,64 @@
+{
+  "name": "@kontourai/fieldwork",
+  "version": "0.1.0",
+  "description": "Local, grounded extraction review with portable reviewed output.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "fieldwork": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./host-descriptor": {
+      "types": "./dist/host-descriptor.d.ts",
+      "import": "./dist/host-descriptor.js"
+    }
+  },
+  "files": [
+    "dist",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "test:examples": "tsx test/examples.test.ts",
+    "test:api": "tsx test/api.test.ts",
+    "test:cli": "tsx test/cli.test.ts",
+    "test:a11y": "playwright test test/browser/a11y.spec.ts",
+    "test:browser": "playwright test",
+    "test:package": "npm pack --dry-run && node scripts/package-smoke.mjs",
+    "check:content": "node scripts/check-content-boundary.mjs",
+    "check:decisions": "node scripts/check-decisions.mjs",
+    "check:veritas": "veritas readiness --working-tree",
+    "verify:static": "npm run typecheck && npm test && npm run test:examples && npm run test:cli && npm run test:api && npm run test:a11y && npm run build && npm run test:browser && npm run test:package && npm run check:content && npm run check:decisions",
+    "verify": "npm run verify:static && npm run check:veritas"
+  },
+  "dependencies": {
+    "@kontourai/surface": "2.13.0",
+    "@kontourai/survey": "2.0.0",
+    "@kontourai/traverse": "0.22.0",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@kontourai/ui": "^1.11.0",
+    "@kontourai/veritas": "1.5.3",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "22.10.5",
+    "@types/react": "19.0.3",
+    "@types/react-dom": "19.0.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsx": "^4.23.1",
+    "typescript": "5.7.2",
+    "vite": "^6.4.3"
+  }
+}

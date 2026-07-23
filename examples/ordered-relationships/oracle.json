@@ -1,0 +1,298 @@
+{
+  "schemaVersion": 1,
+  "fixture": "ordered-relationships",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:92f98a072343d5ad6fb6a680cd1e143703179b9df55a9ff9a056a4e19698cb72",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "person.primary",
+      "value": "Ada Lovelace",
+      "valueType": "string",
+      "excerpt": "Person: Ada Lovelace",
+      "locator": "chars:15-35",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 35,
+          "index": 0,
+          "start": 15
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "person.primaryRole",
+      "value": "algebra analyst",
+      "valueType": "string",
+      "excerpt": "Role: algebra analyst",
+      "locator": "chars:36-57",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 57,
+          "index": 0,
+          "start": 36
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "organization.name",
+      "value": "Analytical Society",
+      "valueType": "string",
+      "excerpt": "Organization: Analytical Society",
+      "locator": "chars:58-90",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 90,
+          "index": 0,
+          "start": 58
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "relationship.summary",
+      "value": "Ada Lovelace advises Charles Babbage",
+      "valueType": "string",
+      "excerpt": "Relationship: Ada Lovelace advises Charles Babbage",
+      "locator": "chars:91-141",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 141,
+          "index": 0,
+          "start": 91
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "person.secondary",
+      "value": "Charles Babbage",
+      "valueType": "string",
+      "excerpt": "Secondary person: Charles Babbage",
+      "locator": "chars:142-175",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 175,
+          "index": 0,
+          "start": 142
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "person.secondaryRole",
+      "value": "engine sponsor",
+      "valueType": "string",
+      "excerpt": "Secondary role: engine sponsor",
+      "locator": "chars:176-206",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 206,
+          "index": 0,
+          "start": 176
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "organization.attribute",
+      "value": "Analytical Society uses published lecture notes",
+      "valueType": "string",
+      "excerpt": "Attribute: Analytical Society uses published lecture notes",
+      "locator": "chars:207-265",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 265,
+          "index": 0,
+          "start": 207
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo",
+      "facet": "entity",
+      "fieldPath": "person.primary",
+      "value": "Ada Lovelace",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:15-35",
+        "excerpt": "Person: Ada Lovelace",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo",
+      "facet": "attribute",
+      "fieldPath": "person.primaryRole",
+      "value": "algebra analyst",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:36-57",
+        "excerpt": "Role: algebra analyst",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo",
+      "facet": "entity",
+      "fieldPath": "organization.name",
+      "value": "Analytical Society",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:58-90",
+        "excerpt": "Organization: Analytical Society",
+        "proposalIndex": 2,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo",
+      "facet": "relationship",
+      "fieldPath": "relationship.summary",
+      "value": "Ada Lovelace advises Charles Babbage",
+      "impactLevel": "high",
+      "evidence": {
+        "locator": "chars:91-141",
+        "excerpt": "Relationship: Ada Lovelace advises Charles Babbage",
+        "proposalIndex": 3,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo-secondary",
+      "facet": "entity",
+      "fieldPath": "person.secondary",
+      "value": "Charles Babbage",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:142-175",
+        "excerpt": "Secondary person: Charles Babbage",
+        "proposalIndex": 4,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo-secondary",
+      "facet": "attribute",
+      "fieldPath": "person.secondaryRole",
+      "value": "engine sponsor",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:176-206",
+        "excerpt": "Secondary role: engine sponsor",
+        "proposalIndex": 5,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "meeting",
+      "subjectId": "ordered-demo",
+      "facet": "attribute",
+      "fieldPath": "organization.attribute",
+      "value": "Analytical Society uses published lecture notes",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:207-265",
+        "excerpt": "Attribute: Analytical Society uses published lecture notes",
+        "proposalIndex": 6,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

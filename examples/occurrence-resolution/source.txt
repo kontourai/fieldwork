@@ -1,0 +1,8 @@
+Occurrence fixture
+
+Exact repeat: alpha
+Exact repeat: alpha
+Later target: beta
+Punctuation target: alpha, beta
+Spacing target: alpha   beta
+Boundary phrase target: left boundary right

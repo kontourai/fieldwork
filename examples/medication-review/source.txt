@@ -1,0 +1,9 @@
+Synthetic clinical note for extraction testing only.
+
+Medication: lisinopril
+Dose: 10 mg
+Route: oral
+Frequency: once daily
+Reason: hypertension
+Negated medication: no insulin prescribed
+Follow-up: review blood pressure log in two weeks
