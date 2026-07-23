@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@kontourai/datum": "0.7.0",
-    "@kontourai/dispatch": "0.3.1",
+    "@kontourai/dispatch": "0.4.0",
     "@kontourai/relay": "0.5.0",
     "@kontourai/surface": "2.13.0",
     "@kontourai/survey": "2.0.0",

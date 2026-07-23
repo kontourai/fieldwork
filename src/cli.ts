@@ -59,10 +59,15 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
   if (datumRole && (maxCostUsd === undefined || estimatedUsdPer1kTokens === undefined)) {
     invalid("--datum-role requires --max-cost-usd and --estimated-usd-per-1k-tokens");
   }
+  const maxTotalTokens = optionalPositiveInteger(args, "--max-total-tokens");
+  const maxTokensPerAttempt = optionalPositiveInteger(args, "--max-tokens-per-attempt");
+  if ((maxTotalTokens !== undefined || maxCostUsd !== undefined) && maxTokensPerAttempt === undefined) {
+    invalid("--max-total-tokens and --max-cost-usd require --max-tokens-per-attempt");
+  }
   const budget = {
     maxAttempts: positiveInteger(args, "--max-attempts", 16),
     maxElapsedMs: positiveInteger(args, "--max-elapsed-ms", 600_000),
-    maxTotalTokens: positiveInteger(args, "--max-total-tokens", 100_000),
+    ...(maxTotalTokens === undefined ? {} : { maxTotalTokens }),
     ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
   };
   const maxOutputTokens = positiveInteger(args, "--max-output-tokens", 2_048);
@@ -71,6 +76,7 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
       role: datumRole,
       budget,
       maxOutputTokens,
+      ...(maxTokensPerAttempt === undefined ? {} : { maxTokensPerAttempt }),
       estimatedUsdPer1kTokens: estimatedUsdPer1kTokens!,
       resolve: { cwd: process.cwd() },
     });
@@ -81,6 +87,7 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
     role: flag(args, "--role") ?? "fieldwork-extraction",
     budget,
     maxOutputTokens,
+    ...(maxTokensPerAttempt === undefined ? {} : { maxTokensPerAttempt }),
     cwd: process.cwd(),
     ...(allowPrompted ? {
       allowPromptedStructuredOutput: true,
@@ -103,6 +110,13 @@ function optionalPositiveNumber(args: string[], name: string): number | undefine
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) invalid(`${name} must be a positive number`);
   return parsed;
+}
+
+function optionalPositiveInteger(args: string[], name: string): number | undefined {
+  const value = flag(args, name);
+  if (value === undefined) return undefined;
+  if (!/^[1-9]\d*$/.test(value)) invalid(`${name} must be a positive integer`);
+  return Number(value);
 }
 
 function invalid(message: string): never {

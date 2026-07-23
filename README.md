@@ -46,10 +46,13 @@ Direct SDK mode resolves a role through Datum. It currently supports `anthropic-
 npm install @anthropic-ai/sdk
 npm exec -- fieldwork run --task task.json --source source.txt \
   --datum-role extraction-default \
-  --max-cost-usd 1 --estimated-usd-per-1k-tokens 0.003 --json
+  --max-cost-usd 1 --max-tokens-per-attempt 12000 \
+  --estimated-usd-per-1k-tokens 0.003 --json
 ```
 
-Relay owns invocation portability, Dispatch owns ordered fallback and shared attempt/elapsed/token/estimated-cost accounting, and Traverse still owns the extraction prompt, schema, proposal interpretation, and exact grounding. Runtime selection participates in run identity. Portable Dispatch receipts are stored in `run.json`; they retain candidate, model-runtime, capability fidelity, usage, failure category, and estimated-cost evidence without request content, credentials, or raw diagnostics. Attempt limits are checked before another invocation; elapsed, token, and estimated-cost limits are measured from provider receipts and can terminate after an attempt reports usage. A cost ceiling additionally requires an explicit rate and native output-limit fidelity for every candidate. Provider-reported and estimated costs remain distinct. Crash-safe provider authorization reservations remain a separate conformance tier rather than an implied property of this local run record.
+Relay owns invocation portability, Dispatch owns ordered fallback and durable authorization-wide capacity, and Traverse still owns the extraction prompt, schema, proposal interpretation, and exact grounding. Runtime selection participates in run identity. Before a provider launch, Dispatch records a crash-safe reservation under the Fieldwork run root; a successful attempt settles measured usage, while a failed or interrupted launch stays conservatively reserved until an explicit reconciliation. A restarted process cannot silently replay the same invocation. Attempt capacity is always durable. Token and cost ceilings additionally require `--max-tokens-per-attempt`; cost ceilings also require an explicit rate and native output-limit fidelity for every candidate.
+
+Portable Dispatch receipts are stored in `run.json`; they retain candidate, model-runtime, capability fidelity, usage, failure category, reservation state, and estimated-cost evidence without request content, credentials, raw diagnostics, or the machine-local ledger path. Provider-reported and estimated costs remain distinct. Elapsed time remains a per-session measured limit rather than durable capacity.
 
 ## Examples
 
@@ -68,7 +71,7 @@ Each is verified through the same `run → Survey events → reviewed export` co
 
 The separate `conformance/long-input` tier deterministically assembles a 25,018-character source from a compact checked-in specification. Its independent oracle proves three default Traverse chunk calls, one deduplicated proposal in the overlap region, a late-document proposal, exact full-prepared-text locators, Survey review, and grounded export. Run it with `npm run test:conformance`.
 
-The corpus still covers one prepared source per run. It does not prove multiple-source batching, format-native PDF/image/transcript inspection, out-of-order live-provider completion, provider-quality gains, authorization-wide cost control, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
+The corpus still covers one prepared source per run. It does not prove multiple-source batching, format-native PDF/image/transcript inspection, live-provider quality, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
 
 ## Boundaries
 

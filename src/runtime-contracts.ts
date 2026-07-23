@@ -30,6 +30,11 @@ export interface FieldworkRuntimeBinding {
   readonly role: string;
   readonly candidates: readonly FieldworkRuntimeCandidate[];
   readonly budget: FieldworkRuntimeBudget;
+  /**
+   * Caller-declared worst-case total token use for one physical provider
+   * attempt. Required when the authorization has a token or cost ceiling.
+   */
+  readonly maxTokensPerAttempt?: number;
   readonly minimumStructuredToolsFidelity?: "native" | "prompted";
   readonly maxOutputTokens?: number;
 }
@@ -45,6 +50,10 @@ export interface FieldworkExecutionIdentity {
     readonly estimatedUsdPer1kTokens?: number;
   }[];
   readonly budget: FieldworkRuntimeBudget;
+  readonly authorization: {
+    readonly mode: "file-ledger-v1";
+    readonly maxTokensPerAttempt?: number;
+  };
   readonly minimumStructuredToolsFidelity: "native" | "prompted";
   readonly maxOutputTokens: number;
 }
@@ -60,6 +69,7 @@ export interface ProfileRuntimeBindingOptions {
   readonly budget: FieldworkRuntimeBudget;
   readonly minimumStructuredToolsFidelity?: "native" | "prompted";
   readonly maxOutputTokens?: number;
+  readonly maxTokensPerAttempt?: number;
   readonly cwd?: string;
   readonly allowPromptedStructuredOutput?: boolean;
   readonly estimatedUsdPer1kTokens?: number;
@@ -69,6 +79,7 @@ export interface DatumRuntimeBindingOptions {
   readonly role: string;
   readonly budget: FieldworkRuntimeBudget;
   readonly maxOutputTokens?: number;
+  readonly maxTokensPerAttempt?: number;
   readonly estimatedUsdPer1kTokens?: number;
   readonly resolve?: ResolveOptions;
 }
@@ -85,6 +96,8 @@ const attemptSchema = z.object({
   estimatedCostUsd: z.number().finite().nonnegative().optional(),
   errorCode: boundedId.optional(),
   retryable: z.boolean().optional(),
+  reservationId: boundedId.optional(),
+  reservationState: z.enum(["reserved", "settled"]).optional(),
 }).strict();
 
 export const fieldworkStoredExecutionSchema = z.object({
@@ -106,6 +119,10 @@ export const fieldworkStoredExecutionSchema = z.object({
         maxTotalTokens: z.number().int().positive().optional(),
         maxCostUsd: finitePositive.optional(),
       }).strict(),
+      authorization: z.object({
+        mode: z.literal("file-ledger-v1"),
+        maxTokensPerAttempt: z.number().int().positive().optional(),
+      }).strict(),
       minimumStructuredToolsFidelity: z.enum(["native", "prompted"]),
       maxOutputTokens: z.number().int().positive(),
     }).strict(),
@@ -120,6 +137,11 @@ export const fieldworkStoredExecutionSchema = z.object({
     totalElapsedMs: z.number().finite().nonnegative(),
     totalTokens: z.number().int().nonnegative(),
     estimatedCostUsd: z.number().finite().nonnegative(),
+    authorization: z.object({
+      id: boundedId,
+      invocationId: boundedId,
+      outcome: z.enum(["reserved", "settled", "exhausted"]),
+    }).strict().optional(),
   }).strict()).max(MAX_RUNTIME_RECEIPTS),
 }).strict();
 
@@ -146,6 +168,9 @@ export function createProfileRuntimeBinding(options: ProfileRuntimeBindingOption
     role: options.role ?? "fieldwork-extraction",
     candidates,
     budget: options.budget,
+    ...(options.maxTokensPerAttempt === undefined ? {} : {
+      maxTokensPerAttempt: options.maxTokensPerAttempt,
+    }),
     ...(options.minimumStructuredToolsFidelity ? {
       minimumStructuredToolsFidelity: options.minimumStructuredToolsFidelity,
     } : {}),
@@ -189,6 +214,9 @@ export function createDatumRuntimeBinding(options: DatumRuntimeBindingOptions): 
       }),
     }],
     budget: options.budget,
+    ...(options.maxTokensPerAttempt === undefined ? {} : {
+      maxTokensPerAttempt: options.maxTokensPerAttempt,
+    }),
     ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
   };
 }
@@ -203,6 +231,7 @@ export function validateRuntimeBinding(binding: FieldworkRuntimeBinding): void {
   if (binding.budget.maxTotalTokens !== undefined) z.number().int().positive().parse(binding.budget.maxTotalTokens);
   if (binding.budget.maxCostUsd !== undefined) finitePositive.parse(binding.budget.maxCostUsd);
   if (binding.maxOutputTokens !== undefined) z.number().int().positive().parse(binding.maxOutputTokens);
+  if (binding.maxTokensPerAttempt !== undefined) z.number().int().positive().parse(binding.maxTokensPerAttempt);
   const candidateIds = new Set<string>();
   const runtimeIds = new Set<string>();
   for (const candidate of binding.candidates) {
@@ -221,6 +250,10 @@ export function validateRuntimeBinding(binding: FieldworkRuntimeBinding): void {
   if (binding.budget.maxCostUsd !== undefined
     && binding.candidates.some((candidate) => runtimeOutputTokenLimitFidelity(candidate.runtime) !== "native")) {
     throw new Error("Fieldwork maxCostUsd requires native output-token limit fidelity for every candidate");
+  }
+  if ((binding.budget.maxTotalTokens !== undefined || binding.budget.maxCostUsd !== undefined)
+    && binding.maxTokensPerAttempt === undefined) {
+    throw new Error("Fieldwork token and cost ceilings require maxTokensPerAttempt worst-case capacity");
   }
 }
 

@@ -169,8 +169,12 @@ test("portable disclosure scan rejects cross-platform paths and credential value
   ]) assert.throws(() => assertPortableOutput({ note: hostile }), /private path|credential/);
   assert.doesNotThrow(() => assertPortableOutput({
     source: "fieldwork-source:v1:generic-record:0123456789abcdef",
-    locator: "chars:0-14", subject: "record:generic-1", url: "https://example.invalid/public"
+    locator: "chars:0-14", subject: "record:generic-1", url: "https://example.invalid/public",
+    authorization: { id: "fieldwork:0123456789abcdef", invocationId: "invoke-1-deadbeef", outcome: "settled" },
   }));
+  const authorizationField = ["authoriz", "ation"].join("");
+  assert.throws(() => assertPortableOutput({ [authorizationField]: "Bearer abcdefghijklmnop" }), /forbidden credential/);
+  assert.throws(() => assertPortableOutput({ [authorizationField]: { credential: "opaque-value" } }), /forbidden credential/);
 });
 
 test("hostile Survey review content is refused by reviewed export", async () => {
