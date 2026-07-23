@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "fixture": "occurrence-resolution",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:eae1ec48829eef484416557fa38fd3c9dc8b5a9ab1e3b313b66af2d31313e4e6",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "repeat.first",
+      "value": "alpha",
+      "valueType": "string",
+      "excerpt": "Exact repeat: alpha",
+      "locator": "chars:20-39",
+      "occurrence": {
+        "ambiguous": true,
+        "count": 2,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 39,
+          "index": 0,
+          "start": 20
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "target.later",
+      "value": "beta",
+      "valueType": "string",
+      "excerpt": "Later target: beta",
+      "locator": "chars:60-78",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 78,
+          "index": 0,
+          "start": 60
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "target.punctuation",
+      "value": "alpha, beta",
+      "valueType": "string",
+      "excerpt": "Punctuation target: alpha, beta",
+      "locator": "chars:79-110",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 110,
+          "index": 0,
+          "start": 79
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "target.spacing",
+      "value": "alpha   beta",
+      "valueType": "string",
+      "excerpt": "Spacing target: alpha   beta",
+      "locator": "chars:111-139",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 139,
+          "index": 0,
+          "start": 111
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "target.boundaryPhrase",
+      "value": "left boundary right",
+      "valueType": "string",
+      "excerpt": "Boundary phrase target: left boundary right",
+      "locator": "chars:140-183",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 183,
+          "index": 0,
+          "start": 140
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "oracle",
+      "subjectId": "occurrence-demo",
+      "facet": "occurrence",
+      "fieldPath": "repeat.first",
+      "value": "alpha",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:20-39",
+        "excerpt": "Exact repeat: alpha",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "oracle",
+      "subjectId": "occurrence-demo",
+      "facet": "occurrence",
+      "fieldPath": "target.later",
+      "value": "beta",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:60-78",
+        "excerpt": "Later target: beta",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "oracle",
+      "subjectId": "occurrence-demo",
+      "facet": "occurrence",
+      "fieldPath": "target.punctuation",
+      "value": "alpha, beta",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:79-110",
+        "excerpt": "Punctuation target: alpha, beta",
+        "proposalIndex": 2,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "oracle",
+      "subjectId": "occurrence-demo",
+      "facet": "occurrence",
+      "fieldPath": "target.spacing",
+      "value": "alpha   beta",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:111-139",
+        "excerpt": "Spacing target: alpha   beta",
+        "proposalIndex": 3,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "oracle",
+      "subjectId": "occurrence-demo",
+      "facet": "occurrence",
+      "fieldPath": "target.boundaryPhrase",
+      "value": "left boundary right",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:140-183",
+        "excerpt": "Boundary phrase target: left boundary right",
+        "proposalIndex": 4,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

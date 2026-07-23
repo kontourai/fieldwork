@@ -1,0 +1,6 @@
+Multilingual review fixture.
+
+Japanese status: 審査完了
+Japanese owner: 佐藤
+Spanish status: revisión completa
+Spanish owner: Lucía

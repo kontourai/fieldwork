@@ -1,0 +1,14 @@
+Public-domain style repeated-section groundwork fixture for local conformance testing.
+
+Section 001: The review clerk marked the north archive as complete.
+Section 002: The review clerk marked the east archive as complete.
+Section 003: The review clerk marked the south archive as complete.
+Section 004: The review clerk marked the west archive as complete.
+Section 005: The review clerk marked the central archive as complete.
+Section 006: The review clerk marked the annex archive as complete.
+Section 007: The review clerk marked the harbor archive as complete.
+Section 008: The review clerk marked the hill archive as complete.
+Section 009: The review clerk marked the river archive as complete.
+Section 010: The review clerk marked the garden archive as complete.
+Groundwork anchor: central archive complete
+Groundwork repeated marker: review clerk

@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "fixture": "long-form-groundwork",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:ce6cd8c562907d2fbd8b9fbca972d113cdd44c48e379c1925142247a21290d0d",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "anchor.status",
+      "value": "central archive complete",
+      "valueType": "string",
+      "excerpt": "Groundwork anchor: central archive complete",
+      "locator": "chars:769-812",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 812,
+          "index": 0,
+          "start": 769
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "marker.repeated",
+      "value": "review clerk",
+      "valueType": "string",
+      "excerpt": "Groundwork repeated marker: review clerk",
+      "locator": "chars:813-853",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 853,
+          "index": 0,
+          "start": 813
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "groundwork-source",
+      "subjectId": "repeated-sections",
+      "facet": "anchor",
+      "fieldPath": "anchor.status",
+      "value": "central archive complete",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:769-812",
+        "excerpt": "Groundwork anchor: central archive complete",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "groundwork-source",
+      "subjectId": "repeated-sections",
+      "facet": "marker",
+      "fieldPath": "marker.repeated",
+      "value": "review clerk",
+      "impactLevel": "low",
+      "evidence": {
+        "locator": "chars:813-853",
+        "excerpt": "Groundwork repeated marker: review clerk",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

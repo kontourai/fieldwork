@@ -1,0 +1,9 @@
+Meeting notes
+
+Person: Ada Lovelace
+Role: algebra analyst
+Organization: Analytical Society
+Relationship: Ada Lovelace advises Charles Babbage
+Secondary person: Charles Babbage
+Secondary role: engine sponsor
+Attribute: Analytical Society uses published lecture notes

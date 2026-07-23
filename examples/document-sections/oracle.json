@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "fixture": "document-sections",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:6eb8a184b8141219b922af36461cc53a5b683bc631d725202ef770786f199458",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "sections.first.status",
+      "value": "ready for legal review",
+      "valueType": "string",
+      "excerpt": "Section status: ready for legal review",
+      "locator": "chars:20-58",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 58,
+          "index": 0,
+          "start": 20
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "sections.first.owner",
+      "value": "Maya",
+      "valueType": "string",
+      "excerpt": "Section owner: Maya",
+      "locator": "chars:59-78",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 78,
+          "index": 0,
+          "start": 59
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "sections.second.status",
+      "value": "awaiting finance approval",
+      "valueType": "string",
+      "excerpt": "Section status secondary: awaiting finance approval",
+      "locator": "chars:100-151",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 151,
+          "index": 0,
+          "start": 100
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "sections.second.owner",
+      "value": "Nikhil",
+      "valueType": "string",
+      "excerpt": "Section owner secondary: Nikhil",
+      "locator": "chars:152-183",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 183,
+          "index": 0,
+          "start": 152
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "record-section",
+      "subjectId": "record-001",
+      "facet": "status",
+      "fieldPath": "sections.first.status",
+      "value": "ready for legal review",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:20-58",
+        "excerpt": "Section status: ready for legal review",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "record-section",
+      "subjectId": "record-001",
+      "facet": "owner",
+      "fieldPath": "sections.first.owner",
+      "value": "Maya",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:59-78",
+        "excerpt": "Section owner: Maya",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "record-section",
+      "subjectId": "record-002",
+      "facet": "status",
+      "fieldPath": "sections.second.status",
+      "value": "awaiting finance approval",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:100-151",
+        "excerpt": "Section status secondary: awaiting finance approval",
+        "proposalIndex": 2,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "record-section",
+      "subjectId": "record-002",
+      "facet": "owner",
+      "fieldPath": "sections.second.owner",
+      "value": "Nikhil",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:152-183",
+        "excerpt": "Section owner secondary: Nikhil",
+        "proposalIndex": 3,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,262 @@
+{
+  "schemaVersion": 1,
+  "fixture": "medication-review",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:9a756639dd2fd6be02a4fe75a4103bc378ee106d2c8d744c94f0a61e2a135349",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "medication.name",
+      "value": "lisinopril",
+      "valueType": "string",
+      "excerpt": "Medication: lisinopril",
+      "locator": "chars:54-76",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 76,
+          "index": 0,
+          "start": 54
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "medication.dose",
+      "value": "10 mg",
+      "valueType": "string",
+      "excerpt": "Dose: 10 mg",
+      "locator": "chars:77-88",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 88,
+          "index": 0,
+          "start": 77
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "medication.route",
+      "value": "oral",
+      "valueType": "string",
+      "excerpt": "Route: oral",
+      "locator": "chars:89-100",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 100,
+          "index": 0,
+          "start": 89
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "medication.frequency",
+      "value": "once daily",
+      "valueType": "string",
+      "excerpt": "Frequency: once daily",
+      "locator": "chars:101-122",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 122,
+          "index": 0,
+          "start": 101
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "medication.reason",
+      "value": "hypertension",
+      "valueType": "string",
+      "excerpt": "Reason: hypertension",
+      "locator": "chars:123-143",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 143,
+          "index": 0,
+          "start": 123
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "medication.negated",
+      "value": "no insulin prescribed",
+      "valueType": "string",
+      "excerpt": "Negated medication: no insulin prescribed",
+      "locator": "chars:144-185",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 185,
+          "index": 0,
+          "start": 144
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "clinical-note",
+      "subjectId": "synthetic-medication-demo",
+      "facet": "medication",
+      "fieldPath": "medication.name",
+      "value": "lisinopril",
+      "impactLevel": "high",
+      "evidence": {
+        "locator": "chars:54-76",
+        "excerpt": "Medication: lisinopril",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "clinical-note",
+      "subjectId": "synthetic-medication-demo",
+      "facet": "medication",
+      "fieldPath": "medication.dose",
+      "value": "10 mg",
+      "impactLevel": "high",
+      "evidence": {
+        "locator": "chars:77-88",
+        "excerpt": "Dose: 10 mg",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "clinical-note",
+      "subjectId": "synthetic-medication-demo",
+      "facet": "medication",
+      "fieldPath": "medication.route",
+      "value": "oral",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:89-100",
+        "excerpt": "Route: oral",
+        "proposalIndex": 2,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "clinical-note",
+      "subjectId": "synthetic-medication-demo",
+      "facet": "medication",
+      "fieldPath": "medication.frequency",
+      "value": "once daily",
+      "impactLevel": "high",
+      "evidence": {
+        "locator": "chars:101-122",
+        "excerpt": "Frequency: once daily",
+        "proposalIndex": 3,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "clinical-note",
+      "subjectId": "synthetic-medication-demo",
+      "facet": "medication",
+      "fieldPath": "medication.reason",
+      "value": "hypertension",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:123-143",
+        "excerpt": "Reason: hypertension",
+        "proposalIndex": 4,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "clinical-note",
+      "subjectId": "synthetic-medication-demo",
+      "facet": "medication",
+      "fieldPath": "medication.negated",
+      "value": "no insulin prescribed",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:144-185",
+        "excerpt": "Negated medication: no insulin prescribed",
+        "proposalIndex": 5,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

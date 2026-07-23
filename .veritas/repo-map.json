@@ -1,0 +1,135 @@
+{
+  "name": "fieldwork",
+  "kind": "repo-map",
+  "policy": {
+    "defaultFalsePositiveReview": "unknown",
+    "defaultPromotionCandidate": false,
+    "defaultExceptionAllowed": false
+  },
+  "graph": {
+    "version": 1,
+    "defaultResolution": {
+      "phase": "Phase 0 (Bootstrap)",
+      "workstream": "Initial Project Setup",
+      "matchedArtifacts": [
+        "README.md"
+      ]
+    },
+    "nonSliceableInvariants": [
+      "baseline evidenceCheck",
+      "repo-local guidance",
+      "tracked standards artifacts"
+    ],
+    "resolverPrecedence": [
+      "explicit task or issue reference",
+      "matching local artifact under .veritas/**",
+      "active repo roadmap or README guidance",
+      "multi-workstream fallback suppresses promotion"
+    ],
+    "resolutionRules": [
+      {
+        "id": "veritas-files",
+        "match": {
+          "patterns": [
+            ".veritas/"
+          ]
+        },
+        "resolution": {
+          "phase": "Phase 0 (Bootstrap)",
+          "workstream": "Initial Project Setup",
+          "matchedArtifacts": [
+            ".veritas/**"
+          ]
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "id": "governance.guidance",
+        "kind": "protected-area",
+        "label": ".veritas/**",
+        "patterns": [
+          ".veritas/"
+        ],
+        "governance-locked": true
+      },
+      {
+        "id": "governance.root-manifests",
+        "kind": "protected-area",
+        "label": "root manifests",
+        "patterns": [
+          "package.json",
+          "package-lock.json",
+          "README.md",
+          ".gitignore",
+          "AGENTS.md"
+        ]
+      },
+      {
+        "id": "app.cli-server",
+        "kind": "product-area",
+        "label": "CLI and loopback server",
+        "patterns": [
+          "src/cli.ts",
+          "src/fieldwork.ts",
+          "src/server.ts",
+          "src/run-store.ts"
+        ]
+      },
+      {
+        "id": "app.browser",
+        "kind": "product-area",
+        "label": "browser review UI",
+        "patterns": [
+          "src/browser/",
+          "index.html",
+          "vite.config.ts"
+        ]
+      },
+      {
+        "id": "verification.tests",
+        "kind": "verification-area",
+        "label": "test/**",
+        "patterns": [
+          "test/"
+        ]
+      },
+      {
+        "id": "product.examples",
+        "kind": "product-area",
+        "label": "examples/**",
+        "patterns": [
+          "examples/"
+        ]
+      },
+      {
+        "id": "product.documentation",
+        "kind": "documentation-area",
+        "label": "public docs and decisions",
+        "patterns": [
+          "README.md",
+          "CONTEXT.md",
+          "docs/"
+        ]
+      }
+    ]
+  },
+  "evidence": {
+    "artifactDir": ".kontourai/veritas/evidence",
+    "evidenceChecks": [
+      {
+        "id": "required-evidence-check",
+        "command": "npm run verify:static",
+        "method": "validation",
+        "summary": "Default repository evidenceCheck."
+      }
+    ],
+    "requiredEvidenceCheckIds": [
+      "required-evidence-check"
+    ],
+    "reportTransport": "local-json"
+  },
+  "activation": {
+    "aiInstructionFiles": []
+  }
+}

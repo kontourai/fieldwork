@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "fixture": "multilingual-alignment",
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "taskDigest": "sha256:7aeefeb0167b834b8f074e795925e7ba51c0c20e507458f9077263f1ba8d3f76",
+    "exampleDigests": [],
+    "rawKeys": [
+      "tokensUsed"
+    ]
+  },
+  "diagnostics": {
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": [],
+    "rawDiagnosticsIncluded": false
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "proposalDefaults": {
+    "inferenceType": "explicit",
+    "confidence": 1,
+    "extractor": "fieldwork-deterministic-v1"
+  },
+  "proposals": [
+    {
+      "fieldPath": "ja.status",
+      "value": "審査完了",
+      "valueType": "string",
+      "excerpt": "Japanese status: 審査完了",
+      "locator": "chars:30-51",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 51,
+          "index": 0,
+          "start": 30
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "ja.owner",
+      "value": "佐藤",
+      "valueType": "string",
+      "excerpt": "Japanese owner: 佐藤",
+      "locator": "chars:52-70",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 70,
+          "index": 0,
+          "start": 52
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "es.status",
+      "value": "revisión completa",
+      "valueType": "string",
+      "excerpt": "Spanish status: revisión completa",
+      "locator": "chars:71-104",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 104,
+          "index": 0,
+          "start": 71
+        },
+        "selection": "source-order"
+      }
+    },
+    {
+      "fieldPath": "es.owner",
+      "value": "Lucía",
+      "valueType": "string",
+      "excerpt": "Spanish owner: Lucía",
+      "locator": "chars:105-125",
+      "occurrence": {
+        "ambiguous": false,
+        "count": 1,
+        "hintUsed": false,
+        "resolverVersion": "exact-occurrence-v1",
+        "selected": {
+          "end": 125,
+          "index": 0,
+          "start": 105
+        },
+        "selection": "source-order"
+      }
+    }
+  ],
+  "reviewedDefaults": {
+    "claimType": "field",
+    "status": "verified",
+    "evidenceType": "document_citation",
+    "method": "extraction",
+    "collectedBy": "fieldwork-deterministic-v1",
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "outcome": {
+      "status": "success"
+    }
+  },
+  "reviewedClaims": [
+    {
+      "subjectType": "review",
+      "subjectId": "multilingual-demo",
+      "facet": "japanese",
+      "fieldPath": "ja.status",
+      "value": "審査完了",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:30-51",
+        "excerpt": "Japanese status: 審査完了",
+        "proposalIndex": 0,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "review",
+      "subjectId": "multilingual-demo",
+      "facet": "japanese",
+      "fieldPath": "ja.owner",
+      "value": "佐藤",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:52-70",
+        "excerpt": "Japanese owner: 佐藤",
+        "proposalIndex": 1,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "review",
+      "subjectId": "multilingual-demo",
+      "facet": "spanish",
+      "fieldPath": "es.status",
+      "value": "revisión completa",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:71-104",
+        "excerpt": "Spanish status: revisión completa",
+        "proposalIndex": 2,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    },
+    {
+      "subjectType": "review",
+      "subjectId": "multilingual-demo",
+      "facet": "spanish",
+      "fieldPath": "es.owner",
+      "value": "Lucía",
+      "impactLevel": "medium",
+      "evidence": {
+        "locator": "chars:105-125",
+        "excerpt": "Spanish owner: Lucía",
+        "proposalIndex": 3,
+        "valueType": {
+          "type": "string",
+          "origin": "explicit"
+        }
+      }
+    }
+  ]
+}

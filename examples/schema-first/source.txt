@@ -1,0 +1,8 @@
+Structured intake
+
+Priority: high
+Tags: ["security","privacy","review"]
+Owner: fieldwork
+Required: true
+Assessment score: 12.5
+Nested summary: {"text":"review gate requires exact source evidence"}
