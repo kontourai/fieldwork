@@ -1,9 +1,11 @@
 import {
   createDispatchRuntime,
+  FileAuthorizationLedger,
   type DispatchReceipt,
   type ExecutionBudget,
   type ExecutionCandidate,
 } from "@kontourai/dispatch";
+import { invocationDigest } from "@kontourai/relay";
 import type { ExtractionProvider } from "@kontourai/traverse";
 import { createRelayExtractionProvider } from "@kontourai/traverse/relay";
 import {
@@ -23,7 +25,12 @@ export interface FieldworkRuntimeSession {
   readonly execution: FieldworkStoredExecution;
 }
 
-export function createFieldworkRuntimeSession(binding: FieldworkRuntimeBinding): FieldworkRuntimeSession {
+export interface FieldworkRuntimeSessionOptions {
+  readonly authorizationId: string;
+  readonly authorizationRoot: string;
+}
+
+export function createFieldworkExecutionIdentity(binding: FieldworkRuntimeBinding): FieldworkExecutionIdentity {
   validateRuntimeBinding(binding);
   const minimumFidelity = binding.minimumStructuredToolsFidelity ?? "native";
   const maxOutputTokens = binding.maxOutputTokens ?? 2_048;
@@ -41,22 +48,49 @@ export function createFieldworkRuntimeSession(binding: FieldworkRuntimeBinding):
     role: binding.role,
     candidates: identities,
     budget: { ...binding.budget },
+    authorization: {
+      mode: "file-ledger-v1",
+      ...(binding.maxTokensPerAttempt === undefined ? {} : {
+        maxTokensPerAttempt: binding.maxTokensPerAttempt,
+      }),
+    },
     minimumStructuredToolsFidelity: minimumFidelity,
     maxOutputTokens,
   };
+  fieldworkStoredExecutionSchema.shape.identity.parse(identity);
+  return identity;
+}
+
+export function createFieldworkRuntimeSession(
+  binding: FieldworkRuntimeBinding,
+  options: FieldworkRuntimeSessionOptions,
+): FieldworkRuntimeSession {
+  const identity = createFieldworkExecutionIdentity(binding);
+  const minimumFidelity = identity.minimumStructuredToolsFidelity;
+  const maxOutputTokens = identity.maxOutputTokens;
   const receipts: DispatchReceipt[] = [];
+  const authorizationLedger = new FileAuthorizationLedger({ root: options.authorizationRoot });
+  let invocationSequence = 0;
   const runtimes = new Map(binding.candidates.map((candidate) => [candidate.runtime.id, candidate.runtime]));
   const candidates: ExecutionCandidate[] = binding.candidates.map((candidate, index) => ({
     id: candidate.id,
     runtimeId: candidate.runtime.id,
     evidence: {
       level: "declared",
-      capabilities: identities[index]!.structuredToolsFidelity === "unavailable" ? [] : ["structured-tools"],
-      structuredToolsFidelity: identities[index]!.structuredToolsFidelity,
+      capabilities: identity.candidates[index]!.structuredToolsFidelity === "unavailable" ? [] : ["structured-tools"],
+      structuredToolsFidelity: identity.candidates[index]!.structuredToolsFidelity,
       source: "runtime-capabilities",
     },
     ...(candidate.estimatedUsdPer1kTokens === undefined ? {} : {
       estimatedUsdPer1kTokens: candidate.estimatedUsdPer1kTokens,
+    }),
+    ...(binding.maxTokensPerAttempt === undefined ? {} : {
+      worstCaseUsage: {
+        maxTokens: binding.maxTokensPerAttempt,
+        ...(candidate.estimatedUsdPer1kTokens === undefined ? {} : {
+          maxCostUsd: binding.maxTokensPerAttempt * candidate.estimatedUsdPer1kTokens / 1_000,
+        }),
+      },
     }),
   }));
   const runtime = createDispatchRuntime({
@@ -70,18 +104,36 @@ export function createFieldworkRuntimeSession(binding: FieldworkRuntimeBinding):
       usage: true,
     },
     runtimes: { get: (runtimeId) => runtimes.get(runtimeId) },
-    plan: () => ({
-      schemaVersion: 1,
-      role: binding.role,
-      candidates,
-      budget: remainingBudget(binding.budget, receipts),
-      policy: {
-        requiredCapabilities: ["structured-tools"],
-        minimumEvidence: "declared",
-        minimumStructuredToolsFidelity: minimumFidelity,
-        retryRuntimeFailures: true,
-      },
-    }),
+    authorizationLedger,
+    plan: (request) => {
+      invocationSequence += 1;
+      return {
+        schemaVersion: 1,
+        role: binding.role,
+        candidates,
+        budget: remainingBudget(binding.budget, receipts),
+        authorization: {
+          schemaVersion: 1,
+          id: options.authorizationId,
+          invocationId: `invoke-${invocationSequence}-${invocationDigest(request).slice(0, 32)}`,
+          limits: {
+            maxAttempts: binding.budget.maxAttempts,
+            ...(binding.budget.maxTotalTokens === undefined ? {} : {
+              maxTotalTokens: binding.budget.maxTotalTokens,
+            }),
+            ...(binding.budget.maxCostUsd === undefined ? {} : {
+              maxCostUsd: binding.budget.maxCostUsd,
+            }),
+          },
+        },
+        policy: {
+          requiredCapabilities: ["structured-tools"],
+          minimumEvidence: "declared",
+          minimumStructuredToolsFidelity: minimumFidelity,
+          retryRuntimeFailures: true,
+        },
+      };
+    },
     onReceipt: (receipt) => {
       if (receipts.length >= MAX_RUNTIME_RECEIPTS) throw new Error("Fieldwork runtime receipt limit reached");
       receipts.push(receipt);

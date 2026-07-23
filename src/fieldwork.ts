@@ -13,16 +13,14 @@ import { parseReviewedExport, type FieldworkRunResult, type ReviewedExportV1, ty
 import { createDeterministicProvider } from "./deterministic-provider.js";
 import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun } from "./run-store.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
-import { createFieldworkRuntimeSession } from "./runtime-session.js";
+import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
 
 export async function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   const taskText = await boundedInput(options.taskPath, FIELDWORK_LIMITS.taskBytes, "task");
   const source = await boundedInput(options.sourcePath, FIELDWORK_LIMITS.sourceBytes, "source");
   const task = parseFieldworkTask(JSON.parse(taskText));
   const sourceDigest = createHash("sha256").update(source).digest("hex");
-  const runtimeSession = options.runtime ? createFieldworkRuntimeSession(options.runtime) : undefined;
-  if (runtimeSession) assertPortableOutput(runtimeSession.execution);
-  const executionIdentity = runtimeSession?.execution.identity;
+  const executionIdentity = options.runtime ? createFieldworkExecutionIdentity(options.runtime) : undefined;
   const identityInput = `${sourceDigest}:${canonicalJson(task)}${executionIdentity ? `:${canonicalJson(executionIdentity)}` : ""}`;
   const runIdentity = createHash("sha256").update(identityInput).digest("hex").slice(0, 16);
   const runResource = `fieldwork-run:v1:${task.metadata.name}:${runIdentity}`;
@@ -38,6 +36,11 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
       runDirectory: existing.directory, runResource, proposalCount: existing.envelope.result.proposals.length
     };
   }
+  const runtimeSession = options.runtime ? createFieldworkRuntimeSession(options.runtime, {
+    authorizationId: `fieldwork:${runIdentity}`,
+    authorizationRoot: join(root, ".dispatch-authorizations"),
+  }) : undefined;
+  if (runtimeSession) assertPortableOutput(runtimeSession.execution);
   const taskSpec = traverseTask(task);
   const sourceRef = `fieldwork-source:v1:${task.metadata.name}:${sourceDigest}`;
   const store = createInMemoryPreparedArtifactStore();

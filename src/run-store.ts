@@ -237,13 +237,29 @@ export function assertPortableOutput(value: unknown): void {
     if (Array.isArray(entry)) return entry.forEach(visit);
     if (!entry || typeof entry !== "object") return;
     for (const [key, nested] of Object.entries(entry)) {
-      if (/^(?:api[_-]?key|authorization|secret|password|access[_-]?token|aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|raw(?:Provider)?Diagnostics?)$/i.test(key)) {
+      if (/^authorization$/i.test(key) && !isPortableAuthorizationMetadata(nested)) {
+        throw new Error("Portable output contains a forbidden credential or raw diagnostic field");
+      }
+      if (/^(?:api[_-]?key|secret|password|access[_-]?token|aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|raw(?:Provider)?Diagnostics?)$/i.test(key)) {
         throw new Error("Portable output contains a forbidden credential or raw diagnostic field");
       }
       visit(nested);
     }
   };
   visit(value);
+}
+
+function isPortableAuthorizationMetadata(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.some((key) => !["id", "invocationId", "outcome", "mode", "maxTokensPerAttempt"].includes(key))) return false;
+  if (record.mode !== undefined && record.mode !== "file-ledger-v1") return false;
+  if (record.outcome !== undefined && !["reserved", "settled", "exhausted"].includes(String(record.outcome))) return false;
+  if (record.maxTokensPerAttempt !== undefined
+    && (!Number.isSafeInteger(record.maxTokensPerAttempt) || Number(record.maxTokensPerAttempt) < 1)) return false;
+  return ["id", "invocationId"].every((key) => record[key] === undefined
+    || (typeof record[key] === "string" && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(record[key])));
 }
 
 export function resolveRunReference(run: string): string {
