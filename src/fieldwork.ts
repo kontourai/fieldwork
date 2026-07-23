@@ -47,7 +47,10 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   const result = await extract({
     content: source, contentType: options.sourcePath.endsWith(".html") ? "html" : "text", sourceRef,
     targetSchema: taskSpec.targetSchema, taskSpec, provider: runtimeSession?.provider ?? createDeterministicProvider(task),
-    preparedArtifact: { store, sourceSnapshotRef: sourceRef }
+    preparedArtifact: { store, sourceSnapshotRef: sourceRef },
+    ...(options.runtime?.concurrency === undefined ? {} : { concurrency: options.runtime.concurrency }),
+    ...(options.runtime?.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.runtime.maxProviderCalls }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (result.error || !result.preparedArtifact) throw new Error(result.error ?? "Traverse did not produce a prepared artifact");
   const resolution = await resolvePreparedArtifact(result.preparedArtifact, store);
