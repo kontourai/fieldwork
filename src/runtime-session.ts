@@ -56,6 +56,7 @@ export function createFieldworkExecutionIdentity(binding: FieldworkRuntimeBindin
     },
     providerOperations: {
       concurrency: binding.concurrency ?? 1,
+      batchSize: binding.batchSize ?? 1,
       ...(binding.maxProviderCalls === undefined ? {} : {
         maxProviderCalls: binding.maxProviderCalls,
       }),
@@ -78,6 +79,11 @@ export function createFieldworkRuntimeSession(
   const authorizationLedger = new FileAuthorizationLedger({ root: options.authorizationRoot });
   let invocationSequence = 0;
   const runtimes = new Map(binding.candidates.map((candidate) => [candidate.runtime.id, candidate.runtime]));
+  const primaryCapabilities = binding.candidates[0]!.runtime.capabilities();
+  const physicalBatch = primaryCapabilities.physicalBatch === true
+    && typeof binding.candidates[0]!.runtime.invokeBatch === "function"
+    && Number.isInteger(primaryCapabilities.maxBatchSize)
+    && primaryCapabilities.maxBatchSize! > 0;
   const candidates: ExecutionCandidate[] = binding.candidates.map((candidate, index) => ({
     id: candidate.id,
     runtimeId: candidate.runtime.id,
@@ -108,6 +114,10 @@ export function createFieldworkRuntimeSession(
       streaming: false,
       abort: true,
       usage: true,
+      ...(physicalBatch ? {
+        physicalBatch: true,
+        maxBatchSize: primaryCapabilities.maxBatchSize!,
+      } : {}),
     },
     runtimes: { get: (runtimeId) => runtimes.get(runtimeId) },
     authorizationLedger,

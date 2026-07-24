@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   ModelInvocationError,
+  type ModelBatchInvocationOutcome,
   type ModelInvocationRequest,
   type ModelInvocationResult,
   type ModelRuntime,
@@ -17,6 +18,95 @@ const markers = [
   { text: "Second: Beta", fieldPath: "record.second", value: "Beta", at: 12_500 },
   { text: "Third: Gamma", fieldPath: "record.third", value: "Gamma", at: 24_000 },
 ] as const;
+
+test("routed physical batching keeps one provider operation, positional fallback, and durable receipts", async () => {
+  const fixture = await providerFixture("physical-batch");
+  const batchRequests: ModelInvocationRequest[][] = [];
+  const fallbackRequests: ModelInvocationRequest[] = [];
+  const primary: ModelRuntime = {
+    id: "fake:physical-primary",
+    capabilities: () => ({
+      structuredTools: true,
+      structuredToolsFidelity: "native",
+      outputTokenLimitFidelity: "native",
+      streaming: false,
+      abort: true,
+      usage: true,
+      physicalBatch: true,
+      maxBatchSize: 8,
+    }),
+    async invoke() {
+      throw new Error("Fieldwork must not simulate a physical batch with invoke()");
+    },
+    async invokeBatch(requests) {
+      batchRequests.push([...requests]);
+      return requests.map((request, index): ModelBatchInvocationOutcome => index === 1
+        ? {
+            status: "rejected",
+            reason: {
+              code: "PROVIDER_UNAVAILABLE",
+              message: "content-free primary failure",
+              retryable: true,
+            },
+          }
+        : { status: "fulfilled", value: resultFor(markerFor(request)) });
+    },
+  };
+  const fallback: ModelRuntime = {
+    id: "fake:item-fallback",
+    capabilities: () => ({
+      structuredTools: true,
+      structuredToolsFidelity: "native",
+      outputTokenLimitFidelity: "native",
+      streaming: false,
+      abort: true,
+      usage: true,
+    }),
+    async invoke(request) {
+      fallbackRequests.push(request);
+      return resultFor(markerFor(request));
+    },
+  };
+
+  const result = await runFieldwork({
+    ...fixture,
+    runtime: {
+      role: "fieldwork-extraction",
+      candidates: [
+        { id: "physical-primary", runtime: primary },
+        { id: "item-fallback", runtime: fallback },
+      ],
+      budget: { maxAttempts: 8, maxTotalTokens: 8_000, maxElapsedMs: 60_000 },
+      maxTokensPerAttempt: 1_000,
+      maxOutputTokens: 256,
+      concurrency: 3,
+      batchSize: 3,
+      maxProviderCalls: 1,
+    },
+  });
+  const stored = await storedArtifacts(result.runDirectory);
+  const receipts = stored.run.execution.receipts;
+
+  assert.equal(batchRequests.length, 1);
+  assert.equal(batchRequests[0].length, 3);
+  assert.equal(fallbackRequests.length, 1);
+  assert.deepEqual(
+    stored.envelope.result.proposals.map((proposal: { fieldPath: string }) => proposal.fieldPath),
+    markers.map((marker) => marker.fieldPath),
+  );
+  assert.equal(new Set(receipts.map((receipt: { physicalBatch: { operationId: string } }) =>
+    receipt.physicalBatch.operationId)).size, 1);
+  assert.deepEqual(
+    receipts.map((receipt: { physicalBatch: { itemIndex: number } }) => receipt.physicalBatch.itemIndex),
+    [0, 1, 2],
+  );
+  assert.ok(receipts.every((receipt: { physicalBatch: { itemCount: number } }) =>
+    receipt.physicalBatch.itemCount === 3));
+  assert.deepEqual(receipts.map((receipt: { attempts: unknown[] }) => receipt.attempts.length), [1, 2, 1]);
+  assert.equal(receipts[1].attempts[0].reservationState, "reserved");
+  assert.equal(receipts[1].attempts[1].reservationState, "settled");
+  assert.doesNotMatch(JSON.stringify(stored.run.execution), /source\\.txt|First: Alpha|Second: Beta|Third: Gamma/);
+});
 
 test("out-of-order concurrent completion persists source-ordered proposals and invocation-ordered receipts", async () => {
   const fixture = await providerFixture("ordered");

@@ -10,4 +10,6 @@ The root package facade owns only Fieldwork's versioned JSON transport. It does 
 
 Runtime binding is launch policy, not task meaning. Relay owns invocation portability, Dispatch owns ordered routing and receipts, and Datum owns configured role resolution. Fieldwork records their secret-free identities and receipts, then adapts the selected runtime through Traverse. Conduit remains the host lifecycle and asset-installation boundary; Fieldwork does not use it as a model-invocation layer.
 
+Physical batching remains capability-gated across that same path. Traverse groups chunks, Dispatch performs per-item authorization and fallback, and Relay owns the one-call runtime operation. Fieldwork records requested batch policy and content-free operation/item receipt identity; it never infers batching from concurrency.
+
 Source authority remains per source. Repeated inputs produce an ordered collection of independent child runs rather than collapsing distinct snapshot authorities into one Survey review record. Forage owns network policy and snapshot integrity; Fieldwork owns application store selection and portable acquisition/batch transports. Traverse owns format preparation. Binary preparation is capability-explicit: a host supplies PDF or OCR adapters, and the adapter identity is part of the durable run identity.

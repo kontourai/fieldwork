@@ -37,6 +37,8 @@ export interface FieldworkRuntimeBinding {
   readonly maxTokensPerAttempt?: number;
   /** Maximum chunk-level model invocations in flight. */
   readonly concurrency?: number;
+  /** Logical chunks requested per truthful physical provider batch. */
+  readonly batchSize?: number;
   /** Maximum Traverse provider operations; Dispatch separately caps model attempts. */
   readonly maxProviderCalls?: number;
   readonly minimumStructuredToolsFidelity?: "native" | "prompted";
@@ -60,6 +62,7 @@ export interface FieldworkExecutionIdentity {
   };
   readonly providerOperations: {
     readonly concurrency: number;
+    readonly batchSize: number;
     readonly maxProviderCalls?: number;
   };
   readonly minimumStructuredToolsFidelity: "native" | "prompted";
@@ -79,6 +82,7 @@ export interface ProfileRuntimeBindingOptions {
   readonly maxOutputTokens?: number;
   readonly maxTokensPerAttempt?: number;
   readonly concurrency?: number;
+  readonly batchSize?: number;
   readonly maxProviderCalls?: number;
   readonly cwd?: string;
   readonly allowPromptedStructuredOutput?: boolean;
@@ -91,6 +95,7 @@ export interface DatumRuntimeBindingOptions {
   readonly maxOutputTokens?: number;
   readonly maxTokensPerAttempt?: number;
   readonly concurrency?: number;
+  readonly batchSize?: number;
   readonly maxProviderCalls?: number;
   readonly estimatedUsdPer1kTokens?: number;
   readonly resolve?: ResolveOptions;
@@ -137,6 +142,7 @@ export const fieldworkStoredExecutionSchema = z.object({
       }).strict(),
       providerOperations: z.object({
         concurrency: z.number().int().positive().max(32),
+        batchSize: z.number().int().positive().max(128),
         maxProviderCalls: z.number().int().positive().optional(),
       }).strict(),
       minimumStructuredToolsFidelity: z.enum(["native", "prompted"]),
@@ -153,6 +159,11 @@ export const fieldworkStoredExecutionSchema = z.object({
     totalElapsedMs: z.number().finite().nonnegative(),
     totalTokens: z.number().int().nonnegative(),
     estimatedCostUsd: z.number().finite().nonnegative(),
+    physicalBatch: z.object({
+      operationId: boundedId,
+      itemIndex: z.number().int().nonnegative(),
+      itemCount: z.number().int().positive().max(128),
+    }).strict().optional(),
     authorization: z.object({
       id: boundedId,
       invocationId: boundedId,
@@ -188,6 +199,7 @@ export function createProfileRuntimeBinding(options: ProfileRuntimeBindingOption
       maxTokensPerAttempt: options.maxTokensPerAttempt,
     }),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
+    ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
     ...(options.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.maxProviderCalls }),
     ...(options.minimumStructuredToolsFidelity ? {
       minimumStructuredToolsFidelity: options.minimumStructuredToolsFidelity,
@@ -236,6 +248,7 @@ export function createDatumRuntimeBinding(options: DatumRuntimeBindingOptions): 
       maxTokensPerAttempt: options.maxTokensPerAttempt,
     }),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
+    ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
     ...(options.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.maxProviderCalls }),
     ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
   };
@@ -253,6 +266,7 @@ export function validateRuntimeBinding(binding: FieldworkRuntimeBinding): void {
   if (binding.maxOutputTokens !== undefined) z.number().int().positive().parse(binding.maxOutputTokens);
   if (binding.maxTokensPerAttempt !== undefined) z.number().int().positive().parse(binding.maxTokensPerAttempt);
   if (binding.concurrency !== undefined) z.number().int().positive().max(32).parse(binding.concurrency);
+  if (binding.batchSize !== undefined) z.number().int().positive().max(128).parse(binding.batchSize);
   if (binding.maxProviderCalls !== undefined) z.number().int().positive().parse(binding.maxProviderCalls);
   const candidateIds = new Set<string>();
   const runtimeIds = new Set<string>();

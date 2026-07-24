@@ -178,6 +178,7 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
   };
   const maxOutputTokens = positiveInteger(args, "--max-output-tokens", 2_048);
   const concurrency = positiveInteger(args, "--concurrency", 1);
+  const batchSize = positiveInteger(args, "--batch-size", 1);
   const maxProviderCalls = optionalPositiveInteger(args, "--max-provider-calls");
   if (datumRole) {
     return createDatumRuntimeBinding({
@@ -185,6 +186,7 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
       budget,
       maxOutputTokens,
       concurrency,
+      batchSize,
       ...(maxProviderCalls === undefined ? {} : { maxProviderCalls }),
       ...(maxTokensPerAttempt === undefined ? {} : { maxTokensPerAttempt }),
       estimatedUsdPer1kTokens: estimatedUsdPer1kTokens!,
@@ -198,6 +200,7 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
     budget,
     maxOutputTokens,
     concurrency,
+    batchSize,
     ...(maxProviderCalls === undefined ? {} : { maxProviderCalls }),
     ...(maxTokensPerAttempt === undefined ? {} : { maxTokensPerAttempt }),
     cwd: process.cwd(),
