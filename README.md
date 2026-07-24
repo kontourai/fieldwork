@@ -151,6 +151,13 @@ Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bo
 
 Run `npm run verify` for type, unit, example, long-input, provider, and document-format conformance; CLI and API behavior; rendered keyboard accessibility; browser visual/conflict checks; build; pack/install/bin smoke; content-boundary and decision checks; and Veritas readiness. Install Chromium first with `npx playwright install chromium` when it is not already available.
 
+Pixel snapshots are controlled-renderer evidence, not a portable Linux-distro
+contract. The default browser suite compares the committed macOS baselines.
+Release runners set `FIELDWORK_VISUAL_SNAPSHOTS=0`; they still execute every
+browser journey and its accessibility, interaction, responsive geometry,
+persistence, security, and content assertions while avoiding font-package
+rendering noise.
+
 `npm audit` currently reports three linked moderate development-only entries under `@kontourai/veritas@1.5.3` through `@modelcontextprotocol/sdk` and `@hono/node-server`. npm offers only an incompatible Veritas `0.3.0` downgrade, so Fieldwork does not apply it. `npm audit --omit=dev` is clean. The packed runtime does not install Veritas, Playwright, Vite, tsx, `@kontourai/ui`, React, or React DOM; the latter three are bundled browser build inputs. This is an explicit upstream tooling residual, not a zero-advisory claim.
 
 ## License

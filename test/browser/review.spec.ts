@@ -11,6 +11,8 @@ import {
   formatSourceAdapters,
 } from "../format-fixtures.js";
 
+const visualSnapshotsEnabled = process.env.FIELDWORK_VISUAL_SNAPSHOTS !== "0";
+
 test("review links a grounded candidate to a durable browser decision", async ({ page }) => {
   const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser") });
   const server = await openRun(run.runDirectory);
@@ -27,7 +29,9 @@ test("review links a grounded candidate to a durable browser decision", async ({
     // Native select text/chevrons can vary slightly across otherwise identical
     // Chromium captures. Keep the allowance well below 0.1% of this full-page
     // image while structural and interaction assertions verify the controls.
-    await expect(page).toHaveScreenshot("fieldwork-review.png", { fullPage: true, maxDiffPixels: 1_500 });
+    if (visualSnapshotsEnabled) {
+      await expect(page).toHaveScreenshot("fieldwork-review.png", { fullPage: true, maxDiffPixels: 1_500 });
+    }
   } finally { await server.close(); }
 });
 
@@ -104,7 +108,7 @@ test("composed Survey workbench bounds and searches a thousand review items", as
   }
 });
 
-test("review has a mobile visual baseline", async ({ page }) => {
+test("review has a responsive mobile layout and optional visual baseline", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-mobile") });
   const server = await openRun(run.runDirectory);
@@ -120,7 +124,9 @@ test("review has a mobile visual baseline", async ({ page }) => {
     await expect(page.getByTestId("could-not-confirm")).toBeVisible();
     const geometry = await page.evaluate(() => { const copy = document.querySelector(".topbar-copy")!.getBoundingClientRect(), meta = document.querySelector(".topbar-meta")!.getBoundingClientRect(); return { body: document.body.scrollWidth === document.body.clientWidth, doc: document.documentElement.scrollWidth === document.documentElement.clientWidth, overlap: !(copy.bottom <= meta.top || meta.bottom <= copy.top || copy.right <= meta.left || meta.right <= copy.left), brand: getComputedStyle(document.documentElement).getPropertyValue("--k-brand").trim(), topbar: getComputedStyle(document.querySelector(".topbar")!).backgroundColor }; });
     expect(geometry.body).toBe(true); expect(geometry.doc).toBe(true); expect(geometry.overlap).toBe(false); expect(geometry.brand).not.toBe(""); expect(geometry.topbar).not.toBe("rgba(0, 0, 0, 0)");
-    await expect(page).toHaveScreenshot("fieldwork-review-mobile.png", { fullPage: true, maxDiffPixels: 500 });
+    if (visualSnapshotsEnabled) {
+      await expect(page).toHaveScreenshot("fieldwork-review-mobile.png", { fullPage: true, maxDiffPixels: 500 });
+    }
   }
   finally { await server.close(); }
 });
@@ -170,10 +176,12 @@ test("format-native PDF and OCR context is visible in the shared inspector", asy
     await expect(candidate).toBeVisible();
     await expect(page.getByLabel(/Prepared source for fieldwork-import:format-conformance/))
       .toContainText("Status: Active");
-    await expect(page).toHaveScreenshot("fieldwork-format-inspection.png", {
-      fullPage: true,
-      maxDiffPixels: 1_500,
-    });
+    if (visualSnapshotsEnabled) {
+      await expect(page).toHaveScreenshot("fieldwork-format-inspection.png", {
+        fullPage: true,
+        maxDiffPixels: 1_500,
+      });
+    }
   } finally {
     await pdfServer.close();
   }

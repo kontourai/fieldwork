@@ -24,6 +24,12 @@ test("build removes obsolete declaration and runtime artifacts before emitting",
   assert.match(packageJson.scripts.clean, /rmSync\('dist'/);
 });
 
+test("release verification keeps browser conformance but disables non-portable pixels", async () => {
+  const workflow = await readFile(".github/workflows/publish-npm.yml", "utf8");
+  assert.match(workflow, /FIELDWORK_VISUAL_SNAPSHOTS:\s*'0'/);
+  assert.match(workflow, /npm run verify:static/);
+});
+
 test("package metadata keeps browser build inputs out of runtime dependencies", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   assert.equal(packageJson.license, "Apache-2.0");
