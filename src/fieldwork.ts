@@ -62,6 +62,7 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     ...(source.pdfTextExtractor === undefined ? {} : { pdfTextExtractor: source.pdfTextExtractor }),
     ...(source.imageTextExtractor === undefined ? {} : { imageTextExtractor: source.imageTextExtractor }),
     ...(options.runtime?.concurrency === undefined ? {} : { concurrency: options.runtime.concurrency }),
+    ...(options.runtime?.batchSize === undefined ? {} : { batchSize: options.runtime.batchSize }),
     ...(options.runtime?.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.runtime.maxProviderCalls }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
