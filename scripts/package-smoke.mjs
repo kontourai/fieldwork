@@ -25,10 +25,13 @@ if (!run.ok) throw new Error("Installed package CLI did not complete the package
 const probe = `import { openRun } from "@kontourai/fieldwork"; const service = await openRun(${JSON.stringify(run.runDirectory)}); try { const pageResponse = await fetch(service.baseUrl + "/"); const page = await pageResponse.text(); const asset = page.match(/src=\"([^\"]+\\.js)\"/)?.[1]; if (!asset) throw new Error("installed browser did not declare a JavaScript asset"); const assetResponse = await fetch(new URL(asset, service.baseUrl)); const body = await assetResponse.text(); if (!assetResponse.ok || !assetResponse.headers.get("content-type")?.startsWith("text/javascript") || body.length < 100) throw new Error("installed JavaScript asset response was invalid"); } finally { await service.close(); }`;
 execFileSync(process.execPath, ["--input-type=module", "--eval", probe], { cwd: work, stdio: "inherit" });
 writeFileSync(join(work, "consumer.mts"), `import {
-  FIELDWORK_LIMITS, fieldworkRunViewSchema, fieldworkTaskSchema, openRun,
+  FIELDWORK_LIMITS, acquireFieldwork, fieldworkAcquisitionResultSchema,
+  fieldworkBatchRunResultSchema, fieldworkRunResultSchema, fieldworkRunViewSchema,
+  fieldworkTaskSchema, openRun,
   parseFieldworkTask, preparedArtifactViewSchema, reviewedExport,
-  reviewedExportSchema, reviewMutationResponseSchema, runFieldwork,
-  type FieldworkRunViewV1, type FieldworkTask, type ReviewedExportV1
+  reviewedExportSchema, reviewMutationResponseSchema, runFieldwork, runFieldworkBatch,
+  type FieldworkRunViewV1, type FieldworkSourceAdapters, type FieldworkTask,
+  type ReviewedExportV1
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
 import {
@@ -42,9 +45,16 @@ void [FIELDWORK_LIMITS, fieldworkTaskSchema, preparedArtifactViewSchema, reviewM
 const runtime: FieldworkRuntimeBinding = createProfileRuntimeBinding({
   profiles: ["codex:gpt-5"], budget: { maxAttempts: 1 }
 });
+const adapters: FieldworkSourceAdapters = {
+  pdf: { id: "consumer-pdf-v1", extract: { extract: () => ({ text: "", pageOffsets: [0] }) } },
+  image: { id: "consumer-ocr-v1", extract: { extract: async () => ({ text: "" }) } }
+};
 void fieldworkStoredExecutionSchema;
+void [fieldworkAcquisitionResultSchema, fieldworkBatchRunResultSchema, fieldworkRunResultSchema];
+void acquireFieldwork({ url: "https://example.com", snapshotRoot: "snapshots" });
 void runFieldwork({ taskPath: "task.json", sourcePath: "source.txt" });
-void runFieldwork({ taskPath: "task.json", sourcePath: "source.txt", runtime });
+void runFieldwork({ taskPath: "task.json", sourcePath: "source.pdf", runtime, sourceAdapters: adapters });
+void runFieldworkBatch({ taskPath: "task.json", sources: [{ id: "one", sourcePath: "source.txt" }] });
 void openRun("run");
 void reviewedExport("run");
 `);

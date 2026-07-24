@@ -4,13 +4,25 @@ import {
   fieldworkTaskSchema as internalTaskSchema,
   parseFieldworkTask as internalParseTask
 } from "./contracts.js";
-import { runFieldwork as internalRun, reviewedExport as internalExport } from "./fieldwork.js";
+import {
+  runFieldwork as internalRun,
+  runFieldworkBatch as internalRunBatch,
+  reviewedExport as internalExport,
+} from "./fieldwork.js";
+import { acquireFieldwork as internalAcquire } from "./acquisition.js";
 import { openRun as internalOpen } from "./server.js";
 import {
   fieldworkRunViewSchema as internalRunViewSchema,
+  fieldworkRunResultSchema as internalRunResultSchema,
+  fieldworkAcquisitionResultSchema as internalAcquisitionResultSchema,
+  fieldworkBatchRunResultSchema as internalBatchRunResultSchema,
   preparedArtifactViewSchema as internalPreparedViewSchema,
   reviewedExportSchema as internalReviewedExportSchema,
   reviewMutationResponseSchema as internalMutationSchema,
+  type FieldworkAcquisitionOptions,
+  type FieldworkAcquisitionResult,
+  type FieldworkBatchOptions,
+  type FieldworkBatchRunResult,
   type FieldworkRunResult,
   type FieldworkRunViewV1,
   type FieldworkTask,
@@ -25,6 +37,9 @@ import { fieldworkHostDescriptor } from "./host-descriptor.js";
 export const FIELDWORK_LIMITS = internalLimits;
 export const fieldworkTaskSchema: z.ZodType<FieldworkTask> = internalTaskSchema;
 export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = internalRunViewSchema;
+export const fieldworkRunResultSchema: z.ZodType<FieldworkRunResult> = internalRunResultSchema;
+export const fieldworkAcquisitionResultSchema: z.ZodType<FieldworkAcquisitionResult> = internalAcquisitionResultSchema;
+export const fieldworkBatchRunResultSchema: z.ZodType<FieldworkBatchRunResult> = internalBatchRunResultSchema;
 export const reviewMutationResponseSchema: z.ZodType<ReviewMutationResponseV1> = internalMutationSchema;
 export const preparedArtifactViewSchema: z.ZodType<PreparedArtifactViewV1> = internalPreparedViewSchema;
 export const reviewedExportSchema: z.ZodType<ReviewedExportV1> = internalReviewedExportSchema;
@@ -41,6 +56,12 @@ export function parseFieldworkTask(value: unknown): FieldworkTask {
 export function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   return internalRun(options);
 }
+export function runFieldworkBatch(options: FieldworkBatchOptions): Promise<FieldworkBatchRunResult> {
+  return internalRunBatch(options);
+}
+export function acquireFieldwork(options: FieldworkAcquisitionOptions): Promise<FieldworkAcquisitionResult> {
+  return internalAcquire(options);
+}
 export function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   return internalExport(runDirectory);
 }
@@ -48,7 +69,12 @@ export function openRun(runDirectory: string, port?: number): Promise<OpenRunSer
   return internalOpen(runDirectory, port);
 }
 export type {
-  FieldworkFailure, FieldworkRunResult, FieldworkRunViewV1, FieldworkTask,
+  FieldworkAcquisitionOptions, FieldworkAcquisitionResult, FieldworkBatchOptions,
+  FieldworkBatchRunResult, FieldworkBatchSource, FieldworkFailure, FieldworkRunResult,
+  FieldworkImageExtractedText, FieldworkPdfBoundingBox, FieldworkPdfExtractedText,
+  FieldworkPdfLayout, FieldworkPdfPageGeometry, FieldworkPdfTable,
+  FieldworkPdfTableCell, FieldworkPdfTextElement, FieldworkPdfTextRange,
+  FieldworkRunViewV1, FieldworkSourceAdapters, FieldworkTask,
   JsonObject, JsonPrimitive, JsonValue, OpenRunService, PreparedArtifactViewV1,
   ReviewedExportV1, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
 } from "./api-contracts.js";

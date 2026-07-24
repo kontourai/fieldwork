@@ -19,6 +19,25 @@ test("CLI accepts an explicit fixture binding without changing the task", async 
   assert.equal(JSON.parse(stdout).ok, true);
 });
 
+test("CLI runs repeated sources as one ordered batch result", async () => {
+  const root = await tempRoot("cli-batch");
+  const { stdout } = await exec(process.execPath, [
+    "--import", "tsx", "src/cli.ts", "run",
+    "--task", "examples/generic/task.json",
+    "--source", "examples/generic/source.txt",
+    "--source", "examples/generic/source.txt",
+    "--root", root,
+    "--json",
+  ]);
+  const result = JSON.parse(stdout);
+  assert.equal(result.ok, true);
+  assert.equal(result.kind, "FieldworkBatchRunResult");
+  assert.deepEqual(result.items.map((item: { id: string; ok: boolean }) => [item.id, item.ok]), [
+    ["source-1", true],
+    ["source-2", true],
+  ]);
+});
+
 test("CLI refuses unenforceable SDK cost ceilings before reading Datum configuration", async () => {
   await assert.rejects(
     () => exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--datum-role", "extraction-default", "--max-cost-usd", "1", "--json"]),

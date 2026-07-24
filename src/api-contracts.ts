@@ -7,9 +7,79 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export interface JsonObject { readonly [key: string]: JsonValue; }
 
+export interface FieldworkPdfTextRange {
+  readonly start: number;
+  readonly end: number;
+}
+export interface FieldworkPdfBoundingBox {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+export interface FieldworkPdfPageGeometry {
+  readonly pageNumber: number;
+  readonly width: number;
+  readonly height: number;
+  readonly unit: "points" | "pixels" | "normalized";
+  readonly rotation?: 0 | 90 | 180 | 270;
+}
+export interface FieldworkPdfTextElement {
+  readonly kind: "heading" | "paragraph" | "list" | "table" | "table-cell" | "figure" | "other";
+  readonly providerType?: string;
+  readonly pageNumber: number;
+  readonly range: FieldworkPdfTextRange;
+  readonly bounds?: FieldworkPdfBoundingBox;
+}
+export interface FieldworkPdfTableCell {
+  readonly rowIndex: number;
+  readonly columnIndex: number;
+  readonly rowSpan?: number;
+  readonly columnSpan?: number;
+  readonly range: FieldworkPdfTextRange;
+  readonly bounds?: FieldworkPdfBoundingBox;
+}
+export interface FieldworkPdfTable {
+  readonly pageNumber: number;
+  readonly bounds?: FieldworkPdfBoundingBox;
+  readonly cells: FieldworkPdfTableCell[];
+}
+export interface FieldworkPdfLayout {
+  readonly pages?: FieldworkPdfPageGeometry[];
+  readonly elements: FieldworkPdfTextElement[];
+  readonly tables?: FieldworkPdfTable[];
+}
+export interface FieldworkPdfExtractedText {
+  readonly text: string;
+  readonly pageOffsets?: number[];
+  readonly layout?: FieldworkPdfLayout;
+  readonly warnings?: string[];
+}
+export interface FieldworkImageExtractedText {
+  readonly text: string;
+  readonly warnings?: string[];
+}
+export interface FieldworkSourceAdapters {
+  readonly pdf?: {
+    readonly id: string;
+    readonly extract: {
+      extract(bytes: Uint8Array): FieldworkPdfExtractedText | Promise<FieldworkPdfExtractedText>;
+    };
+  };
+  readonly image?: {
+    readonly id: string;
+    readonly extract: {
+      extract(bytes: Uint8Array): Promise<FieldworkImageExtractedText>;
+    };
+  };
+}
+
 export interface RunOptions {
   readonly taskPath: string;
-  readonly sourcePath: string;
+  readonly sourcePath?: string;
+  readonly snapshotRef?: string;
+  readonly snapshotRoot?: string;
+  readonly sourceAdapters?: FieldworkSourceAdapters;
   readonly root?: string;
   readonly runtime?: FieldworkRuntimeBinding;
   readonly signal?: AbortSignal;
@@ -20,6 +90,56 @@ export interface FieldworkRunResult {
   readonly runDirectory: string;
   readonly runResource: string;
   readonly proposalCount: number;
+}
+export interface FieldworkAcquisitionOptions {
+  readonly url: string;
+  readonly snapshotRoot?: string;
+  readonly maxPages?: number;
+  readonly maxDepth?: number;
+  readonly discovery?: "links" | "sitemap" | "both";
+  readonly render?: "never" | "on-shell" | "always";
+}
+export interface FieldworkAcquisitionResult {
+  readonly apiVersion: "fieldwork.kontourai.io/v1";
+  readonly kind: "FieldworkAcquisitionResult";
+  readonly pages: readonly {
+    readonly sourceRef: string;
+    readonly status: number;
+    readonly depth: number;
+    readonly rendered: boolean;
+    readonly warningCount: number;
+  }[];
+  readonly truncated: boolean;
+  readonly warningCount: number;
+}
+export interface FieldworkBatchSource {
+  readonly id: string;
+  readonly sourcePath?: string;
+  readonly snapshotRef?: string;
+  readonly snapshotRoot?: string;
+}
+export interface FieldworkBatchOptions {
+  readonly taskPath: string;
+  readonly sources: readonly FieldworkBatchSource[];
+  readonly root?: string;
+  readonly runtime?: FieldworkRuntimeBinding;
+  readonly sourceAdapters?: FieldworkSourceAdapters;
+  readonly signal?: AbortSignal;
+}
+export interface FieldworkBatchRunResult {
+  readonly apiVersion: "fieldwork.kontourai.io/v1";
+  readonly kind: "FieldworkBatchRunResult";
+  readonly items: readonly ({
+    readonly id: string;
+    readonly ok: true;
+    readonly run: FieldworkRunResult;
+  } | {
+    readonly id: string;
+    readonly ok: false;
+    readonly error: { readonly code: string; readonly message: string };
+  })[];
+  readonly succeeded: number;
+  readonly failed: number;
 }
 export interface FieldworkFailure {
   readonly ok: false;
@@ -111,6 +231,43 @@ const failureSchema = z.object({
   ok: z.literal(false),
   error: z.object({ code: z.string(), message: z.string() }).strict()
 }).strict();
+export const fieldworkRunResultSchema: z.ZodType<FieldworkRunResult> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v1"),
+  kind: z.literal("FieldworkRunResult"),
+  runDirectory: z.string(),
+  runResource: z.string(),
+  proposalCount: z.number().int().nonnegative(),
+}).strict();
+export const fieldworkAcquisitionResultSchema: z.ZodType<FieldworkAcquisitionResult> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v1"),
+  kind: z.literal("FieldworkAcquisitionResult"),
+  pages: z.array(z.object({
+    sourceRef: z.string(),
+    status: z.number().int().min(100).max(599),
+    depth: z.number().int().nonnegative(),
+    rendered: z.boolean(),
+    warningCount: z.number().int().nonnegative(),
+  }).strict()).max(500),
+  truncated: z.boolean(),
+  warningCount: z.number().int().nonnegative(),
+}).strict();
+export const fieldworkBatchRunResultSchema: z.ZodType<FieldworkBatchRunResult> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v1"),
+  kind: z.literal("FieldworkBatchRunResult"),
+  items: z.array(z.discriminatedUnion("ok", [
+    z.object({ id: z.string(), ok: z.literal(true), run: fieldworkRunResultSchema }).strict(),
+    z.object({ id: z.string(), ok: z.literal(false), error: z.object({
+      code: z.string(),
+      message: z.string(),
+    }).strict() }).strict(),
+  ])).min(1).max(128),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+}).strict().superRefine((value, context) => {
+  if (value.succeeded + value.failed !== value.items.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "batch counts do not match item count" });
+  }
+});
 
 export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
   apiVersion: z.literal("fieldwork.kontourai.io/v1"),

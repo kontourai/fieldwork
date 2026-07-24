@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  fieldworkRunViewSchema, preparedArtifactViewSchema, reviewMutationResponseSchema
+  fieldworkAcquisitionResultSchema, fieldworkBatchRunResultSchema,
+  fieldworkRunResultSchema, fieldworkRunViewSchema, preparedArtifactViewSchema,
+  reviewMutationResponseSchema,
 } from "../src/api-contracts.js";
 
 const runView = {
@@ -39,4 +41,43 @@ test("Fieldwork response schemas validate the complete advertised JSON transport
       digest: "a".repeat(64), contentLength: 8, file: "prepared.txt"
     }
   }).success, true);
+
+  const run = {
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "FieldworkRunResult",
+    runDirectory: "run-local",
+    runResource: "fieldwork-run:v1:generic:0123456789abcdef",
+    proposalCount: 1,
+  };
+  assert.equal(fieldworkRunResultSchema.safeParse(run).success, true);
+  assert.equal(fieldworkAcquisitionResultSchema.safeParse({
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "FieldworkAcquisitionResult",
+    pages: [{
+      sourceRef: "forage-snapshot:source?url=https%3A%2F%2Fexample.invalid&sha256=a",
+      status: 200,
+      depth: 0,
+      rendered: false,
+      warningCount: 0,
+    }],
+    truncated: false,
+    warningCount: 0,
+  }).success, true);
+  assert.equal(fieldworkBatchRunResultSchema.safeParse({
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "FieldworkBatchRunResult",
+    items: [
+      { id: "first", ok: true, run },
+      { id: "second", ok: false, error: { code: "SOURCE_FAILED", message: "Source processing failed" } },
+    ],
+    succeeded: 1,
+    failed: 1,
+  }).success, true);
+  assert.equal(fieldworkBatchRunResultSchema.safeParse({
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "FieldworkBatchRunResult",
+    items: [{ id: "first", ok: true, run }],
+    succeeded: 0,
+    failed: 0,
+  }).success, false);
 });
