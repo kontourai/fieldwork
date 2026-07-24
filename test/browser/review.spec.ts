@@ -1,7 +1,15 @@
 import { test, expect } from "@playwright/test";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runFieldwork } from "../../src/fieldwork.js";
 import { openRun } from "../../src/server.js";
 import { tempRoot } from "../helpers.js";
+import {
+  formatImageBytes,
+  formatPdfBytes,
+  formatSourceAdapters,
+} from "../format-fixtures.js";
 
 test("review links a grounded candidate to a durable browser decision", async ({ page }) => {
   const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser") });
@@ -61,5 +69,51 @@ test("a stale page surfaces the conflict and reconciles to server-owned review s
   } finally {
     await context.close();
     await server.close();
+  }
+});
+
+test("format-native PDF and OCR context is visible in the shared inspector", async ({ page }) => {
+  const sourceRoot = await mkdtemp(join(tmpdir(), "fieldwork-format-browser-"));
+  const pdfPath = join(sourceRoot, "source.pdf");
+  const imagePath = join(sourceRoot, "source.png");
+  await writeFile(pdfPath, formatPdfBytes);
+  await writeFile(imagePath, formatImageBytes);
+
+  const pdfRun = await runFieldwork({
+    taskPath: "conformance/formats/task.json",
+    sourcePath: pdfPath,
+    sourceAdapters: formatSourceAdapters,
+    root: await tempRoot("browser-format-pdf"),
+  });
+  const pdfServer = await openRun(pdfRun.runDirectory);
+  try {
+    await page.goto(pdfServer.url);
+    const candidate = page.getByRole("button", {
+      name: /record\.status .*PDF page 2 .*1 layout element .*1 table cell/,
+    });
+    await expect(candidate).toBeVisible();
+    await expect(page.getByLabel(/Prepared source for fieldwork-import:format-conformance/))
+      .toContainText("Status: Active");
+    await expect(page).toHaveScreenshot("fieldwork-format-inspection.png", {
+      fullPage: true,
+      maxDiffPixels: 500,
+    });
+  } finally {
+    await pdfServer.close();
+  }
+
+  const imageRun = await runFieldwork({
+    taskPath: "conformance/formats/task.json",
+    sourcePath: imagePath,
+    sourceAdapters: formatSourceAdapters,
+    root: await tempRoot("browser-format-image"),
+  });
+  const imageServer = await openRun(imageRun.runDirectory);
+  try {
+    await page.goto(imageServer.url);
+    await expect(page.getByRole("button", { name: /record\.status .*OCR-derived/ })).toBeVisible();
+    await expect(page.getByRole("status")).toContainText("Prepared text is OCR-derived");
+  } finally {
+    await imageServer.close();
   }
 });

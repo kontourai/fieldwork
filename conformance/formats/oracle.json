@@ -1,0 +1,19 @@
+{
+  "prepared": {
+    "html": "Status: Active",
+    "transcript": "Status: Active",
+    "pdf": "Cover\nStatus: Active\n",
+    "image": "Status: Active"
+  },
+  "locators": {
+    "html": "chars:0-14",
+    "transcript": "chars:0-14",
+    "pdf": "chars:6-20",
+    "image": "chars:0-14"
+  },
+  "pdfRegion": {
+    "pages": [2],
+    "elementCount": 1,
+    "tableCellCount": 1
+  }
+}

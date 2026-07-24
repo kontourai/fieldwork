@@ -94,7 +94,9 @@ The separate `conformance/long-input` tier deterministically assembles a 25,018-
 
 The provider conformance tier additionally proves two-call bounded concurrency, out-of-order completion with source-ordered proposals and invocation-ordered receipts, exact locators across three chunks, classified partial provider failure with conservative reservation, physical-call ceilings, and cancellation before launch. These are deterministic mechanics tests, not live-provider quality evidence.
 
-The corpus still covers one prepared source per run. Separate source/replay tests prove exact offline snapshot replay, HTML and transcript preparation, explicit PDF/OCR adapter routing, ordered multi-source execution, and source-local failure containment. They do not yet prove format-native PDF layout inspection, OCR visual inspection, provider-native batching, live-provider quality, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
+The `conformance/formats` tier freezes an ordered batch of replayable HTML, WebVTT, PDF-layout, and OCR snapshots plus one format-local failure. Its oracle proves exact prepared text and locators, independent snapshot and child-run authority, PDF page/element/table-cell inspection, explicit OCR posture, Survey review, portable Surface output, and redacted failure diagnostics. A browser baseline verifies that the shared Survey inspector visibly presents the PDF region while the Fieldwork shell remains themed by `@kontourai/ui`.
+
+These deterministic tiers do not establish provider-native batching, live-provider quality, or source-change drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
 
 ## Boundaries
 
@@ -120,7 +122,7 @@ Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bo
 
 ## Verification
 
-Run `npm run verify` for type, unit, example and long-input conformance, CLI, API, rendered keyboard accessibility, browser visual/conflict, build, pack/install/bin, content-boundary, decision, and Veritas checks. Install Chromium first with `npx playwright install chromium` when it is not already available.
+Run `npm run verify` for type, unit, example, long-input, provider, and document-format conformance; CLI and API behavior; rendered keyboard accessibility; browser visual/conflict checks; build; pack/install/bin smoke; content-boundary and decision checks; and Veritas readiness. Install Chromium first with `npx playwright install chromium` when it is not already available.
 
 `npm audit` currently reports three linked moderate development-only entries under `@kontourai/veritas@1.5.3` through `@modelcontextprotocol/sdk` and `@hono/node-server`. npm offers only an incompatible Veritas `0.3.0` downgrade, so Fieldwork does not apply it. `npm audit --omit=dev` is clean. The packed runtime does not install Veritas, Playwright, Vite, tsx, `@kontourai/ui`, React, or React DOM; the latter three are bundled browser build inputs. This is an explicit upstream tooling residual, not a zero-advisory claim.
 

@@ -12,4 +12,4 @@ Traverse owns source preparation. HTML and WebVTT use its built-in preparation. 
 
 Raw acquired bytes remain in the Forage snapshot store. Fieldwork persists only the exact prepared text needed for locator inspection and review. The source identity binds snapshot authority, content digest, media type, and relevant adapter identity, so changed preparation capabilities cannot reuse an older run accidentally.
 
-This establishes deterministic acquisition/replay and multi-source composition without moving SSRF policy into Fieldwork or moving review semantics out of Survey. Format-native layout and visual inspection require separate conformance evidence.
+This establishes deterministic acquisition/replay and multi-source composition without moving SSRF policy into Fieldwork or moving review semantics out of Survey. Frozen document-format and browser conformance verifies the composition through PDF layout, OCR posture, review, and portable output; it does not turn Fieldwork into a parser, OCR engine, or second review surface.
