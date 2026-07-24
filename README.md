@@ -22,6 +22,24 @@ npm exec -- fieldwork export /path/from/runDirectory --output reviewed.json --js
 
 The checked-in provider is deterministic and offline; no credential, network, or private configuration is required.
 
+## Sources and replay
+
+`fieldwork run` accepts a local file with `--source`, or an exact Forage snapshot with `--snapshot` and `--snapshot-root`. Repeated source arguments create an ordered batch of independent runs; each source keeps its own extraction and review authority, and one source failure does not discard successful siblings.
+
+```sh
+# Acquire SSRF-checked web snapshots, then replay an exact returned sourceRef:
+npm exec -- fieldwork acquire --url https://example.com \
+  --snapshot-root .fieldwork/sources --max-pages 20 --max-depth 2 --json
+npm exec -- fieldwork run --task task.json \
+  --snapshot 'forage-source:v1:…' --snapshot-root .fieldwork/sources --json
+
+# Ordered, failure-contained multi-source execution:
+npm exec -- fieldwork run --task task.json \
+  --source first.txt --source second.vtt --json
+```
+
+Forage owns acquisition policy, SSRF-safe fetching, content-addressed snapshots, and exact replay resolution. Fieldwork selects the application-owned snapshot store and returns portable snapshot references rather than source bodies or machine paths. Traverse owns HTML, transcript, PDF, and image preparation and locator grounding. Programmatic PDF and image runs require explicit host-supplied parser/OCR adapters; their bounded identifiers participate in run identity. The CLI fails with a typed adapter-required error when those capabilities are absent.
+
 ## Runtime choice
 
 The task file does not name a provider or runtime. Choose execution when the run starts, so the same task can move between a credential-free fixture, an already-authenticated local harness, a Datum-resolved SDK target, or a host-supplied Relay runtime.
@@ -76,11 +94,11 @@ The separate `conformance/long-input` tier deterministically assembles a 25,018-
 
 The provider conformance tier additionally proves two-call bounded concurrency, out-of-order completion with source-ordered proposals and invocation-ordered receipts, exact locators across three chunks, classified partial provider failure with conservative reservation, physical-call ceilings, and cancellation before launch. These are deterministic mechanics tests, not live-provider quality evidence.
 
-The corpus still covers one prepared source per run. It does not prove multiple-source or provider-native batching, format-native PDF/image/transcript inspection, live-provider quality, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
+The corpus still covers one prepared source per run. Separate source/replay tests prove exact offline snapshot replay, HTML and transcript preparation, explicit PDF/OCR adapter routing, ordered multi-source execution, and source-local failure containment. They do not yet prove format-native PDF layout inspection, OCR visual inspection, provider-native batching, live-provider quality, or drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
 
 ## Boundaries
 
-Traverse owns extraction proposals and verifies each `chars:` locator against the exact prepared text. Fieldwork persists that prepared text and its digest locally, and rejects a mismatched artifact. Survey owns review items, decisions, replay, canonical reviewed input, and the accessible Review Workbench and extraction inspector. Fieldwork mounts those shared Survey surfaces rather than implementing a second decision UI. `@kontourai/ui` supplies the application shell, visual tokens, and theme layer. The loopback server validates and persists Workbench-produced Survey events before deriving review state. Surface validates the final trust bundle.
+Forage owns safe acquisition and immutable source snapshots. Traverse owns extraction proposals and verifies each `chars:` locator against the exact prepared text. Fieldwork persists that prepared text and its digest locally, and rejects a mismatched artifact. Survey owns review items, decisions, replay, canonical reviewed input, and the accessible Review Workbench and extraction inspector. Fieldwork mounts those shared Survey surfaces rather than implementing a second decision UI. `@kontourai/ui` supplies the application shell, visual tokens, and theme layer. The loopback server validates and persists Workbench-produced Survey events before deriving review state. Surface validates the final trust bundle.
 
 Run directories contain the literal files `run.json`, `prepared.txt`, and `extraction-envelope.json`. Fieldwork validates their versioned schemas, rejects symlinks and containment escapes, and binds the actual prepared bytes back to the Traverse digest, length, ref, source ref, and portable envelope before review or export. An identical rerun reuses a valid run and preserves its event history; it fails closed without rewriting an invalid collision.
 
@@ -88,13 +106,13 @@ Portable export rejects any root-anchored POSIX path plus home-relative, Windows
 
 ## Public contracts
 
-`fieldwork run --task <file> --source <file> [--root <dir>] [--json]` creates a stable resource reference. `fieldwork open <run> [--port <port>]` binds only `127.0.0.1` and prints a launch URL whose fragment carries a random per-launch capability. Browser API requests send that capability in a header. The server allowlists loopback Host values; requires same-origin `Origin` plus `application/json` for review mutations; bounds bodies and timeouts; and returns stable public error codes without local paths. Do not share the launch URL.
+`fieldwork run --task <file> (--source <file> | --snapshot <ref>)… [--snapshot-root <dir>] [--root <dir>] [--json]` creates one stable run or an ordered batch result. `fieldwork acquire --url <url> --snapshot-root <dir> [--json]` returns portable exact snapshot references. `fieldwork open <run> [--port <port>]` binds only `127.0.0.1` and prints a launch URL whose fragment carries a random per-launch capability. Browser API requests send that capability in a header. The server allowlists loopback Host values; requires same-origin `Origin` plus `application/json` for review mutations; bounds bodies and timeouts; and returns stable public error codes without local paths. Do not share the launch URL.
 
 Review writes use a canonical run-directory storage lock held across read, prefix/revision comparison, Survey validation, and atomic commit. Its content-free PID record is fully written and synced before atomic, non-replacing publication, so no empty or partial live lock is exposed. Concurrent stale writers receive `REVIEW_CONFLICT`. A dead owning process or old corrupt bounded record is recovered without following links; live or ambiguous contention fails closed as `REVIEW_BUSY`.
 
 `fieldwork export <run> --output <file> [--json]` refuses unresolved, stale, malformed, tampered, or ungrounded review state.
 
-The typed TypeScript API exports `runFieldwork`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, and versioned Fieldwork-owned run, view, mutation, prepared-artifact, and reviewed-export contracts and schemas. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
+The typed TypeScript API exports `acquireFieldwork`, `runFieldwork`, `runFieldworkBatch`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, source adapter types, and versioned Fieldwork-owned acquisition, batch, run, view, mutation, prepared-artifact, and reviewed-export contracts and schemas. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
 
 ## Limits
 

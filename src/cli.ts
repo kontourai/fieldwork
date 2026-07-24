@@ -2,7 +2,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { failure } from "./contracts.js";
-import { reviewedExport, runFieldwork } from "./fieldwork.js";
+import { acquireFieldwork } from "./acquisition.js";
+import { reviewedExport, runFieldwork, runFieldworkBatch } from "./fieldwork.js";
 import { openRun } from "./server.js";
 import { createDatumRuntimeBinding, createProfileRuntimeBinding, type FieldworkRuntimeBinding } from "./runtime-contracts.js";
 
@@ -10,10 +11,61 @@ async function main(argv: string[]): Promise<void> {
   const [command, ...args] = argv;
   try {
     if (command === "run") {
-      const taskPath = flag(args, "--task"), sourcePath = flag(args, "--source"), root = flag(args, "--root");
-      if (!taskPath || !sourcePath) throw Object.assign(new Error("run requires --task <file> and --source <file>"), { code: "INVALID_ARGUMENT" });
+      const taskPath = flag(args, "--task"), sources = sourceArguments(args);
+      const snapshotRoot = flag(args, "--snapshot-root");
+      const root = flag(args, "--root");
+      if (!taskPath || sources.length === 0) {
+        throw Object.assign(
+          new Error("run requires --task <file> and at least one --source <file> or --snapshot <ref>"),
+          { code: "INVALID_ARGUMENT" },
+        );
+      }
       const runtime = runtimeBinding(args);
-      return output({ ok: true, ...(await runFieldwork({ taskPath, sourcePath, root, ...(runtime ? { runtime } : {}) })) }, has(args, "--json"));
+      if (sources.length > 1) {
+        return output({
+          ok: true,
+          ...(await runFieldworkBatch({
+            taskPath,
+            root,
+            sources: sources.map((source, index) => ({
+              id: `source-${index + 1}`,
+              ...(source.kind === "path"
+                ? { sourcePath: source.value }
+                : { snapshotRef: source.value, ...(snapshotRoot ? { snapshotRoot } : {}) }),
+            })),
+            ...(runtime ? { runtime } : {}),
+          })),
+        }, has(args, "--json"));
+      }
+      const source = sources[0]!;
+      return output({
+        ok: true,
+        ...(await runFieldwork({
+          taskPath,
+          root,
+          ...(source.kind === "path"
+            ? { sourcePath: source.value }
+            : { snapshotRef: source.value, ...(snapshotRoot ? { snapshotRoot } : {}) }),
+          ...(runtime ? { runtime } : {}),
+        })),
+      }, has(args, "--json"));
+    }
+    if (command === "acquire") {
+      const url = flag(args, "--url");
+      if (!url) invalid("acquire requires --url <https-url>");
+      const discovery = enumFlag(args, "--discovery", ["links", "sitemap", "both"] as const);
+      const render = enumFlag(args, "--render", ["never", "on-shell", "always"] as const);
+      return output({
+        ok: true,
+        ...(await acquireFieldwork({
+          url,
+          snapshotRoot: flag(args, "--snapshot-root"),
+          maxPages: positiveInteger(args, "--max-pages", 20),
+          maxDepth: nonnegativeInteger(args, "--max-depth", 2),
+          ...(discovery === undefined ? {} : { discovery }),
+          ...(render === undefined ? {} : { render }),
+        })),
+      }, has(args, "--json"));
     }
     if (command === "open") {
       const run = args.find((value) => !value.startsWith("--"));
@@ -30,7 +82,7 @@ async function main(argv: string[]): Promise<void> {
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
       return output({ ok: true, output: outputPath }, has(args, "--json"));
     }
-    output(failure("USAGE", "fieldwork run|open|export; use README.md for the public contract"), true); process.exitCode = 2;
+    output(failure("USAGE", "fieldwork acquire|run|open|export; use README.md for the public contract"), true); process.exitCode = 2;
   } catch (error) {
     output(failure((error as { code?: string }).code ?? "FIELDWORK_ERROR", error instanceof Error ? error.message : "Unexpected failure"), true); process.exitCode = 1;
   }
@@ -38,6 +90,16 @@ async function main(argv: string[]): Promise<void> {
 function flag(args: string[], name: string): string | undefined { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; }
 function flags(args: string[], name: string): string[] {
   return args.flatMap((value, index) => value === name && args[index + 1] ? [args[index + 1]] : []);
+}
+function sourceArguments(args: string[]): Array<{ kind: "path" | "snapshot"; value: string }> {
+  const sources: Array<{ kind: "path" | "snapshot"; value: string }> = [];
+  args.forEach((value, index) => {
+    const next = args[index + 1];
+    if (!next) return;
+    if (value === "--source") sources.push({ kind: "path", value: next });
+    if (value === "--snapshot") sources.push({ kind: "snapshot", value: next });
+  });
+  return sources;
 }
 function has(args: string[], name: string): boolean { return args.includes(name); }
 function output(value: unknown, json: boolean): void { process.stdout.write(json ? `${JSON.stringify(value)}\n` : `${JSON.stringify(value, null, 2)}\n`); }
@@ -123,6 +185,24 @@ function optionalPositiveInteger(args: string[], name: string): number | undefin
   if (value === undefined) return undefined;
   if (!/^[1-9]\d*$/.test(value)) invalid(`${name} must be a positive integer`);
   return Number(value);
+}
+
+function nonnegativeInteger(args: string[], name: string, fallback: number): number {
+  const value = flag(args, name);
+  if (value === undefined) return fallback;
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) invalid(`${name} must be a nonnegative integer`);
+  return Number(value);
+}
+
+function enumFlag<const Values extends readonly string[]>(
+  args: string[],
+  name: string,
+  values: Values,
+): Values[number] | undefined {
+  const value = flag(args, name);
+  if (value === undefined) return undefined;
+  if (!values.includes(value)) invalid(`${name} must be one of ${values.join(", ")}`);
+  return value;
 }
 
 function invalid(message: string): never {

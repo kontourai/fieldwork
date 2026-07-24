@@ -23,13 +23,28 @@ test("out-of-order concurrent completion persists source-ordered proposals and i
   const completionOrder: string[] = [];
   let active = 0;
   let maxActive = 0;
+  let pairStartedCount = 0;
+  let releasePair!: () => void;
+  let releaseFirst!: () => void;
+  let releaseThird!: () => void;
+  const pairStarted = new Promise<void>((resolve) => { releasePair = resolve; });
+  const secondCompleted = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const firstCompleted = new Promise<void>((resolve) => { releaseThird = resolve; });
   const runtime = scriptedRuntime(async (request) => {
     const marker = markerFor(request);
     active += 1;
     maxActive = Math.max(maxActive, active);
-    await delay(marker.fieldPath === "record.first" ? 50 : marker.fieldPath === "record.second" ? 5 : 0);
+    if (marker.fieldPath === "record.first" || marker.fieldPath === "record.second") {
+      pairStartedCount += 1;
+      if (pairStartedCount === 2) releasePair();
+      await pairStarted;
+    }
+    if (marker.fieldPath === "record.first") await secondCompleted;
+    if (marker.fieldPath === "record.third") await firstCompleted;
     active -= 1;
     completionOrder.push(marker.fieldPath);
+    if (marker.fieldPath === "record.second") releaseFirst();
+    if (marker.fieldPath === "record.first") releaseThird();
     return resultFor(marker);
   });
 

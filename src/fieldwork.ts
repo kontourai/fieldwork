@@ -9,19 +9,31 @@ import { initialReviewQueueSessionState } from "@kontourai/survey/review-workben
 import { createServerReviewSessionRecord, deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
 import { validateTrustBundle } from "@kontourai/surface";
 import { FIELDWORK_LIMITS, parseFieldworkTask, traverseTask, type FieldworkTask } from "./contracts.js";
-import { parseReviewedExport, type FieldworkRunResult, type ReviewedExportV1, type RunOptions } from "./api-contracts.js";
+import {
+  parseReviewedExport,
+  type FieldworkBatchOptions,
+  type FieldworkBatchRunResult,
+  type FieldworkRunResult,
+  type ReviewedExportV1,
+  type RunOptions,
+} from "./api-contracts.js";
 import { createDeterministicProvider } from "./deterministic-provider.js";
 import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun } from "./run-store.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
+import { resolveFieldworkSource } from "./source-input.js";
 
 export async function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   const taskText = await boundedInput(options.taskPath, FIELDWORK_LIMITS.taskBytes, "task");
-  const source = await boundedInput(options.sourcePath, FIELDWORK_LIMITS.sourceBytes, "source");
   const task = parseFieldworkTask(JSON.parse(taskText));
-  const sourceDigest = createHash("sha256").update(source).digest("hex");
+  const source = await resolveFieldworkSource({
+    ...(options.sourcePath === undefined ? {} : { sourcePath: options.sourcePath }),
+    ...(options.snapshotRef === undefined ? {} : { snapshotRef: options.snapshotRef }),
+    ...(options.snapshotRoot === undefined ? {} : { snapshotRoot: options.snapshotRoot }),
+    ...(options.sourceAdapters === undefined ? {} : { adapters: options.sourceAdapters }),
+  }, task.metadata.name);
   const executionIdentity = options.runtime ? createFieldworkExecutionIdentity(options.runtime) : undefined;
-  const identityInput = `${sourceDigest}:${canonicalJson(task)}${executionIdentity ? `:${canonicalJson(executionIdentity)}` : ""}`;
+  const identityInput = `${canonicalJson(source.identity)}:${canonicalJson(task)}${executionIdentity ? `:${canonicalJson(executionIdentity)}` : ""}`;
   const runIdentity = createHash("sha256").update(identityInput).digest("hex").slice(0, 16);
   const runResource = `fieldwork-run:v1:${task.metadata.name}:${runIdentity}`;
   const root = resolve(options.root ?? defaultRunRoot);
@@ -42,12 +54,13 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   }) : undefined;
   if (runtimeSession) assertPortableOutput(runtimeSession.execution);
   const taskSpec = traverseTask(task);
-  const sourceRef = `fieldwork-source:v1:${task.metadata.name}:${sourceDigest}`;
   const store = createInMemoryPreparedArtifactStore();
   const result = await extract({
-    content: source, contentType: options.sourcePath.endsWith(".html") ? "html" : "text", sourceRef,
+    content: source.content, contentType: source.contentType, sourceRef: source.sourceRef,
     targetSchema: taskSpec.targetSchema, taskSpec, provider: runtimeSession?.provider ?? createDeterministicProvider(task),
-    preparedArtifact: { store, sourceSnapshotRef: sourceRef },
+    preparedArtifact: { store, sourceSnapshotRef: source.sourceSnapshotRef },
+    ...(source.pdfTextExtractor === undefined ? {} : { pdfTextExtractor: source.pdfTextExtractor }),
+    ...(source.imageTextExtractor === undefined ? {} : { imageTextExtractor: source.imageTextExtractor }),
     ...(options.runtime?.concurrency === undefined ? {} : { concurrency: options.runtime.concurrency }),
     ...(options.runtime?.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.runtime.maxProviderCalls }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -78,6 +91,66 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunResult",
     runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length
   };
+}
+
+export async function runFieldworkBatch(options: FieldworkBatchOptions): Promise<FieldworkBatchRunResult> {
+  if (options.sources.length === 0 || options.sources.length > 128) {
+    throw Object.assign(
+      new Error("Fieldwork batch requires between 1 and 128 sources"),
+      { code: "INVALID_ARGUMENT" },
+    );
+  }
+  const ids = new Set<string>();
+  const items: FieldworkBatchRunResult["items"][number][] = [];
+  for (const source of options.sources) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(source.id) || ids.has(source.id)) {
+      throw Object.assign(
+        new Error("Fieldwork batch source ids must be unique bounded identifiers"),
+        { code: "INVALID_ARGUMENT" },
+      );
+    }
+    ids.add(source.id);
+    try {
+      const run = await runFieldwork({
+        taskPath: options.taskPath,
+        root: options.root,
+        ...(source.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
+        ...(source.snapshotRef === undefined ? {} : { snapshotRef: source.snapshotRef }),
+        ...(source.snapshotRoot === undefined ? {} : { snapshotRoot: source.snapshotRoot }),
+        ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+        ...(options.sourceAdapters === undefined ? {} : { sourceAdapters: options.sourceAdapters }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+      items.push({ id: source.id, ok: true, run });
+    } catch (error) {
+      items.push({
+        id: source.id,
+        ok: false,
+        error: batchError(error),
+      });
+    }
+  }
+  const succeeded = items.filter((item) => item.ok).length;
+  return {
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "FieldworkBatchRunResult",
+    items,
+    succeeded,
+    failed: items.length - succeeded,
+  };
+}
+
+function batchError(error: unknown): { code: string; message: string } {
+  const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : "SOURCE_FAILED";
+  const safeMessages: Record<string, string> = {
+    INVALID_ARGUMENT: "Source input is invalid",
+    SNAPSHOT_REPLAY_FAILED: "Exact snapshot replay failed",
+    PDF_ADAPTER_REQUIRED: "PDF source requires a configured adapter",
+    IMAGE_ADAPTER_REQUIRED: "Image source requires a configured adapter",
+  };
+  return { code, message: safeMessages[code] ?? "Source processing failed" };
 }
 
 function fixtureExecution(): FieldworkStoredExecution {
