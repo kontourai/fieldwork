@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
+import { createServer } from "node:http";
 import { mkdtemp, writeFile } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFieldwork } from "../../src/fieldwork.js";
@@ -63,6 +65,59 @@ test("a host can brand the selected run and inject bounded navigation", async ({
     await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
   } finally {
     await server.close();
+  }
+});
+
+test("an explicitly allowed host origin can embed the protected review UI", async ({ page }) => {
+  let fieldworkUrl = "";
+  const host = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self'; frame-src http://127.0.0.1:*",
+    }).end(`<!doctype html><title>Host</title><iframe title="Hosted Fieldwork" src="${fieldworkUrl}"></iframe>`);
+  });
+  await new Promise<void>((resolvePromise, reject) => {
+    host.once("error", reject);
+    host.listen({ host: "127.0.0.1", port: 0 }, resolvePromise);
+  });
+  const address = host.address() as AddressInfo;
+  const hostOrigin = `http://127.0.0.1:${address.port}`;
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("browser-embedded-host"),
+  });
+  const fieldwork = await openRun(run.runDirectory, { embeddingOrigin: hostOrigin });
+  fieldworkUrl = fieldwork.url;
+  const otherHost = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self'; frame-src http://127.0.0.1:*",
+    }).end(`<!doctype html><title>Other host</title><iframe title="Hosted Fieldwork" src="${fieldworkUrl}"></iframe>`);
+  });
+  await new Promise<void>((resolvePromise, reject) => {
+    otherHost.once("error", reject);
+    otherHost.listen({ host: "127.0.0.1", port: 0 }, resolvePromise);
+  });
+  const otherAddress = otherHost.address() as AddressInfo;
+  const otherHostOrigin = `http://127.0.0.1:${otherAddress.port}`;
+  try {
+    await page.goto(otherHostOrigin);
+    await page.waitForTimeout(250);
+    expect(page.frames().some((frame) => frame.url().startsWith(fieldwork.baseUrl))).toBe(false);
+
+    await page.goto(hostOrigin);
+    const frame = page.frameLocator('iframe[title="Hosted Fieldwork"]');
+    await expect(frame.getByRole("heading", { name: "Grounded review" })).toBeVisible();
+    await expect(frame.getByTestId("review-workbench-shell")).toBeVisible();
+  } finally {
+    await fieldwork.close();
+    await new Promise<void>((resolvePromise, reject) => {
+      otherHost.close((error) => error ? reject(error) : resolvePromise());
+    });
+    await new Promise<void>((resolvePromise, reject) => {
+      host.close((error) => error ? reject(error) : resolvePromise());
+    });
   }
 });
 

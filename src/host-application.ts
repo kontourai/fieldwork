@@ -17,6 +17,7 @@ export interface FieldworkApplicationOpenOptions {
   readonly runDirectory: string;
   readonly port?: number;
   readonly presentation?: FieldworkHostPresentationV1;
+  readonly embeddingOrigin?: string;
 }
 
 export interface FieldworkApplication {
@@ -72,6 +73,7 @@ export function createFieldworkApplication(): FieldworkApplication {
       const opened = await openRun(options.runDirectory, {
         ...(options.port === undefined ? {} : { port: options.port }),
         ...(options.presentation === undefined ? {} : { presentation: options.presentation }),
+        ...(options.embeddingOrigin === undefined ? {} : { embeddingOrigin: options.embeddingOrigin }),
         onLifecycleEvent: forward,
       });
       const service: OpenRunService = {

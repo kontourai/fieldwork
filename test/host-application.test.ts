@@ -85,3 +85,48 @@ test("host presentation accepts bounded HTTP navigation and rejects executable U
     navigation: [{ label: "Unsafe", href: "javascript:alert(1)" }],
   }).success, false);
 });
+
+test("host embedding is exact-origin opt-in and deny-by-default", async () => {
+  const application = createFieldworkApplication();
+  const run = await application.run({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("host-embedding"),
+  });
+  const denied = await application.open({ runDirectory: run.runDirectory });
+  try {
+    const policy = (await fetch(denied.url)).headers.get("content-security-policy");
+    assert.match(policy ?? "", /frame-ancestors 'none'(?:;|$)/);
+  } finally {
+    await denied.close();
+  }
+
+  const allowed = await application.open({
+    runDirectory: run.runDirectory,
+    embeddingOrigin: "https://station.example:8443",
+  });
+  try {
+    const policy = (await fetch(allowed.url)).headers.get("content-security-policy");
+    assert.match(policy ?? "", /frame-ancestors https:\/\/station\.example:8443(?:;|$)/);
+  } finally {
+    await allowed.close();
+  }
+
+  for (const embeddingOrigin of [
+    "javascript:alert(1)",
+    "https://user@example.com",
+    "https://example.com/path",
+    "https://example.com/?query=1",
+    "https://example.com/#fragment",
+    "https://*.example.com",
+    "https://example.com;frame-src",
+    "https://example.com,https",
+    "https://exa_mple.com",
+  ]) {
+    await assert.rejects(
+      application.open({ runDirectory: run.runDirectory, embeddingOrigin }),
+      /absolute HTTP\(S\) origin|concrete DNS name or IP address/,
+    );
+  }
+  await application.close();
+});
