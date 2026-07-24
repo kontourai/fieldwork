@@ -33,6 +33,7 @@ import {
   type RunOptions
 } from "./api-contracts.js";
 import { fieldworkHostDescriptor } from "./host-descriptor.js";
+import { recheckFieldwork as internalRecheck } from "./recheck.js";
 
 export const FIELDWORK_LIMITS = internalLimits;
 export const fieldworkTaskSchema: z.ZodType<FieldworkTask> = internalTaskSchema;
@@ -68,6 +69,11 @@ export function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> 
 export function openRun(runDirectory: string, port?: number): Promise<OpenRunService> {
   return internalOpen(runDirectory, port);
 }
+export function recheckFieldwork(
+  options: import("./recheck.js").FieldworkRecheckOptions
+): Promise<import("./recheck.js").FieldworkRecheckResult> {
+  return internalRecheck(options);
+}
 export type {
   FieldworkAcquisitionOptions, FieldworkAcquisitionResult, FieldworkBatchOptions,
   FieldworkBatchRunResult, FieldworkBatchSource, FieldworkFailure, FieldworkRunResult,
@@ -83,3 +89,12 @@ export type {
   FieldworkRuntimeBudget, FieldworkRuntimeCandidate,
   FieldworkStoredExecution, ProfileRuntimeBindingOptions
 } from "./runtime-contracts.js";
+export type {
+  FieldworkEvidenceObservation,
+  FieldworkCheckResult,
+  FieldworkLookoutSource,
+  FieldworkRecheckAcquisition,
+  FieldworkRecheckClassification,
+  FieldworkRecheckOptions,
+  FieldworkRecheckResult,
+} from "./recheck.js";

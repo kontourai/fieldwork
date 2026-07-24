@@ -52,6 +52,7 @@
     "@kontourai/datum": "0.7.0",
     "@kontourai/dispatch": "0.4.0",
     "@kontourai/forage": "0.4.1",
+    "@kontourai/lookout": "0.3.3",
     "@kontourai/relay": "0.5.0",
     "@kontourai/surface": "2.13.0",
     "@kontourai/survey": "2.1.0",

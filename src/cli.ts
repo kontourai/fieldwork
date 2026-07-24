@@ -6,6 +6,8 @@ import { acquireFieldwork } from "./acquisition.js";
 import { reviewedExport, runFieldwork, runFieldworkBatch } from "./fieldwork.js";
 import { openRun } from "./server.js";
 import { createDatumRuntimeBinding, createProfileRuntimeBinding, type FieldworkRuntimeBinding } from "./runtime-contracts.js";
+import { createCheckRunner, createLookoutSnapshotStore, loadRegistry } from "@kontourai/lookout";
+import { recheckFieldwork } from "./recheck.js";
 
 async function main(argv: string[]): Promise<void> {
   const [command, ...args] = argv;
@@ -67,6 +69,36 @@ async function main(argv: string[]): Promise<void> {
         })),
       }, has(args, "--json"));
     }
+    if (command === "recheck") {
+      const sourceId = flag(args, "--source-id");
+      const priorRunDirectory = flag(args, "--prior-run");
+      const taskPath = flag(args, "--task");
+      const snapshotRoot = flag(args, "--snapshot-root");
+      if (!sourceId || !priorRunDirectory || !taskPath) {
+        invalid("recheck requires --source-id <id> --prior-run <run> --task <file>");
+      }
+      const registry = await loadRegistry(flag(args, "--registry"));
+      const source = registry.get(sourceId);
+      if (!source) invalid(`registered source not found: ${sourceId}`);
+      const selectedSnapshotRoot = snapshotRoot ?? resolve(".kontourai/lookout/snapshots");
+      const store = createLookoutSnapshotStore(selectedSnapshotRoot);
+      const runtime = runtimeBinding(args);
+      return output({
+        ok: true,
+        ...(await recheckFieldwork({
+          source,
+          priorRunDirectory: resolve(priorRunDirectory),
+          taskPath,
+          acquisition: createCheckRunner({ store }),
+          snapshotRoot: selectedSnapshotRoot,
+          ...(flag(args, "--root") === undefined ? {} : { root: flag(args, "--root") }),
+          ...(flag(args, "--observation-root") === undefined ? {} : {
+            observationRoot: flag(args, "--observation-root"),
+          }),
+          ...(runtime === undefined ? {} : { runtime }),
+        })),
+      }, has(args, "--json"));
+    }
     if (command === "open") {
       const run = args.find((value) => !value.startsWith("--"));
       if (!run) throw Object.assign(new Error("open requires <run>"), { code: "INVALID_ARGUMENT" });
@@ -82,7 +114,7 @@ async function main(argv: string[]): Promise<void> {
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
       return output({ ok: true, output: outputPath }, has(args, "--json"));
     }
-    output(failure("USAGE", "fieldwork acquire|run|open|export; use README.md for the public contract"), true); process.exitCode = 2;
+    output(failure("USAGE", "fieldwork acquire|run|recheck|open|export; use README.md for the public contract"), true); process.exitCode = 2;
   } catch (error) {
     output(failure((error as { code?: string }).code ?? "FIELDWORK_ERROR", error instanceof Error ? error.message : "Unexpected failure"), true); process.exitCode = 1;
   }
