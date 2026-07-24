@@ -44,6 +44,8 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Install browser verification runtime
+        run: npx playwright install --with-deps chromium
       - run: npm run verify:static
 
   package:
