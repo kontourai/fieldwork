@@ -30,8 +30,9 @@ writeFileSync(join(work, "consumer.mts"), `import {
   fieldworkTaskSchema, openRun,
   parseFieldworkTask, preparedArtifactViewSchema, reviewedExport,
   reviewedExportSchema, reviewMutationResponseSchema, runFieldwork, runFieldworkBatch,
+  recheckFieldwork,
   type FieldworkRunViewV1, type FieldworkSourceAdapters, type FieldworkTask,
-  type ReviewedExportV1
+  type FieldworkLookoutSource, type FieldworkRecheckResult, type ReviewedExportV1
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
 import {
@@ -55,6 +56,18 @@ void acquireFieldwork({ url: "https://example.com", snapshotRoot: "snapshots" })
 void runFieldwork({ taskPath: "task.json", sourcePath: "source.txt" });
 void runFieldwork({ taskPath: "task.json", sourcePath: "source.pdf", runtime, sourceAdapters: adapters });
 void runFieldworkBatch({ taskPath: "task.json", sources: [{ id: "one", sourcePath: "source.txt" }] });
+const lookoutSource: FieldworkLookoutSource = {
+  id: "example", url: "https://example.com", cadenceHint: "manual",
+  kind: "web-page", renderPolicy: "never", targetSchema: task.spec.traverse.targetSchema
+};
+const recheck: Promise<FieldworkRecheckResult> = recheckFieldwork({
+  source: lookoutSource, priorRunDirectory: "run", taskPath: "task.json",
+  acquisition: { check: async () => ({
+    sourceId: "example", sourceUrl: "https://example.com", checkedAt: new Date().toISOString(),
+    warnings: [], kind: "unchanged-304", snapshotRef: "forage-snapshot:example"
+  }) }
+});
+void recheck;
 void openRun("run");
 void reviewedExport("run");
 `);

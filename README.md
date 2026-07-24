@@ -40,6 +40,27 @@ npm exec -- fieldwork run --task task.json \
 
 Forage owns acquisition policy, SSRF-safe fetching, content-addressed snapshots, and exact replay resolution. Fieldwork selects the application-owned snapshot store and returns portable snapshot references rather than source bodies or machine paths. Traverse owns HTML, transcript, PDF, and image preparation and locator grounding. Programmatic PDF and image runs require explicit host-supplied parser/OCR adapters; their bounded identifiers participate in run identity. The CLI fails with a typed adapter-required error when those capabilities are absent.
 
+## Source rechecks and review rounds
+
+Register a source with Lookout, then recheck it against an existing Fieldwork run:
+
+```sh
+npm exec -- fieldwork recheck \
+  --source-id example-home --registry lookout.json \
+  --prior-run .fieldwork/runs/run-… --task task.json \
+  --snapshot-root .fieldwork/sources --json
+```
+
+Lookout owns conditional source checks, proposal-observation continuity, concurrent-writer exclusion, and semantic proposal comparison. Fieldwork supplies the extraction capability and owns the application policy:
+
+- unchanged source bytes skip Traverse and the selected model runtime;
+- an unavailable source preserves the previous run and review history;
+- task or preparation identity changes are reported separately from source semantics;
+- changed source bytes with stable proposals create no review work;
+- added, removed, moved, value-changed, or provenance-changed evidence creates a new Survey review round in a new run.
+
+The prior run is immutable. A new round carries exact old and new snapshot references, observation identities, locators, excerpts, values, and extraction times. Replaying the same observation pair yields the same transition and item identities. Fieldwork persists proposal observations under the selected observation root and rejects a stale concurrent writer with `RECHECK_CONFLICT`.
+
 ## Runtime choice
 
 The task file does not name a provider or runtime. Choose execution when the run starts, so the same task can move between a credential-free fixture, an already-authenticated local harness, a Datum-resolved SDK target, or a host-supplied Relay runtime.
@@ -96,7 +117,7 @@ The provider conformance tier additionally proves two-call bounded concurrency, 
 
 The `conformance/formats` tier freezes an ordered batch of replayable HTML, WebVTT, PDF-layout, and OCR snapshots plus one format-local failure. Its oracle proves exact prepared text and locators, independent snapshot and child-run authority, PDF page/element/table-cell inspection, explicit OCR posture, Survey review, portable Surface output, and redacted failure diagnostics. A browser baseline verifies that the shared Survey inspector visibly presents the PDF region while the Fieldwork shell remains themed by `@kontourai/ui`.
 
-These deterministic tiers do not establish provider-native batching, live-provider quality, or source-change drift routing. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
+The replay-and-drift tier additionally freezes unchanged-source provider skipping, unavailable-source preservation, task drift, cosmetic source changes with stable proposals, changed/moved/removed evidence, deterministic semantic replay, portable old/new observations, and concurrent continuity conflicts. These deterministic tiers do not establish provider-native batching or live-provider quality. Those evidence tiers remain explicit in [issue #9](https://github.com/kontourai/fieldwork/issues/9). Run a small example by passing its `task.json` and `source.txt` to `fieldwork run`.
 
 ## Boundaries
 
@@ -114,7 +135,7 @@ Review writes use a canonical run-directory storage lock held across read, prefi
 
 `fieldwork export <run> --output <file> [--json]` refuses unresolved, stale, malformed, tampered, or ungrounded review state.
 
-The typed TypeScript API exports `acquireFieldwork`, `runFieldwork`, `runFieldworkBatch`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, source adapter types, and versioned Fieldwork-owned acquisition, batch, run, view, mutation, prepared-artifact, and reviewed-export contracts and schemas. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
+The typed TypeScript API exports `acquireFieldwork`, `runFieldwork`, `runFieldworkBatch`, `recheckFieldwork`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, source adapter types, and versioned Fieldwork-owned acquisition, batch, recheck, run, view, mutation, prepared-artifact, and reviewed-export contracts. `recheckFieldwork` accepts an injected Lookout-compatible acquisition capability, so tests and hosts can retain their own registry and network authority. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
 
 ## Limits
 
