@@ -51,6 +51,10 @@ npm exec -- fieldwork recheck \
   --snapshot-root .fieldwork/sources --json
 ```
 
+When `--snapshot-root` is omitted for a recheck, Fieldwork uses its own local
+`.fieldwork/lookout/snapshots` store. Hosts may always supply a different
+application-owned path.
+
 Lookout owns conditional source checks, proposal-observation continuity, concurrent-writer exclusion, and semantic proposal comparison. Fieldwork supplies the extraction capability and owns the application policy:
 
 - unchanged source bytes skip Traverse and the selected model runtime;
@@ -135,11 +139,13 @@ Review writes use a canonical run-directory storage lock held across read, prefi
 
 `fieldwork export <run> --output <file> [--json]` refuses unresolved, stale, malformed, tampered, or ungrounded review state.
 
-The typed TypeScript API exports `acquireFieldwork`, `runFieldwork`, `runFieldworkBatch`, `recheckFieldwork`, `openRun`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, source adapter types, and versioned Fieldwork-owned acquisition, batch, recheck, run, view, mutation, prepared-artifact, and reviewed-export contracts. `recheckFieldwork` accepts an injected Lookout-compatible acquisition capability, so tests and hosts can retain their own registry and network authority. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
+`fieldwork inspect <run> --output <file> [--include-prepared-text] [--include-excerpts] [--json]` writes a canonical read-only inspection artifact. Prepared text and excerpts are redacted unless each disclosure is explicitly requested. The artifact is independent of review disposition and contains no provider credentials, raw diagnostics, or machine paths.
+
+The typed TypeScript API exports `acquireFieldwork`, `runFieldwork`, `runFieldworkBatch`, `recheckFieldwork`, `openRun`, `inspectionExport`, `reviewedExport`, task validation, `fieldworkHostDescriptor`, source adapter types, and versioned Fieldwork-owned acquisition, batch, recheck, run, view, mutation, prepared-artifact, and reviewed-export contracts. `recheckFieldwork` accepts an injected Lookout-compatible acquisition capability, so tests and hosts can retain their own registry and network authority. `@kontourai/fieldwork/runtime` exports the runtime-binding factories and stored-execution schema; programmatic callers may supply any Relay `ModelRuntime`, including SDK or framework adapters already owned by their host. The transport schemas validate their full advertised JSON shape. Survey inspector, snapshot, item, event, and apply sections remain explicitly opaque JSON at this public boundary; Fieldwork validates their persisted structure internally and delegates semantic replay/apply validation to Survey rather than republishing Survey's declaration graph or business vocabulary. The descriptor is a documentation/fixture seam for a future host; no host dependency is required.
 
 ## Limits
 
-Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bodies up to 1 MiB, 128 projections/target fields, 10,000 review events, 4,096 characters per general task string, and 512 characters per extraction pattern. Deterministic patterns intentionally support only a literal label followed by one line-bounded capture, for example `Status: ([^\n]+)`. Lookarounds, backreferences, nested/repeated groups, and arbitrary regular expressions are rejected.
+Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bodies up to 16 MiB, stored structured artifacts up to 32 MiB, 128 projections/target fields, 10,000 Survey review items, 10,000 review events, 4,096 characters per general task string, and 512 characters per extraction pattern. Review-item capacity is intentionally separate from target-field capacity because a provider may ground repeated or alternative proposals for one field. Deterministic patterns intentionally support only a literal label followed by one line-bounded capture, for example `Status: ([^\n]+)`. Lookarounds, backreferences, nested/repeated groups, and arbitrary regular expressions are rejected.
 
 ## Verification
 

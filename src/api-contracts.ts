@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { FieldworkRuntimeBinding } from "./runtime-contracts.js";
 
-const TRANSPORT_LIMITS = { sourceBytes: 2 * 1024 * 1024, projections: 128, events: 10_000 } as const;
+const TRANSPORT_LIMITS = {
+  sourceBytes: 2 * 1024 * 1024,
+  projections: 128,
+  reviewItems: 10_000,
+  events: 10_000,
+} as const;
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -277,7 +282,7 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
   inspector: jsonObjectSchema,
   review: z.object({
     snapshot: jsonObjectSchema,
-    items: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.projections),
+    items: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.reviewItems),
     events: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.events),
     apply: jsonObjectSchema
   }).strict()

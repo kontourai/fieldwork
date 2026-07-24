@@ -3,6 +3,8 @@ import test from "node:test";
 import { openRun } from "../src/server.js";
 import type { FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-contracts.js";
 import { runFieldwork, reviewedExport } from "../src/fieldwork.js";
+import { inspectionExport } from "../src/inspection.js";
+import { persistedReviewSnapshotSchema } from "../src/survey-persistence.js";
 import { apiFetch, tempRoot } from "./helpers.js";
 import { buildReviewSessionEvents, type ReviewQueueSessionState, type ReviewWorkbenchDecision } from "@kontourai/survey/review-workbench";
 import { lstat, mkdir, readFile, rmdir, symlink, unlink, utimes, writeFile } from "node:fs/promises";
@@ -49,6 +51,50 @@ test("loopback API persists a Survey decision and exports after acceptance", asy
     if (!stale.ok) assert.equal(stale.error.code, "REVIEW_CONFLICT");
     assert.ok(await reviewedExport(run.runDirectory));
   } finally { await server.close(); }
+});
+
+test("exports a canonical static inspection artifact with source disclosure off by default", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("inspection-export"),
+  });
+  const safe = await inspectionExport(run.runDirectory);
+  assert.match(safe, /ExtractionInspectorExport/);
+  assert.match(safe, /preparedTextIncluded":false/);
+  assert.match(safe, /\[redacted\]/);
+  assert.doesNotMatch(safe, /Status: Active/);
+  const disclosed = await inspectionExport(run.runDirectory, {
+    includePreparedText: true,
+    includeExcerpts: true,
+  });
+  assert.match(disclosed, /Status: Active/);
+});
+
+test("accepts a thousand-item Survey snapshot while preserving bounded task projections", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("large-snapshot"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    const initial = await view(server);
+    const snapshot = structuredClone(initial.review.snapshot) as unknown as ReviewQueueSessionState;
+    const template = snapshot.items[0]!;
+    const items = Array.from({ length: 1_005 }, (_, index) => ({
+      ...structuredClone(template),
+      metadata: { ...structuredClone(template.metadata), name: `large-item-${index}` },
+      spec: { ...structuredClone(template.spec), target: `large.field.${index}` },
+    }));
+    assert.equal(persistedReviewSnapshotSchema.parse({
+      ...snapshot,
+      items,
+      activeItemName: items[0]!.metadata.name,
+    }).items.length, 1_005);
+  } finally {
+    await server.close();
+  }
 });
 
 test("two server instances and path aliases serialize one append-only winner", async () => {

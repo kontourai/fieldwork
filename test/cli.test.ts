@@ -3,11 +3,25 @@ import test from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tempRoot } from "./helpers.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 const exec = promisify(execFile);
 
 test("CLI returns a typed JSON run contract", async () => {
   const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", await tempRoot("cli"), "--json"]);
   const result = JSON.parse(stdout); assert.equal(result.ok, true); assert.match(result.runResource, /^fieldwork-run:v1:/);
+});
+
+test("CLI writes a portable redacted static inspection artifact", async () => {
+  const root = await tempRoot("cli-inspect");
+  const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", root, "--json"]);
+  const run = JSON.parse(stdout);
+  const outputPath = join(root, "inspection.json");
+  await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "inspect", run.runDirectory, "--output", outputPath, "--json"]);
+  const artifact = await readFile(outputPath, "utf8");
+  assert.match(artifact, /ExtractionInspectorExport/);
+  assert.match(artifact, /\[redacted\]/);
+  assert.doesNotMatch(artifact, /Status: Active/);
 });
 
 test("CLI returns typed failure for missing arguments", async () => {

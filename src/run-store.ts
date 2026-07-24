@@ -92,7 +92,7 @@ export async function readRun(runDirectory: string): Promise<StoredRunRead> {
   await rejectSymlink(requested, "run directory");
   const directory = await realpath(requested);
   const runPath = await containedRegularFile(directory, "run.json");
-  const runText = await readBounded(runPath, FIELDWORK_LIMITS.taskBytes + FIELDWORK_LIMITS.requestBodyBytes);
+  const runText = await readBounded(runPath, FIELDWORK_LIMITS.artifactBytes);
   const parsedRun = storedRunSchema.parse(JSON.parse(runText));
   const validatedReview = parsePersistedReview(parsedRun.review);
   const run = {
@@ -100,7 +100,7 @@ export async function readRun(runDirectory: string): Promise<StoredRunRead> {
     review: { ...validatedReview, revision: parsedRun.review.revision }
   } as StoredRun;
   const envelopePath = await containedRegularFile(directory, run.envelopeFile);
-  const envelopeText = await readBounded(envelopePath, FIELDWORK_LIMITS.requestBodyBytes);
+  const envelopeText = await readBounded(envelopePath, FIELDWORK_LIMITS.artifactBytes);
   const validated = validatePortableExtractionResultEnvelope(JSON.parse(envelopeText));
   if (validated.status !== "valid") throw new Error("Stored extraction envelope is invalid");
   const preparedPath = await containedRegularFile(directory, run.preparedArtifact.file);
