@@ -36,7 +36,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "test:examples": "tsx test/examples.test.ts",
-    "test:conformance": "tsx --test test/conformance.test.ts test/provider-conformance.test.ts",
+    "test:conformance": "tsx --test test/conformance.test.ts test/format-conformance.test.ts test/provider-conformance.test.ts",
     "test:api": "tsx test/api.test.ts",
     "test:cli": "tsx test/cli.test.ts",
     "test:a11y": "playwright test test/browser/a11y.spec.ts",
@@ -54,7 +54,7 @@
     "@kontourai/forage": "0.4.1",
     "@kontourai/relay": "0.5.0",
     "@kontourai/surface": "2.13.0",
-    "@kontourai/survey": "2.0.0",
+    "@kontourai/survey": "2.1.0",
     "@kontourai/traverse": "0.22.0",
     "zod": "3.24.1"
   },

@@ -1,0 +1,32 @@
+{
+  "apiVersion": "fieldwork.kontourai.io/v1alpha1",
+  "kind": "FieldworkTask",
+  "metadata": {
+    "name": "format-conformance"
+  },
+  "spec": {
+    "traverse": {
+      "version": "1",
+      "targetSchema": [
+        {
+          "path": "record.status",
+          "type": "string",
+          "inferenceType": "explicit"
+        }
+      ]
+    },
+    "projections": [
+      {
+        "fieldPath": "record.status",
+        "pattern": "Status: ([^\\n]+)",
+        "claim": {
+          "subjectType": "record",
+          "subjectId": "format-1",
+          "facet": "review",
+          "claimType": "field",
+          "impactLevel": "medium"
+        }
+      }
+    ]
+  }
+}
