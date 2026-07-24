@@ -1,10 +1,17 @@
-/** A static host seam; Fieldwork does not require or import a particular host runtime. */
+/** Versioned discovery metadata for the executable host application contract. */
 export const fieldworkHostDescriptor = {
-  apiVersion: "fieldwork.kontourai.io/v1alpha1", kind: "FieldworkApplicationDescriptor",
+  apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkApplicationDescriptor",
   spec: {
     commands: ["fieldwork run --task <file> --source <file>", "fieldwork open <run> [--port]", "fieldwork export <run> --output <file>"],
-    launch: { loopbackUrl: "http://127.0.0.1:<port>", selectedRunResource: "fieldwork-run:v1:<task>:<digest>" },
-    lifecycleEvents: ["run-created", "review-event-persisted", "review-exported"],
-    reviewedOutputReference: "A caller-selected output file from fieldwork export"
+    resources: {
+      selectedRun: "fieldwork-run:v1:<task>:<digest>",
+      reviewedOutput: "Surface-validated reviewed JSON returned to the caller",
+    },
+    launch: {
+      standalone: true,
+      loopbackUrl: "http://127.0.0.1:<port>",
+      presentationInjection: true,
+    },
+    lifecycleEvents: ["run-created", "run-opened", "review-event-persisted", "review-exported", "run-closed"],
   }
 } as const;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  fieldworkHostPresentationSchema, fieldworkLifecycleEventSchema,
   fieldworkAcquisitionResultSchema, fieldworkBatchRunResultSchema,
   fieldworkRunResultSchema, fieldworkRunViewSchema, preparedArtifactViewSchema,
   reviewMutationResponseSchema,
@@ -16,6 +17,17 @@ const runView = {
 };
 
 test("Fieldwork response schemas validate the complete advertised JSON transport", () => {
+  assert.equal(fieldworkHostPresentationSchema.safeParse({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
+    eyebrow: "Station", title: "Review", theme: "dark",
+    navigation: [{ label: "Task", href: "https://station.kontourai.io/tasks/fixture" }],
+  }).success, true);
+  assert.equal(fieldworkLifecycleEventSchema.safeParse({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkLifecycleEvent",
+    sequence: 1, type: "run-opened",
+    runResource: "fieldwork-run:v1:generic:0123456789abcdef",
+    revision: 0, eventCount: 0,
+  }).success, true);
   assert.equal(fieldworkRunViewSchema.safeParse(runView).success, true);
   for (const malformed of [
     { ...runView, inspector: [] },

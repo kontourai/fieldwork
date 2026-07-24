@@ -31,6 +31,37 @@ test("review links a grounded candidate to a durable browser decision", async ({
   } finally { await server.close(); }
 });
 
+test("a host can brand the selected run and inject bounded navigation", async ({ page }) => {
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("browser-host"),
+  });
+  const server = await openRun(run.runDirectory, {
+    presentation: {
+      apiVersion: "fieldwork.kontourai.io/v1",
+      kind: "FieldworkHostPresentation",
+      eyebrow: "Station",
+      title: "Evidence review",
+      theme: "light",
+      navigation: [{ label: "Task overview", href: "https://station.kontourai.io/tasks/fixture" }],
+      returnAction: { label: "Return to Station", href: "https://station.kontourai.io/" },
+    },
+  });
+  try {
+    await page.goto(server.url);
+    await expect(page.getByRole("heading", { name: "Evidence review" })).toBeVisible();
+    const navigation = page.getByRole("navigation", { name: "Host navigation" });
+    await expect(navigation.getByRole("link", { name: "Task overview" }))
+      .toHaveAttribute("href", "https://station.kontourai.io/tasks/fixture");
+    await expect(navigation.getByRole("link", { name: "Return to Station" }))
+      .toHaveAttribute("href", "https://station.kontourai.io/");
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+  } finally {
+    await server.close();
+  }
+});
+
 test("composed Survey workbench bounds and searches a thousand review items", async ({ page }) => {
   const run = await runFieldwork({
     taskPath: "examples/generic/task.json",
