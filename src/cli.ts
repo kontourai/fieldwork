@@ -8,6 +8,7 @@ import { openRun } from "./server.js";
 import { createDatumRuntimeBinding, createProfileRuntimeBinding, type FieldworkRuntimeBinding } from "./runtime-contracts.js";
 import { createCheckRunner, createLookoutSnapshotStore, loadRegistry } from "@kontourai/lookout";
 import { recheckFieldwork } from "./recheck.js";
+import { inspectionExport } from "./inspection.js";
 
 async function main(argv: string[]): Promise<void> {
   const [command, ...args] = argv;
@@ -80,7 +81,7 @@ async function main(argv: string[]): Promise<void> {
       const registry = await loadRegistry(flag(args, "--registry"));
       const source = registry.get(sourceId);
       if (!source) invalid(`registered source not found: ${sourceId}`);
-      const selectedSnapshotRoot = snapshotRoot ?? resolve(".kontourai/lookout/snapshots");
+      const selectedSnapshotRoot = snapshotRoot ?? resolve(".fieldwork/lookout/snapshots");
       const store = createLookoutSnapshotStore(selectedSnapshotRoot);
       const runtime = runtimeBinding(args);
       return output({
@@ -114,7 +115,18 @@ async function main(argv: string[]): Promise<void> {
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
       return output({ ok: true, output: outputPath }, has(args, "--json"));
     }
-    output(failure("USAGE", "fieldwork acquire|run|recheck|open|export; use README.md for the public contract"), true); process.exitCode = 2;
+    if (command === "inspect") {
+      const run = args.find((value) => !value.startsWith("--")), outputPath = flag(args, "--output");
+      if (!run || !outputPath) throw Object.assign(new Error("inspect requires <run> --output <file>"), { code: "INVALID_ARGUMENT" });
+      const artifact = await inspectionExport(resolve(run), {
+        includePreparedText: has(args, "--include-prepared-text"),
+        includeExcerpts: has(args, "--include-excerpts"),
+      });
+      await mkdir(dirname(resolve(outputPath)), { recursive: true });
+      await writeFile(resolve(outputPath), `${artifact}\n`, "utf8");
+      return output({ ok: true, output: outputPath }, has(args, "--json"));
+    }
+    output(failure("USAGE", "fieldwork acquire|run|recheck|open|inspect|export; use README.md for the public contract"), true); process.exitCode = 2;
   } catch (error) {
     output(failure((error as { code?: string }).code ?? "FIELDWORK_ERROR", error instanceof Error ? error.message : "Unexpected failure"), true); process.exitCode = 1;
   }

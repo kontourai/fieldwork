@@ -4,8 +4,10 @@ import { createExtractionTaskSpec, validateExtractionTaskSpec, type ExtractionTa
 export const FIELDWORK_LIMITS = {
   taskBytes: 256 * 1024,
   sourceBytes: 2 * 1024 * 1024,
-  requestBodyBytes: 1024 * 1024,
+  requestBodyBytes: 16 * 1024 * 1024,
+  artifactBytes: 32 * 1024 * 1024,
   projections: 128,
+  reviewItems: 10_000,
   events: 10_000,
   string: 4_096,
   pattern: 512

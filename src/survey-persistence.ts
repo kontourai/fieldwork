@@ -104,7 +104,7 @@ const reviewItemSchema = z.object({
 const decisionSchema = z.enum(["accept-proposed", "keep-current", "reject-proposed", "could-not-confirm"]);
 
 export const persistedReviewSnapshotSchema = z.object({
-  items: z.array(reviewItemSchema).max(FIELDWORK_LIMITS.projections),
+  items: z.array(reviewItemSchema).max(FIELDWORK_LIMITS.reviewItems),
   activeItemName: text,
   notesByItemName: z.record(text, text),
   decisionsByItemName: z.record(text, decisionSchema),

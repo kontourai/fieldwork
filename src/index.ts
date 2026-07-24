@@ -34,6 +34,7 @@ import {
 } from "./api-contracts.js";
 import { fieldworkHostDescriptor } from "./host-descriptor.js";
 import { recheckFieldwork as internalRecheck } from "./recheck.js";
+import { inspectionExport as internalInspectionExport } from "./inspection.js";
 
 export const FIELDWORK_LIMITS = internalLimits;
 export const fieldworkTaskSchema: z.ZodType<FieldworkTask> = internalTaskSchema;
@@ -66,6 +67,12 @@ export function acquireFieldwork(options: FieldworkAcquisitionOptions): Promise<
 export function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   return internalExport(runDirectory);
 }
+export function inspectionExport(
+  runDirectory: string,
+  options?: import("./inspection.js").FieldworkInspectionExportOptions,
+): Promise<string> {
+  return internalInspectionExport(runDirectory, options);
+}
 export function openRun(runDirectory: string, port?: number): Promise<OpenRunService> {
   return internalOpen(runDirectory, port);
 }
@@ -89,6 +96,7 @@ export type {
   FieldworkRuntimeBudget, FieldworkRuntimeCandidate,
   FieldworkStoredExecution, ProfileRuntimeBindingOptions
 } from "./runtime-contracts.js";
+export type { FieldworkInspectionExportOptions } from "./inspection.js";
 export type {
   FieldworkEvidenceObservation,
   FieldworkCheckResult,
