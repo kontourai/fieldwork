@@ -16,3 +16,9 @@ only the portable run resource, revision, and event count. Fieldwork has no host
 runtime dependency and hosts do not import its internal storage or Survey
 adapters. Lifecycle observers are advisory: a throwing observer cannot roll
 back or relabel an authoritative run or Survey persistence operation.
+
+Framing remains denied by default. An embedding host must provide its exact
+HTTP(S) origin when opening a run; Fieldwork validates and normalizes that
+origin before adding only that source to `frame-ancestors`. Paths, credentials,
+query strings, fragments, and non-HTTP schemes are rejected. The capability,
+Host, mutation-Origin, and other loopback protections remain independent.

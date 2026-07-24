@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
 import { lstat, readFile, realpath } from "node:fs/promises";
+import { isIP } from "node:net";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -36,6 +37,7 @@ const defaultPresentation: FieldworkHostPresentationV1 = {
 export async function openRun(runDirectory: string, options: OpenRunOptions = {}): Promise<OpenRunService> {
   const initial = await readRunView(runDirectory);
   const presentation = fieldworkHostPresentationSchema.parse(options.presentation ?? defaultPresentation);
+  const embeddingOrigin = parseEmbeddingOrigin(options.embeddingOrigin);
   const capabilityToken = randomBytes(32).toString("base64url");
   const listeners = new Set<FieldworkLifecycleListener>();
   if (options.onLifecycleEvent) listeners.add(options.onLifecycleEvent);
@@ -64,7 +66,7 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
   const server = createServer(async (request, response) => {
     try {
       if (!allowedHost(request.headers.host, expectedOrigin)) return void json(response, 400, failure("INVALID_HOST", "Host is not an allowed Fieldwork loopback authority"));
-      await handle(runDirectory, capabilityToken, expectedOrigin, presentation, emit, request, response);
+      await handle(runDirectory, capabilityToken, expectedOrigin, embeddingOrigin, presentation, emit, request, response);
     } catch (error) {
       const result = publicError(error);
       json(response, result.status, failure(result.code, result.message));
@@ -114,6 +116,7 @@ async function handle(
   directory: string,
   token: string,
   origin: string,
+  embeddingOrigin: string | undefined,
   presentation: FieldworkHostPresentationV1,
   emit: (type: FieldworkLifecycleEventV1["type"], revision: number, eventCount: number) => void,
   request: IncomingMessage,
@@ -141,7 +144,9 @@ async function handle(
     if (result.ok) emit("review-event-persisted", result.revision, result.eventCount);
     return void json(response, result.ok ? 200 : 409, result);
   }
-  if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") return void html(response, await appHtml());
+  if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") {
+    return void html(response, await appHtml(), embeddingOrigin);
+  }
   if (url.pathname.startsWith("/assets/") && request.method === "GET") return void asset(response, url.pathname);
   json(response, 404, failure("NOT_FOUND", "Unknown Fieldwork endpoint"));
 }
@@ -223,6 +228,33 @@ function allowedHost(host: string | undefined, origin: string): boolean {
   return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`;
 }
 
+function parseEmbeddingOrigin(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  let parsed: URL;
+  try { parsed = new URL(value); }
+  catch { throw new TypeError("Embedding origin must be an absolute HTTP(S) origin"); }
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:")
+    || parsed.username
+    || parsed.password
+    || parsed.pathname !== "/"
+    || parsed.search
+    || parsed.hash
+    || parsed.origin === "null") {
+    throw new TypeError("Embedding origin must be an absolute HTTP(S) origin");
+  }
+  const hostname = parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const concreteDnsName = hostname.length <= 253
+    && hostname.split(".").every((label) =>
+      label.length <= 63
+      && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/iu.test(label));
+  if (isIP(hostname) === 0 && !concreteDnsName) {
+    throw new TypeError("Embedding origin must use a concrete DNS name or IP address");
+  }
+  return parsed.origin;
+}
+
 function publicError(error: unknown): { status: number; code: string; message: string } {
   const code = (error as { code?: string }).code;
   if (code === "REQUEST_TOO_LARGE") return { status: 413, code, message: "Request exceeds the Fieldwork body limit" };
@@ -238,10 +270,11 @@ function json(response: ServerResponse, status: number, value: unknown): void {
     "x-content-type-options": "nosniff", "referrer-policy": "no-referrer"
   }).end(JSON.stringify(value));
 }
-function html(response: ServerResponse, value: string): void {
+function html(response: ServerResponse, value: string, embeddingOrigin: string | undefined): void {
+  const frameAncestors = embeddingOrigin ?? "'none'";
   response.writeHead(200, {
     "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
-    "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "content-security-policy": `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors ${frameAncestors}`,
     "referrer-policy": "no-referrer", "x-content-type-options": "nosniff"
   }).end(value);
 }

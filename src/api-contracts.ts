@@ -182,6 +182,11 @@ export type FieldworkLifecycleListener = (event: FieldworkLifecycleEventV1) => v
 export interface OpenRunOptions {
   readonly port?: number;
   readonly presentation?: FieldworkHostPresentationV1;
+  /**
+   * Exact HTTP(S) origin allowed to embed the review UI. Omit to deny framing.
+   * Paths, credentials, query strings, and fragments are rejected.
+   */
+  readonly embeddingOrigin?: string;
   readonly onLifecycleEvent?: FieldworkLifecycleListener;
 }
 export interface OpenRunService {

@@ -22,7 +22,7 @@ for (const dependency of ["@kontourai/ui", "react", "react-dom"]) {
 const stdout = execFileSync(join(work, "node_modules/.bin/fieldwork"), ["run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", join(work, "runs"), "--json"], { cwd: installed, encoding: "utf8" });
 const run = JSON.parse(stdout);
 if (!run.ok) throw new Error("Installed package CLI did not complete the packaged generic example");
-const probe = `import { openRun } from "@kontourai/fieldwork"; const service = await openRun(${JSON.stringify(run.runDirectory)}); try { const pageResponse = await fetch(service.baseUrl + "/"); const page = await pageResponse.text(); const asset = page.match(/src=\"([^\"]+\\.js)\"/)?.[1]; if (!asset) throw new Error("installed browser did not declare a JavaScript asset"); const assetResponse = await fetch(new URL(asset, service.baseUrl)); const body = await assetResponse.text(); if (!assetResponse.ok || !assetResponse.headers.get("content-type")?.startsWith("text/javascript") || body.length < 100) throw new Error("installed JavaScript asset response was invalid"); } finally { await service.close(); }`;
+const probe = `import { openRun } from "@kontourai/fieldwork"; const service = await openRun(${JSON.stringify(run.runDirectory)}, { embeddingOrigin: "HTTPS://Station.Example:443/" }); try { const pageResponse = await fetch(service.baseUrl + "/"); const csp = pageResponse.headers.get("content-security-policy"); if (!csp?.includes("frame-ancestors https://station.example")) throw new Error("installed browser did not normalize the embedding origin"); const page = await pageResponse.text(); const asset = page.match(/src=\"([^\"]+\\.js)\"/)?.[1]; if (!asset) throw new Error("installed browser did not declare a JavaScript asset"); const assetResponse = await fetch(new URL(asset, service.baseUrl)); const body = await assetResponse.text(); if (!assetResponse.ok || !assetResponse.headers.get("content-type")?.startsWith("text/javascript") || body.length < 100) throw new Error("installed JavaScript asset response was invalid"); } finally { await service.close(); }`;
 execFileSync(process.execPath, ["--input-type=module", "--eval", probe], { cwd: work, stdio: "inherit" });
 writeFileSync(join(work, "consumer.mts"), `import {
   FIELDWORK_LIMITS, acquireFieldwork, createFieldworkApplication,
@@ -56,6 +56,10 @@ const adapters: FieldworkSourceAdapters = {
 };
 void fieldworkStoredExecutionSchema;
 const application: FieldworkApplication = createFieldworkApplication();
+void application.open({
+  runDirectory: "run",
+  embeddingOrigin: "HTTPS://Station.Example:443/"
+});
 const presentation: FieldworkHostPresentationV1 = fieldworkHostPresentationSchema.parse({
   apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
   eyebrow: "Host", title: "Review", theme: "light", navigation: []
@@ -83,7 +87,7 @@ const recheck: Promise<FieldworkRecheckResult> = recheckFieldwork({
   }) }
 });
 void recheck;
-void openRun("run");
+void openRun("run", { embeddingOrigin: "HTTPS://Station.Example:443/" });
 void reviewedExport("run");
 `);
 writeFileSync(join(work, "tsconfig.json"), JSON.stringify({
