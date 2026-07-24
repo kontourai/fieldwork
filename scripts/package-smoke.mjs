@@ -25,13 +25,17 @@ if (!run.ok) throw new Error("Installed package CLI did not complete the package
 const probe = `import { openRun } from "@kontourai/fieldwork"; const service = await openRun(${JSON.stringify(run.runDirectory)}); try { const pageResponse = await fetch(service.baseUrl + "/"); const page = await pageResponse.text(); const asset = page.match(/src=\"([^\"]+\\.js)\"/)?.[1]; if (!asset) throw new Error("installed browser did not declare a JavaScript asset"); const assetResponse = await fetch(new URL(asset, service.baseUrl)); const body = await assetResponse.text(); if (!assetResponse.ok || !assetResponse.headers.get("content-type")?.startsWith("text/javascript") || body.length < 100) throw new Error("installed JavaScript asset response was invalid"); } finally { await service.close(); }`;
 execFileSync(process.execPath, ["--input-type=module", "--eval", probe], { cwd: work, stdio: "inherit" });
 writeFileSync(join(work, "consumer.mts"), `import {
-  FIELDWORK_LIMITS, acquireFieldwork, fieldworkAcquisitionResultSchema,
+  FIELDWORK_LIMITS, acquireFieldwork, createFieldworkApplication,
+  fieldworkAcquisitionResultSchema, fieldworkHostPresentationSchema,
+  fieldworkLifecycleEventSchema,
   fieldworkBatchRunResultSchema, fieldworkRunResultSchema, fieldworkRunViewSchema,
   fieldworkTaskSchema, openRun,
   parseFieldworkTask, preparedArtifactViewSchema, reviewedExport,
   reviewedExportSchema, reviewMutationResponseSchema, runFieldwork, runFieldworkBatch,
   recheckFieldwork,
-  type FieldworkRunViewV1, type FieldworkSourceAdapters, type FieldworkTask,
+  type FieldworkApplication, type FieldworkHostPresentationV1,
+  type FieldworkLifecycleEventV1, type FieldworkRunViewV1,
+  type FieldworkSourceAdapters, type FieldworkTask,
   type FieldworkLookoutSource, type FieldworkRecheckResult, type ReviewedExportV1
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
@@ -51,6 +55,17 @@ const adapters: FieldworkSourceAdapters = {
   image: { id: "consumer-ocr-v1", extract: { extract: async () => ({ text: "" }) } }
 };
 void fieldworkStoredExecutionSchema;
+const application: FieldworkApplication = createFieldworkApplication();
+const presentation: FieldworkHostPresentationV1 = fieldworkHostPresentationSchema.parse({
+  apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
+  eyebrow: "Host", title: "Review", theme: "light", navigation: []
+});
+const lifecycle: FieldworkLifecycleEventV1 = fieldworkLifecycleEventSchema.parse({
+  apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkLifecycleEvent",
+  sequence: 1, type: "run-opened", runResource: "fieldwork-run:v1:fixture",
+  revision: 0, eventCount: 0
+});
+void [application, presentation, lifecycle];
 void [fieldworkAcquisitionResultSchema, fieldworkBatchRunResultSchema, fieldworkRunResultSchema];
 void acquireFieldwork({ url: "https://example.com", snapshotRoot: "snapshots" });
 void runFieldwork({ taskPath: "task.json", sourcePath: "source.txt" });

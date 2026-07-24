@@ -12,6 +12,8 @@ import {
 import { acquireFieldwork as internalAcquire } from "./acquisition.js";
 import { openRun as internalOpen } from "./server.js";
 import {
+  fieldworkHostPresentationSchema as internalHostPresentationSchema,
+  fieldworkLifecycleEventSchema as internalLifecycleEventSchema,
   fieldworkRunViewSchema as internalRunViewSchema,
   fieldworkRunResultSchema as internalRunResultSchema,
   fieldworkAcquisitionResultSchema as internalAcquisitionResultSchema,
@@ -23,9 +25,12 @@ import {
   type FieldworkAcquisitionResult,
   type FieldworkBatchOptions,
   type FieldworkBatchRunResult,
+  type FieldworkHostPresentationV1,
+  type FieldworkLifecycleEventV1,
   type FieldworkRunResult,
   type FieldworkRunViewV1,
   type FieldworkTask,
+  type OpenRunOptions,
   type OpenRunService,
   type PreparedArtifactViewV1,
   type ReviewedExportV1,
@@ -33,11 +38,14 @@ import {
   type RunOptions
 } from "./api-contracts.js";
 import { fieldworkHostDescriptor } from "./host-descriptor.js";
+import { createFieldworkApplication as internalCreateApplication } from "./host-application.js";
 import { recheckFieldwork as internalRecheck } from "./recheck.js";
 import { inspectionExport as internalInspectionExport } from "./inspection.js";
 
 export const FIELDWORK_LIMITS = internalLimits;
 export const fieldworkTaskSchema: z.ZodType<FieldworkTask> = internalTaskSchema;
+export const fieldworkHostPresentationSchema: z.ZodType<FieldworkHostPresentationV1> = internalHostPresentationSchema;
+export const fieldworkLifecycleEventSchema: z.ZodType<FieldworkLifecycleEventV1> = internalLifecycleEventSchema;
 export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = internalRunViewSchema;
 export const fieldworkRunResultSchema: z.ZodType<FieldworkRunResult> = internalRunResultSchema;
 export const fieldworkAcquisitionResultSchema: z.ZodType<FieldworkAcquisitionResult> = internalAcquisitionResultSchema;
@@ -73,8 +81,11 @@ export function inspectionExport(
 ): Promise<string> {
   return internalInspectionExport(runDirectory, options);
 }
-export function openRun(runDirectory: string, port?: number): Promise<OpenRunService> {
-  return internalOpen(runDirectory, port);
+export function openRun(runDirectory: string, options?: OpenRunOptions): Promise<OpenRunService> {
+  return internalOpen(runDirectory, options);
+}
+export function createFieldworkApplication(): import("./host-application.js").FieldworkApplication {
+  return internalCreateApplication();
 }
 export function recheckFieldwork(
   options: import("./recheck.js").FieldworkRecheckOptions
@@ -84,13 +95,18 @@ export function recheckFieldwork(
 export type {
   FieldworkAcquisitionOptions, FieldworkAcquisitionResult, FieldworkBatchOptions,
   FieldworkBatchRunResult, FieldworkBatchSource, FieldworkFailure, FieldworkRunResult,
+  FieldworkHostNavigationItemV1, FieldworkHostPresentationV1,
+  FieldworkLifecycleEventType, FieldworkLifecycleEventV1, FieldworkLifecycleListener,
   FieldworkImageExtractedText, FieldworkPdfBoundingBox, FieldworkPdfExtractedText,
   FieldworkPdfLayout, FieldworkPdfPageGeometry, FieldworkPdfTable,
   FieldworkPdfTableCell, FieldworkPdfTextElement, FieldworkPdfTextRange,
   FieldworkRunViewV1, FieldworkSourceAdapters, FieldworkTask,
-  JsonObject, JsonPrimitive, JsonValue, OpenRunService, PreparedArtifactViewV1,
+  JsonObject, JsonPrimitive, JsonValue, OpenRunOptions, OpenRunService, PreparedArtifactViewV1,
   ReviewedExportV1, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
 } from "./api-contracts.js";
+export type {
+  FieldworkApplication, FieldworkApplicationOpenOptions,
+} from "./host-application.js";
 export type {
   DatumRuntimeBindingOptions, FieldworkExecutionIdentity, FieldworkRuntimeBinding,
   FieldworkRuntimeBudget, FieldworkRuntimeCandidate,

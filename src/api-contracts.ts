@@ -150,10 +150,47 @@ export interface FieldworkFailure {
   readonly ok: false;
   readonly error: { readonly code: string; readonly message: string };
 }
+export interface FieldworkHostNavigationItemV1 {
+  readonly label: string;
+  readonly href: string;
+}
+export interface FieldworkHostPresentationV1 {
+  readonly apiVersion: "fieldwork.kontourai.io/v1";
+  readonly kind: "FieldworkHostPresentation";
+  readonly eyebrow: string;
+  readonly title: string;
+  readonly theme: "light" | "dark";
+  readonly navigation: readonly FieldworkHostNavigationItemV1[];
+  readonly returnAction?: FieldworkHostNavigationItemV1;
+}
+export type FieldworkLifecycleEventType =
+  | "run-created"
+  | "run-opened"
+  | "review-event-persisted"
+  | "review-exported"
+  | "run-closed";
+export interface FieldworkLifecycleEventV1 {
+  readonly apiVersion: "fieldwork.kontourai.io/v1";
+  readonly kind: "FieldworkLifecycleEvent";
+  readonly sequence: number;
+  readonly type: FieldworkLifecycleEventType;
+  readonly runResource: string;
+  readonly revision: number;
+  readonly eventCount: number;
+}
+export type FieldworkLifecycleListener = (event: FieldworkLifecycleEventV1) => void;
+export interface OpenRunOptions {
+  readonly port?: number;
+  readonly presentation?: FieldworkHostPresentationV1;
+  readonly onLifecycleEvent?: FieldworkLifecycleListener;
+}
 export interface OpenRunService {
   readonly url: string;
   readonly baseUrl: string;
   readonly capabilityToken: string;
+  readonly presentation: FieldworkHostPresentationV1;
+  view(): Promise<FieldworkRunViewV1>;
+  subscribe(listener: FieldworkLifecycleListener): () => void;
   close(): Promise<void>;
 }
 export interface FieldworkRunViewV1 {
@@ -235,6 +272,35 @@ export const jsonObjectSchema: z.ZodType<JsonObject> = z.record(jsonValueSchema)
 const failureSchema = z.object({
   ok: z.literal(false),
   error: z.object({ code: z.string(), message: z.string() }).strict()
+}).strict();
+const hostNavigationItemSchema: z.ZodType<FieldworkHostNavigationItemV1> = z.object({
+  label: z.string().min(1).max(128),
+  href: z.string().min(1).max(2_048).superRefine((value, context) => {
+    try {
+      const protocol = new URL(value).protocol;
+      if (protocol !== "http:" && protocol !== "https:") throw new Error("unsupported protocol");
+    } catch {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "host navigation must use an absolute HTTP(S) URL" });
+    }
+  }),
+}).strict();
+export const fieldworkHostPresentationSchema: z.ZodType<FieldworkHostPresentationV1> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v1"),
+  kind: z.literal("FieldworkHostPresentation"),
+  eyebrow: z.string().min(1).max(128),
+  title: z.string().min(1).max(256),
+  theme: z.enum(["light", "dark"]),
+  navigation: z.array(hostNavigationItemSchema).max(8),
+  returnAction: hostNavigationItemSchema.optional(),
+}).strict();
+export const fieldworkLifecycleEventSchema: z.ZodType<FieldworkLifecycleEventV1> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v1"),
+  kind: z.literal("FieldworkLifecycleEvent"),
+  sequence: z.number().int().positive(),
+  type: z.enum(["run-created", "run-opened", "review-event-persisted", "review-exported", "run-closed"]),
+  runResource: z.string().min(1).max(512),
+  revision: z.number().int().nonnegative(),
+  eventCount: z.number().int().nonnegative().max(TRANSPORT_LIMITS.events),
 }).strict();
 export const fieldworkRunResultSchema: z.ZodType<FieldworkRunResult> = z.object({
   apiVersion: z.literal("fieldwork.kontourai.io/v1"),

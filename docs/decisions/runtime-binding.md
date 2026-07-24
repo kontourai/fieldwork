@@ -14,4 +14,11 @@ Attempt capacity is always durable. A token or estimated-cost ceiling additional
 
 Bounded chunk concurrency and the Traverse-provider-operation ceiling are runtime launch policy and participate in execution identity. A Traverse provider operation can still use multiple Dispatch fallback attempts, so the durable attempt authorization separately caps model launches. Traverse may receive completions out of order, but it owns source-ordered proposal normalization; Fieldwork orders stored Dispatch receipts by deterministic invocation sequence so scheduling cannot destabilize the run artifact. Provider-operation ceilings and cancellation preserve Traverse's typed partial state. A failed chunk retains its classified provider failure and conservative Dispatch reservation while successful chunks continue into review.
 
-The Relay extraction adapter exposes one physical invocation per chunk. Fieldwork therefore does not expose Traverse's batch-size option or describe concurrent calls as provider-native batching. Traverse #111 owns a truthful physical-batch extension seam and capability evidence.
+Traverse and Relay expose a truthful capability-gated physical-batch seam.
+Fieldwork's Dispatch-composed runtime deliberately omits it because Dispatch
+currently projects one routed invocation at a time. Fieldwork therefore does
+not expose Traverse's batch-size option or describe concurrent calls as
+provider-native batching. Dispatch #28 owns preservation of batch bounds,
+up-front durable authorization, positional item outcomes, fallback receipts,
+and cancellation through routed runtime composition; Fieldwork adopts that
+published contract rather than bypassing routing policy.

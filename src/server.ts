@@ -9,8 +9,11 @@ import { assertServerReviewSessionEvents, createServerReviewSessionRecord, deriv
 import { buildExtractionInspectorModel, importExtractionEnvelope, type ReviewSessionEvent } from "@kontourai/survey";
 import { FIELDWORK_LIMITS, failure } from "./contracts.js";
 import {
-  parseFieldworkRunView, parsePreparedArtifactView, parseReviewMutationSuccess,
-  type FieldworkRunViewV1, type OpenRunService, type ReviewMutationResponseV1
+  fieldworkHostPresentationSchema, parseFieldworkRunView, parsePreparedArtifactView,
+  parseReviewMutationSuccess, type FieldworkHostPresentationV1,
+  type FieldworkLifecycleEventV1, type FieldworkLifecycleListener,
+  type FieldworkRunViewV1, type OpenRunOptions, type OpenRunService,
+  type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import { canonicalReviewItems, importNameFor, reviewSessionName } from "./fieldwork.js";
@@ -21,14 +24,47 @@ const reviewRequestSchema = z.object({
   expectedRevision: z.number().int().nonnegative()
 }).strict();
 
-export async function openRun(runDirectory: string, port = 0): Promise<OpenRunService> {
-  await readRun(runDirectory);
+const defaultPresentation: FieldworkHostPresentationV1 = {
+  apiVersion: "fieldwork.kontourai.io/v1",
+  kind: "FieldworkHostPresentation",
+  eyebrow: "Fieldwork",
+  title: "Grounded review",
+  theme: "light",
+  navigation: [],
+};
+
+export async function openRun(runDirectory: string, options: OpenRunOptions = {}): Promise<OpenRunService> {
+  const initial = await readRunView(runDirectory);
+  const presentation = fieldworkHostPresentationSchema.parse(options.presentation ?? defaultPresentation);
   const capabilityToken = randomBytes(32).toString("base64url");
+  const listeners = new Set<FieldworkLifecycleListener>();
+  if (options.onLifecycleEvent) listeners.add(options.onLifecycleEvent);
+  let sequence = 0;
+  let closed = false;
+  const emit = (
+    type: FieldworkLifecycleEventV1["type"],
+    revision: number,
+    eventCount: number,
+  ): void => {
+    const event: FieldworkLifecycleEventV1 = {
+      apiVersion: "fieldwork.kontourai.io/v1",
+      kind: "FieldworkLifecycleEvent",
+      sequence: ++sequence,
+      type,
+      runResource: initial.run.resource,
+      revision,
+      eventCount,
+    };
+    for (const listener of listeners) {
+      try { listener(event); }
+      catch { /* Observers cannot change the authoritative review operation. */ }
+    }
+  };
   let expectedOrigin = "";
   const server = createServer(async (request, response) => {
     try {
       if (!allowedHost(request.headers.host, expectedOrigin)) return void json(response, 400, failure("INVALID_HOST", "Host is not an allowed Fieldwork loopback authority"));
-      await handle(runDirectory, capabilityToken, expectedOrigin, request, response);
+      await handle(runDirectory, capabilityToken, expectedOrigin, presentation, emit, request, response);
     } catch (error) {
       const result = publicError(error);
       json(response, result.status, failure(result.code, result.message));
@@ -39,26 +75,56 @@ export async function openRun(runDirectory: string, port = 0): Promise<OpenRunSe
   server.keepAliveTimeout = 5_000;
   await new Promise<void>((resolvePromise, reject) => {
     server.once("error", reject);
-    server.listen({ host: "127.0.0.1", port }, resolvePromise);
+    server.listen({ host: "127.0.0.1", port: options.port ?? 0 }, resolvePromise);
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Loopback server did not expose a TCP address");
   const baseUrl = `http://127.0.0.1:${address.port}`;
   expectedOrigin = baseUrl;
+  emit("run-opened", initial.run.revision, initial.review.events.length);
   return {
     baseUrl,
     capabilityToken,
+    presentation,
     url: `${baseUrl}/#cap=${encodeURIComponent(capabilityToken)}`,
-    close: () => new Promise((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()))
+    view: () => readRunView(runDirectory),
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      let finalView: FieldworkRunViewV1 | undefined;
+      let readError: unknown;
+      try { finalView = await readRunView(runDirectory); }
+      catch (error) { readError = error; }
+      try {
+        await new Promise<void>((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
+      } finally {
+        if (finalView) emit("run-closed", finalView.run.revision, finalView.review.events.length);
+        listeners.clear();
+      }
+      if (readError) throw readError;
+    },
   };
 }
 
-async function handle(directory: string, token: string, origin: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handle(
+  directory: string,
+  token: string,
+  origin: string,
+  presentation: FieldworkHostPresentationV1,
+  emit: (type: FieldworkLifecycleEventV1["type"], revision: number, eventCount: number) => void,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
   const url = new URL(request.url ?? "/", origin);
   if (url.pathname.startsWith("/api/") && request.headers["x-fieldwork-capability"] !== token) {
     return void json(response, 401, failure("CAPABILITY_REQUIRED", "A valid Fieldwork launch capability is required"));
   }
-  if (url.pathname === "/api/v1/run" && request.method === "GET") return void json(response, 200, await view(directory));
+  if (url.pathname === "/api/v1/run" && request.method === "GET") return void json(response, 200, await readRunView(directory));
+  if (url.pathname === "/api/v1/host" && request.method === "GET") return void json(response, 200, presentation);
   if (url.pathname === "/api/v1/prepared" && request.method === "GET") {
     const stored = await readRun(directory);
     return void json(response, 200, parsePreparedArtifactView({
@@ -72,6 +138,7 @@ async function handle(directory: string, token: string, origin: string, request:
       return void json(response, 415, failure("JSON_REQUIRED", "Review mutations require application/json"));
     }
     const result = await submit(directory, await body(request));
+    if (result.ok) emit("review-event-persisted", result.revision, result.eventCount);
     return void json(response, result.ok ? 200 : 409, result);
   }
   if ((url.pathname === "/" || url.pathname === "/index.html") && request.method === "GET") return void html(response, await appHtml());
@@ -79,7 +146,7 @@ async function handle(directory: string, token: string, origin: string, request:
   json(response, 404, failure("NOT_FOUND", "Unknown Fieldwork endpoint"));
 }
 
-async function view(directory: string): Promise<FieldworkRunViewV1> {
+export async function readRunView(directory: string): Promise<FieldworkRunViewV1> {
   const stored = await readRun(directory);
   const imported = importExtractionEnvelope(stored.envelope, {
     importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: "uploaded-document",

@@ -9,7 +9,8 @@ import "@kontourai/ui/tokens";
 import "@kontourai/ui/react/styles.css";
 import "./style.css";
 import {
-  fieldworkRunViewSchema, reviewMutationResponseSchema, type FieldworkRunViewV1
+  fieldworkHostPresentationSchema, fieldworkRunViewSchema, reviewMutationResponseSchema,
+  type FieldworkHostPresentationV1, type FieldworkRunViewV1
 } from "../api-contracts.js";
 
 const capability = new URLSearchParams(location.hash.slice(1)).get("cap") ?? "";
@@ -17,13 +18,23 @@ const apiHeaders = { "x-fieldwork-capability": capability };
 
 function App() {
   const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("Review ready");
+  const [presentation, setPresentation] = useState<FieldworkHostPresentationV1>({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
+    eyebrow: "Fieldwork", title: "Grounded review", theme: "light", navigation: [],
+  });
   const inspector = useRef<HTMLDivElement>(null), workbench = useRef<HTMLDivElement>(null);
   const load = async () => {
     try {
-      const response = await fetch("/api/v1/run", { headers: apiHeaders });
-      const loaded = fieldworkRunViewSchema.safeParse(await response.json());
+      const [runResponse, hostResponse] = await Promise.all([
+        fetch("/api/v1/run", { headers: apiHeaders }),
+        fetch("/api/v1/host", { headers: apiHeaders }),
+      ]);
+      const loaded = fieldworkRunViewSchema.safeParse(await runResponse.json());
       if (!loaded.success) throw new Error("Invalid Fieldwork run response");
+      const host = fieldworkHostPresentationSchema.safeParse(await hostResponse.json());
+      if (!host.success) throw new Error("Invalid Fieldwork host presentation");
       setState(loaded.data);
+      setPresentation(host.data);
     } catch { setNotice("Unable to load server-owned review state"); }
   };
   useEffect(() => { void load(); }, []);
@@ -53,6 +64,7 @@ function App() {
     return () => { disposeInspector(); workbench.current?.replaceChildren(); };
   }, [state]);
   const inspectorCount = Array.isArray(state?.inspector.candidates) ? state.inspector.candidates.length : 0;
-  return <main className="fieldwork-shell theme-survey" data-theme="light"><Topbar eyebrow="Fieldwork" title="Grounded review" meta={[{ label: "Run", value: state?.run.resource ?? "loading" }]} /><Panel title="Grounded source inspection" count={inspectorCount}><div className="survey-workbench-embed theme-survey" data-theme="light" ref={inspector}/></Panel><Panel title="Survey review workbench" count={state?.review.items.length ?? 0}><div className="survey-workbench-embed theme-survey" data-theme="light" ref={workbench}/></Panel><StatusBar ariaLabel="Fieldwork status" start="Local server authority" items={[{ label: "Review", value: notice || "ready" }]}/></main>;
+  const navigation = [...presentation.navigation, ...(presentation.returnAction ? [presentation.returnAction] : [])];
+  return <main className="fieldwork-shell theme-survey" data-theme={presentation.theme}><Topbar eyebrow={presentation.eyebrow} title={presentation.title} meta={[{ label: "Run", value: state?.run.resource ?? "loading" }]} />{navigation.length > 0 && <nav className="fieldwork-host-navigation" aria-label="Host navigation">{navigation.map((item) => <a key={`${item.label}:${item.href}`} href={item.href}>{item.label}</a>)}</nav>}<Panel title="Grounded source inspection" count={inspectorCount}><div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={inspector}/></Panel><Panel title="Survey review workbench" count={state?.review.items.length ?? 0}><div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={workbench}/></Panel><StatusBar ariaLabel="Fieldwork status" start="Local server authority" items={[{ label: "Review", value: notice || "ready" }]}/></main>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);

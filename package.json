@@ -53,10 +53,10 @@
     "@kontourai/dispatch": "0.4.0",
     "@kontourai/forage": "0.4.1",
     "@kontourai/lookout": "0.3.3",
-    "@kontourai/relay": "0.5.0",
+    "@kontourai/relay": "0.6.0",
     "@kontourai/surface": "2.13.0",
     "@kontourai/survey": "2.2.1",
-    "@kontourai/traverse": "0.22.0",
+    "@kontourai/traverse": "0.23.0",
     "zod": "3.24.1"
   },
   "peerDependencies": {
