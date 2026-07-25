@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "bin": {
-    "fieldwork": "./dist/cli.js"
+    "fieldwork": "dist/cli.js"
   },
   "exports": {
     ".": {
