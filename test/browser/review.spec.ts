@@ -4,14 +4,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  buildReviewSessionEvents,
-  type ReviewQueueSessionState,
-} from "@kontourai/survey/review-workbench";
-import type { FieldworkRunViewV1 } from "../../src/api-contracts.js";
 import { runFieldwork } from "../../src/fieldwork.js";
 import { openRun } from "../../src/server.js";
-import { apiFetch, tempRoot } from "../helpers.js";
+import { tempRoot } from "../helpers.js";
 import {
   formatImageBytes,
   formatPdfBytes,
@@ -24,33 +19,19 @@ test("review presents grounded vendor-renewal evidence and a durable decision", 
   const run = await runFieldwork({ taskPath: "examples/vendor-obligations/task.json", sourcePath: "examples/vendor-obligations/source.txt", root: await tempRoot("browser-vendor-renewal") });
   const server = await openRun(run.runDirectory);
   try {
-    const initial = await apiFetch(server, "/api/v1/run")
-      .then((response) => response.json()) as FieldworkRunViewV1;
-    const snapshot = initial.review.snapshot as unknown as ReviewQueueSessionState;
-    const events = buildReviewSessionEvents({
-      ...snapshot,
-      decisionsByItemName: Object.fromEntries(
-        snapshot.items.map((item) => [item.metadata.name, "accept-proposed"]),
-      ),
-    });
-    const saved = await apiFetch(server, "/api/v1/review", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        events,
-        expectedEventCount: 0,
-        expectedRevision: 0,
-      }),
-    }).then((response) => response.json()) as { ok: boolean };
-    expect(saved.ok).toBe(true);
     await page.goto(server.url); await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
-    const candidate = page.getByRole("button", { name: /commercial\.annualFeeUsd .*fieldwork-deterministic-v1/ });
+    const candidate = page.getByRole("button", { name: /vendor\.name .*fieldwork-deterministic-v1/ });
     await candidate.click();
-    const reviewField = page.locator('[data-field="commercial.annualFeeUsd"]');
-    await expect(page.getByLabel("Highlighted for commercial.annualFeeUsd")).toBeVisible();
-    await page.getByRole("button", { name: /Source highlight for commercial\.annualFeeUsd/ }).click();
+    const reviewField = page.locator('[data-field="vendor.name"]');
+    await expect(page.getByLabel("Highlighted for vendor.name")).toBeVisible();
+    await page.getByRole("button", { name: /Source highlight for vendor\.name/ }).click();
     await expect(candidate).toBeFocused();
+    await reviewField.getByTestId("use-proposed").click();
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Saved");
     await expect(reviewField.getByTestId("decided-chip")).toHaveText("Accepted");
+    await page.reload();
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    await expect(page.locator('[data-field="vendor.name"]').getByTestId("decided-chip")).toHaveText("Accepted");
     // Native select text/chevrons can vary slightly across otherwise identical
     // Chromium captures. Keep the allowance well below 0.1% of this full-page
     // image while structural and interaction assertions verify the controls.

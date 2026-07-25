@@ -39,7 +39,7 @@
     "build": "npm run clean && tsc -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
-    "test:examples": "tsx test/examples.test.ts",
+    "test:examples": "tsx --test test/examples.test.ts test/vendor-renewal-example.test.ts",
     "test:conformance": "tsx --test test/conformance.test.ts test/format-conformance.test.ts test/provider-conformance.test.ts",
     "test:api": "tsx test/api.test.ts",
     "test:cli": "tsx test/cli.test.ts",

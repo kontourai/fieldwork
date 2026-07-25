@@ -2,6 +2,30 @@
   "schemaVersion": 1,
   "fixture": "vendor-obligations",
   "sourceLength": 343,
+  "replay": {
+    "provider": "fieldwork-deterministic-v1",
+    "model": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "totalTokensUsed": 0,
+    "rawKeys": [
+      "tokensUsed"
+    ],
+    "outcome": {
+      "status": "success"
+    },
+    "warnings": []
+  },
+  "ordering": {
+    "nonOverlapping": true
+  },
+  "occurrenceDefaults": {
+    "resolverVersion": "exact-occurrence-v1",
+    "count": 1,
+    "index": 0,
+    "selection": "source-order",
+    "hintUsed": false,
+    "ambiguous": false
+  },
   "proposals": [
     {
       "fieldPath": "vendor.name",
@@ -101,12 +125,69 @@
   ],
   "recheck": {
     "classification": "semantic-drift",
-    "revisedSourceLength": 348,
+    "revisedSourceLength": 343,
     "changedValues": {
       "commercial.annualFeeUsd": 52500,
-      "renewal.posture": "manual",
       "renewal.noticeDays": 60
     },
+    "changes": [
+      {
+        "fieldPath": "commercial.annualFeeUsd",
+        "semanticKind": "proposal-value-changed",
+        "prior": {
+          "value": 48000,
+          "excerpt": "Annual renewal fee USD: 48000",
+          "locator": "chars:151-180"
+        },
+        "current": {
+          "value": 52500,
+          "excerpt": "Annual renewal fee USD: 52500",
+          "locator": "chars:151-180"
+        }
+      },
+      {
+        "fieldPath": "renewal.noticeDays",
+        "semanticKind": "proposal-value-changed",
+        "prior": {
+          "value": 45,
+          "excerpt": "Notice period days: 45",
+          "locator": "chars:233-255"
+        },
+        "current": {
+          "value": 60,
+          "excerpt": "Notice period days: 60",
+          "locator": "chars:233-255"
+        }
+      },
+      {
+        "fieldPath": "commercial.annualFeeUsd",
+        "semanticKind": "proposal-provenance-changed",
+        "prior": {
+          "value": 48000,
+          "excerpt": "Annual renewal fee USD: 48000",
+          "locator": "chars:151-180"
+        },
+        "current": {
+          "value": 52500,
+          "excerpt": "Annual renewal fee USD: 52500",
+          "locator": "chars:151-180"
+        }
+      },
+      {
+        "fieldPath": "renewal.noticeDays",
+        "semanticKind": "proposal-provenance-changed",
+        "prior": {
+          "value": 45,
+          "excerpt": "Notice period days: 45",
+          "locator": "chars:233-255"
+        },
+        "current": {
+          "value": 60,
+          "excerpt": "Notice period days: 60",
+          "locator": "chars:233-255"
+        }
+      }
+    ],
     "priorRunRemainsImmutable": true
   }
 }
