@@ -9,7 +9,7 @@ import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench
 import { apiFetch, tempRoot } from "./helpers.js";
 
 const examples = [
-  ["vendor-obligations", 2],
+  ["vendor-obligations", 7],
   ["incident-postmortem", 4],
   ["grant-eligibility", 4],
   ["ordered-relationships", 7],

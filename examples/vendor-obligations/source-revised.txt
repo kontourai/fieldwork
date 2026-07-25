@@ -2,9 +2,9 @@ Northstar Analytics — 2027 renewal brief
 
 Northstar Analytics provides the reporting platform used by the operations team.
 Vendor: Northstar Analytics
-Annual renewal fee USD: 48000
+Annual renewal fee USD: 52500
 Renewal date: 2027-04-01
 Renewal posture: automatic
-Notice period days: 45
+Notice period days: 60
 Security assurance: SOC 2 Type II report every 12 months
 Hosting region: United States

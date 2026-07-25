@@ -1,1 +1,137 @@
-{"apiVersion":"fieldwork.kontourai.io/v1alpha1","kind":"FieldworkTask","metadata":{"name":"vendor-obligations"},"spec":{"traverse":{"version":"1","targetSchema":[{"path":"obligation","type":"string","inferenceType":"explicit"},{"path":"deadline","type":"date","inferenceType":"explicit"}]},"projections":[{"fieldPath":"obligation","pattern":"Obligation: ([^\\n]+)","claim":{"subjectType":"agreement","subjectId":"vendor-demo","facet":"obligations","claimType":"field","impactLevel":"high"}},{"fieldPath":"deadline","pattern":"Deadline: ([^\\n]+)","claim":{"subjectType":"agreement","subjectId":"vendor-demo","facet":"obligations","claimType":"field","impactLevel":"high"}}]}}
+{
+  "apiVersion": "fieldwork.kontourai.io/v1alpha1",
+  "kind": "FieldworkTask",
+  "metadata": {
+    "name": "vendor-renewal-review"
+  },
+  "spec": {
+    "traverse": {
+      "version": "1",
+      "targetSchema": [
+        {
+          "path": "vendor.name",
+          "type": "string",
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "commercial.annualFeeUsd",
+          "type": "number",
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "renewal.date",
+          "type": "date",
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "renewal.posture",
+          "type": "enum",
+          "enumValues": [
+            "automatic",
+            "manual"
+          ],
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "renewal.noticeDays",
+          "type": "number",
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "security.assurance",
+          "type": "string",
+          "inferenceType": "explicit"
+        },
+        {
+          "path": "data.hostingRegion",
+          "type": "enum",
+          "enumValues": [
+            "United States",
+            "European Union",
+            "Canada"
+          ],
+          "inferenceType": "explicit"
+        }
+      ]
+    },
+    "projections": [
+      {
+        "fieldPath": "vendor.name",
+        "pattern": "Vendor: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "counterparty",
+          "claimType": "field",
+          "impactLevel": "medium"
+        }
+      },
+      {
+        "fieldPath": "commercial.annualFeeUsd",
+        "pattern": "Annual renewal fee USD: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "commercial",
+          "claimType": "field",
+          "impactLevel": "high"
+        }
+      },
+      {
+        "fieldPath": "renewal.date",
+        "pattern": "Renewal date: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "renewal",
+          "claimType": "field",
+          "impactLevel": "high"
+        }
+      },
+      {
+        "fieldPath": "renewal.posture",
+        "pattern": "Renewal posture: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "renewal",
+          "claimType": "field",
+          "impactLevel": "high"
+        }
+      },
+      {
+        "fieldPath": "renewal.noticeDays",
+        "pattern": "Notice period days: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "renewal",
+          "claimType": "field",
+          "impactLevel": "high"
+        }
+      },
+      {
+        "fieldPath": "security.assurance",
+        "pattern": "Security assurance: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "security",
+          "claimType": "field",
+          "impactLevel": "high"
+        }
+      },
+      {
+        "fieldPath": "data.hostingRegion",
+        "pattern": "Hosting region: ([^\\n]+)",
+        "claim": {
+          "subjectType": "vendor-agreement",
+          "subjectId": "northstar-analytics-2027",
+          "facet": "data-residency",
+          "claimType": "field",
+          "impactLevel": "high"
+        }
+      }
+    ]
+  }
+}

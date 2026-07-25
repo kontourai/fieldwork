@@ -1,6 +1,8 @@
 # Fieldwork
 
-Fieldwork is a local, credential-free review application for grounded extraction. It proposes fields through Traverse, sends the proposal envelope to Survey for review, and exports a Surface-validated reviewed trust bundle only after server-owned review is complete.
+Fieldwork turns contracts, reports, transcripts, and records into reviewed structured evidence. Every proposed value stays linked to the exact source passage that supports it, so a reviewer can accept or correct the result before exporting a portable trust bundle.
+
+Run the same task again when a source changes and Fieldwork opens a focused review round for values or evidence that moved, changed, appeared, or disappeared. The earlier reviewed run remains intact.
 
 ## Quickstart
 
@@ -9,7 +11,9 @@ Requires Node 22.
 ```sh
 npm install
 npm run build
-npm exec -- fieldwork run --task examples/generic/task.json --source examples/generic/source.txt --json
+npm exec -- fieldwork run \
+  --task examples/vendor-obligations/task.json \
+  --source examples/vendor-obligations/source.txt --json
 # Copy runDirectory from the JSON response:
 npm exec -- fieldwork open /path/from/runDirectory
 ```
@@ -20,7 +24,9 @@ Review an item in the loopback browser, then export it:
 npm exec -- fieldwork export /path/from/runDirectory --output reviewed.json --json
 ```
 
-The checked-in provider is deterministic and offline; no credential, network, or private configuration is required.
+The example prepares a vendor-renewal review with a typed annual fee, renewal date, renewal posture, notice period, security assurance, and hosting region. In the browser you can inspect each exact source excerpt, make the review decision, reload the durable decision, and export only the reviewed result.
+
+The checked-in provider is deterministic and offline, so the complete example requires no credential, network, or private configuration. For different scenarios, try the [incident postmortem](examples/incident-postmortem) or [grant eligibility](examples/grant-eligibility) examples.
 
 ## Sources and replay
 
@@ -102,7 +108,7 @@ Portable Dispatch receipts are stored in `run.json`; they retain candidate, mode
 
 ## Examples
 
-- `examples/vendor-obligations`: extracts an agreement obligation and deadline for a vendor-management follow-up.
+- `examples/vendor-obligations`: prepares a vendor-renewal decision with typed commercial, renewal, security, and data-residency evidence, plus a revised-source recheck.
 - `examples/incident-postmortem`: extracts incident timeline, impact, root cause, and corrective action into a review queue.
 - `examples/grant-eligibility`: extracts eligibility, required materials, deadline, and evaluation criterion from a synthetic RFP.
 - `examples/ordered-relationships`: extracts ordered entities, attributes, and a relationship from meeting notes.
@@ -113,7 +119,7 @@ Portable Dispatch receipts are stored in `run.json`; they retain candidate, mode
 - `examples/document-sections`: keeps two record sections ordered within one prepared source.
 - `examples/long-form-groundwork`: provides a CI-sized repeated-section fixture for locator and occurrence groundwork.
 
-Each is verified through the same `run → Survey events → reviewed export` contract, including its expected claims. The seven corpus fixtures carry checked-in comparison-neutral `oracle.json` files that freeze typed values, proposal order, exact excerpts and `chars:` offsets, occurrence metadata, diagnostics and warnings posture, deterministic replay metadata, and reviewed claim evidence.
+Each is verified through the same `run → Survey events → reviewed export` contract, including its expected claims. Eight corpus fixtures carry checked-in comparison-neutral `oracle.json` files. Together they freeze typed values, proposal order, exact excerpts and `chars:` offsets, occurrence metadata, diagnostics and warnings posture, deterministic replay metadata, reviewed claim evidence, and the vendor-renewal changed-source outcome.
 
 The separate `conformance/long-input` tier deterministically assembles a 25,018-character source from a compact checked-in specification. Its independent oracle proves three default Traverse chunk calls, one deduplicated proposal in the overlap region, a late-document proposal, exact full-prepared-text locators, Survey review, and grounded export. Run it with `npm run test:conformance`.
 
