@@ -33,6 +33,10 @@ test("release verification keeps browser conformance but disables non-portable p
 test("package metadata keeps browser build inputs out of runtime dependencies", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   assert.equal(packageJson.license, "Apache-2.0");
+  assert.deepEqual(packageJson.repository, {
+    type: "git",
+    url: "https://github.com/kontourai/fieldwork",
+  });
   for (const dependency of ["@kontourai/ui", "react", "react-dom"]) {
     assert.equal(packageJson.dependencies[dependency], undefined);
     assert.equal(typeof packageJson.devDependencies[dependency], "string");
