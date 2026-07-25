@@ -3,6 +3,10 @@
   "version": "0.2.5",
   "description": "Local, grounded extraction review with portable reviewed output.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kontourai/fieldwork"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
