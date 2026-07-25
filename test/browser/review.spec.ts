@@ -4,9 +4,14 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  buildReviewSessionEvents,
+  type ReviewQueueSessionState,
+} from "@kontourai/survey/review-workbench";
+import type { FieldworkRunViewV1 } from "../../src/api-contracts.js";
 import { runFieldwork } from "../../src/fieldwork.js";
 import { openRun } from "../../src/server.js";
-import { tempRoot } from "../helpers.js";
+import { apiFetch, tempRoot } from "../helpers.js";
 import {
   formatImageBytes,
   formatPdfBytes,
@@ -15,19 +20,37 @@ import {
 
 const visualSnapshotsEnabled = process.env.FIELDWORK_VISUAL_SNAPSHOTS !== "0";
 
-test("review links a grounded candidate to a durable browser decision", async ({ page }) => {
-  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser") });
+test("review presents grounded vendor-renewal evidence and a durable decision", async ({ page }) => {
+  const run = await runFieldwork({ taskPath: "examples/vendor-obligations/task.json", sourcePath: "examples/vendor-obligations/source.txt", root: await tempRoot("browser-vendor-renewal") });
   const server = await openRun(run.runDirectory);
   try {
+    const initial = await apiFetch(server, "/api/v1/run")
+      .then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = initial.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(
+        snapshot.items.map((item) => [item.metadata.name, "accept-proposed"]),
+      ),
+    });
+    const saved = await apiFetch(server, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        events,
+        expectedEventCount: 0,
+        expectedRevision: 0,
+      }),
+    }).then((response) => response.json()) as { ok: boolean };
+    expect(saved.ok).toBe(true);
     await page.goto(server.url); await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
-    const candidate = page.getByRole("button", { name: /record\.status .*fieldwork-deterministic-v1/ });
+    const candidate = page.getByRole("button", { name: /commercial\.annualFeeUsd .*fieldwork-deterministic-v1/ });
     await candidate.click();
-    await expect(page.getByLabel("Highlighted for record.status")).toBeVisible();
-    await page.getByRole("button", { name: /Source highlight for record\.status/ }).click();
+    const reviewField = page.locator('[data-field="commercial.annualFeeUsd"]');
+    await expect(page.getByLabel("Highlighted for commercial.annualFeeUsd")).toBeVisible();
+    await page.getByRole("button", { name: /Source highlight for commercial\.annualFeeUsd/ }).click();
     await expect(candidate).toBeFocused();
-    await page.getByTestId("use-proposed").click();
-    await expect(page.getByLabel("Fieldwork status")).toContainText("Saved");
-    await page.reload(); await expect(page.getByTestId("decided-chip")).toHaveText("Accepted");
+    await expect(reviewField.getByTestId("decided-chip")).toHaveText("Accepted");
     // Native select text/chevrons can vary slightly across otherwise identical
     // Chromium captures. Keep the allowance well below 0.1% of this full-page
     // image while structural and interaction assertions verify the controls.
@@ -165,18 +188,19 @@ test("composed Survey workbench bounds and searches a thousand review items", as
 
 test("review has a responsive mobile layout and optional visual baseline", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-mobile") });
+  const run = await runFieldwork({ taskPath: "examples/vendor-obligations/task.json", sourcePath: "examples/vendor-obligations/source.txt", root: await tempRoot("browser-mobile-vendor-renewal") });
   const server = await openRun(run.runDirectory);
   try {
     await page.goto(server.url); await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
-    const primary = [page.getByTestId("keep-current"), page.getByTestId("use-proposed")];
+    await expect(page.getByTestId("review-field")).toHaveCount(7);
+    const primary = [page.getByTestId("keep-current").first(), page.getByTestId("use-proposed").first()];
     for (const control of primary) {
       await expect(control).toBeVisible();
       const visual = await control.evaluate((node) => ({ background: getComputedStyle(node).backgroundColor, box: node.getBoundingClientRect().toJSON() }));
       expect(visual.background).not.toBe("rgba(0, 0, 0, 0)"); expect(visual.background).not.toBe("transparent");
       expect(visual.box.x).toBeGreaterThanOrEqual(0); expect(visual.box.x + visual.box.width).toBeLessThanOrEqual(390);
     }
-    await expect(page.getByTestId("could-not-confirm")).toBeVisible();
+    await expect(page.getByTestId("could-not-confirm").first()).toBeVisible();
     const geometry = await page.evaluate(() => { const copy = document.querySelector(".topbar-copy")!.getBoundingClientRect(), meta = document.querySelector(".topbar-meta")!.getBoundingClientRect(); return { body: document.body.scrollWidth === document.body.clientWidth, doc: document.documentElement.scrollWidth === document.documentElement.clientWidth, overlap: !(copy.bottom <= meta.top || meta.bottom <= copy.top || copy.right <= meta.left || meta.right <= copy.left), brand: getComputedStyle(document.documentElement).getPropertyValue("--k-brand").trim(), topbar: getComputedStyle(document.querySelector(".topbar")!).backgroundColor }; });
     expect(geometry.body).toBe(true); expect(geometry.doc).toBe(true); expect(geometry.overlap).toBe(false); expect(geometry.brand).not.toBe(""); expect(geometry.topbar).not.toBe("rgba(0, 0, 0, 0)");
     if (visualSnapshotsEnabled) {

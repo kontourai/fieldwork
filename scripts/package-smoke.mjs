@@ -19,9 +19,12 @@ for (const obsolete of ["dist/runtime.js", "dist/runtime.d.ts"]) {
 for (const dependency of ["@kontourai/ui", "react", "react-dom"]) {
   if (manifest.dependencies?.[dependency]) throw new Error(`${dependency} must remain a bundled-browser build input`);
 }
-const stdout = execFileSync(join(work, "node_modules/.bin/fieldwork"), ["run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", join(work, "runs"), "--json"], { cwd: installed, encoding: "utf8" });
+const stdout = execFileSync(join(work, "node_modules/.bin/fieldwork"), ["run", "--task", "examples/vendor-obligations/task.json", "--source", "examples/vendor-obligations/source.txt", "--root", join(work, "runs"), "--json"], { cwd: installed, encoding: "utf8" });
 const run = JSON.parse(stdout);
-if (!run.ok) throw new Error("Installed package CLI did not complete the packaged generic example");
+if (!run.ok || run.proposalCount !== 7) throw new Error("Installed package CLI did not complete the packaged vendor-renewal example");
+for (const exampleFile of ["source-revised.txt", "oracle.json"]) {
+  readFileSync(join(installed, "examples/vendor-obligations", exampleFile), "utf8");
+}
 const probe = `import { openRun } from "@kontourai/fieldwork"; const service = await openRun(${JSON.stringify(run.runDirectory)}, { embeddingOrigin: "HTTPS://Station.Example:443/" }); try { const pageResponse = await fetch(service.baseUrl + "/"); const csp = pageResponse.headers.get("content-security-policy"); if (!csp?.includes("frame-ancestors https://station.example")) throw new Error("installed browser did not normalize the embedding origin"); const page = await pageResponse.text(); const asset = page.match(/src=\"([^\"]+\\.js)\"/)?.[1]; if (!asset) throw new Error("installed browser did not declare a JavaScript asset"); const assetResponse = await fetch(new URL(asset, service.baseUrl)); const body = await assetResponse.text(); if (!assetResponse.ok || !assetResponse.headers.get("content-type")?.startsWith("text/javascript") || body.length < 100) throw new Error("installed JavaScript asset response was invalid"); } finally { await service.close(); }`;
 execFileSync(process.execPath, ["--input-type=module", "--eval", probe], { cwd: work, stdio: "inherit" });
 writeFileSync(join(work, "consumer.mts"), `import {

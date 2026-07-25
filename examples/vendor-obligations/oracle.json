@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "fixture": "vendor-obligations",
+  "sourceLength": 343,
+  "proposals": [
+    {
+      "fieldPath": "vendor.name",
+      "value": "Northstar Analytics",
+      "valueType": "string",
+      "excerpt": "Vendor: Northstar Analytics",
+      "locator": "chars:123-150"
+    },
+    {
+      "fieldPath": "commercial.annualFeeUsd",
+      "value": 48000,
+      "valueType": "number",
+      "excerpt": "Annual renewal fee USD: 48000",
+      "locator": "chars:151-180"
+    },
+    {
+      "fieldPath": "renewal.date",
+      "value": "2027-04-01",
+      "valueType": "date",
+      "excerpt": "Renewal date: 2027-04-01",
+      "locator": "chars:181-205"
+    },
+    {
+      "fieldPath": "renewal.posture",
+      "value": "automatic",
+      "valueType": "enum",
+      "enumValues": [
+        "automatic",
+        "manual"
+      ],
+      "excerpt": "Renewal posture: automatic",
+      "locator": "chars:206-232"
+    },
+    {
+      "fieldPath": "renewal.noticeDays",
+      "value": 45,
+      "valueType": "number",
+      "excerpt": "Notice period days: 45",
+      "locator": "chars:233-255"
+    },
+    {
+      "fieldPath": "security.assurance",
+      "value": "SOC 2 Type II report every 12 months",
+      "valueType": "string",
+      "excerpt": "Security assurance: SOC 2 Type II report every 12 months",
+      "locator": "chars:256-312"
+    },
+    {
+      "fieldPath": "data.hostingRegion",
+      "value": "United States",
+      "valueType": "enum",
+      "enumValues": [
+        "United States",
+        "European Union",
+        "Canada"
+      ],
+      "excerpt": "Hosting region: United States",
+      "locator": "chars:313-342"
+    }
+  ],
+  "reviewedClaims": [
+    {
+      "fieldPath": "vendor.name",
+      "value": "Northstar Analytics",
+      "locator": "chars:123-150"
+    },
+    {
+      "fieldPath": "commercial.annualFeeUsd",
+      "value": 48000,
+      "locator": "chars:151-180"
+    },
+    {
+      "fieldPath": "renewal.date",
+      "value": "2027-04-01",
+      "locator": "chars:181-205"
+    },
+    {
+      "fieldPath": "renewal.posture",
+      "value": "automatic",
+      "locator": "chars:206-232"
+    },
+    {
+      "fieldPath": "renewal.noticeDays",
+      "value": 45,
+      "locator": "chars:233-255"
+    },
+    {
+      "fieldPath": "security.assurance",
+      "value": "SOC 2 Type II report every 12 months",
+      "locator": "chars:256-312"
+    },
+    {
+      "fieldPath": "data.hostingRegion",
+      "value": "United States",
+      "locator": "chars:313-342"
+    }
+  ],
+  "recheck": {
+    "classification": "semantic-drift",
+    "revisedSourceLength": 348,
+    "changedValues": {
+      "commercial.annualFeeUsd": 52500,
+      "renewal.posture": "manual",
+      "renewal.noticeDays": 60
+    },
+    "priorRunRemainsImmutable": true
+  }
+}
