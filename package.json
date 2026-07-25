@@ -49,9 +49,16 @@
     "check:content": "node scripts/check-content-boundary.mjs",
     "check:decisions": "node scripts/check-decisions.mjs",
     "check:veritas": "veritas readiness --working-tree",
+    "trust-reconcile-verify": "npm run verify",
     "verify:static": "npm run typecheck && npm run build && npm test && npm run test:examples && npm run test:conformance && npm run test:cli && npm run test:api && npm run test:a11y && npm run test:browser && npm run test:package && npm run check:content && npm run check:decisions",
     "verify": "npm run verify:static && npm run check:veritas"
   },
+  "trust-reconcile-manifest": [
+    {
+      "id": "full-verification",
+      "command": "npm run verify"
+    }
+  ],
   "dependencies": {
     "@kontourai/datum": "0.7.0",
     "@kontourai/dispatch": "0.5.0",
