@@ -71,6 +71,23 @@ export function traverseTask(task: FieldworkTask): ExtractionTaskSpec {
   return createExtractionTaskSpec(task.spec.traverse);
 }
 
+/**
+ * Order-independent JSON serialization. Two values that carry the same content
+ * serialize identically no matter what order their keys were produced in, so
+ * content equality can be decided without depending on key order. Key order is
+ * not a contract: the same Survey event reaches Fieldwork through several
+ * schemas (wire, persisted, Survey's own), and each emits its own key order.
+ */
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export interface FieldworkFailure {
   readonly ok: false;
   readonly error: { readonly code: string; readonly message: string };

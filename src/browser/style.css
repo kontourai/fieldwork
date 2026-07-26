@@ -1,1 +1,166 @@
-:root { --k-brand: #2563eb; --k-bg: #f8fafc; --k-panel: #ffffff; --k-text: #172554; font-family: ui-sans-serif, system-ui; color: var(--k-text); background: var(--k-bg); } body { margin: 0; overflow-x: hidden; } .fieldwork-shell { max-width: 1100px; margin: auto; padding: 2rem; } .fieldwork-shell section { min-width: 0; margin-block: 1.5rem; } .fieldwork-host-navigation { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; } .fieldwork-host-navigation a { color: var(--k-brand); border: 1px solid color-mix(in srgb, var(--k-brand) 28%, transparent); border-radius: 999px; padding: .45rem .75rem; text-decoration: none; font-weight: 650; } .fieldwork-host-navigation a:hover, .fieldwork-host-navigation a:focus-visible { background: color-mix(in srgb, var(--k-brand) 10%, transparent); } .survey-workbench-embed { container-type: inline-size; min-width: 0; overflow-wrap: anywhere; } @media (max-width: 700px) { .fieldwork-shell { padding: .75rem; } .topbar { grid-template-columns: 1fr; align-items: stretch; gap: .5rem; } .topbar-meta { grid-template-columns: minmax(0, 1fr); } .topbar h1 { font-size: 1.55rem; } .panel { min-width: 0; overflow: hidden; } .survey-workbench-embed .rhead, .survey-workbench-embed .fbody { padding-inline: 12px; } }
+/* Fieldwork application shell.
+   Identity — colour, type, radius, elevation — belongs to @kontourai/ui tokens
+   and the shared `.theme-survey` layer. Nothing here redefines a token value
+   for the shell itself; local rules only consume them, so the review UI
+   resolves the same palette as every other Kontour surface. */
+
+:root {
+  font-family: var(--k-font-ui);
+  color: var(--k-text);
+  background: var(--k-bg);
+}
+
+/* @kontourai/ui ships `.theme-survey { --k-bg: #06080b }` with no light-mode
+   counterpart, so the shared Survey identity paints a near-black canvas under
+   a light page. Pair it until ui ships the light variant. */
+[data-theme="light"].theme-survey,
+[data-theme="light"] .theme-survey {
+  --k-bg: #f5f4ef;
+  --k-panel: #ffffff;
+  --k-panel-raised: #fbfaf7;
+}
+
+body { margin: 0; overflow-x: hidden; }
+
+.fieldwork-shell { max-width: 1100px; margin: auto; padding: 2rem; }
+.fieldwork-shell section { min-width: 0; margin-block: 1.5rem; }
+
+/* @kontourai/ui's Panel declares the radius tokens but never applies one. */
+.fieldwork-shell .panel { border-radius: var(--k-radius-md); }
+
+.fieldwork-host-navigation { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; }
+.fieldwork-host-navigation a {
+  color: var(--k-brand);
+  border: 1px solid color-mix(in srgb, var(--k-brand) 28%, transparent);
+  border-radius: 999px;
+  padding: .45rem .75rem;
+  text-decoration: none;
+  font-weight: 650;
+}
+.fieldwork-host-navigation a:hover,
+.fieldwork-host-navigation a:focus-visible { background: color-mix(in srgb, var(--k-brand) 10%, transparent); }
+
+.survey-workbench-embed { container-type: inline-size; min-width: 0; overflow-wrap: anywhere; }
+
+/* --- Survey embed token repair (kontourai/survey#202) ----------------------------------------------
+   @kontourai/survey bundles a copy of the @kontourai/ui token and theme layers
+   scoped to `.survey-workbench-embed`, declaring every token against itself:
+       --k-brand: var(--k-brand, #5ce0c6);
+   A custom property whose value references itself is a cycle, so it is invalid
+   at computed-value time and resolves to nothing. The result is that EVERY
+   design token dies inside the embed and the whole Survey surface renders
+   untokenised — which is why the grounded source highlight computed a
+   transparent background and no outline.
+   Restating the tokens as `inherit` makes the embed take the shell's resolved
+   theme, which is what the upstream fallback intended. The selector must
+   outrank survey's own `.survey-workbench-embed[data-theme].theme-*` variants
+   (0,3,0). `test/browser/review.spec.ts` fails if this repair stops landing. */
+.fieldwork-shell .survey-workbench-embed[data-theme].theme-survey {
+  --k-bg: inherit;
+  --k-panel: inherit;
+  --k-panel-raised: inherit;
+  --k-line: inherit;
+  --k-line-strong: inherit;
+  --k-shadow: inherit;
+  --k-text: inherit;
+  --k-text-muted: inherit;
+  --k-text-faint: inherit;
+  --k-brand: inherit;
+  --k-brand-contrast: inherit;
+  --k-positive: inherit;
+  --k-caution: inherit;
+  --k-negative: inherit;
+  --k-neutral: inherit;
+  --k-active: inherit;
+  --k-space-1: inherit;
+  --k-space-2: inherit;
+  --k-space-3: inherit;
+  --k-space-4: inherit;
+  --k-space-5: inherit;
+  --k-space-6: inherit;
+  --k-radius-sm: inherit;
+  --k-radius-md: inherit;
+  --k-text-xs: inherit;
+  --k-text-sm: inherit;
+  --k-text-md: inherit;
+  --k-text-lg: inherit;
+  --k-text-xl: inherit;
+  --k-text-2xl: inherit;
+  --k-font-display: inherit;
+  --k-font-ui: inherit;
+  --k-font-mono: inherit;
+  --k-ease: inherit;
+  --k-dur: inherit;
+  color-scheme: inherit;
+}
+
+/* --- Class-name collisions ---------------------------------------------------
+   @kontourai/ui's React primitives are unscoped globals and claim generic names
+   (`.progress`, `.empty`, `.eyebrow`) that Survey's workbench uses for
+   different elements: ui's `.progress` is a determinate 8px bar whose `span`
+   child is the gradient fill, while Survey's `.progress` is the header row
+   holding the bar, the decided count, and the apply button. Inside the embed,
+   Survey owns them. (Only visible once the tokens above resolve — the broken
+   tokens were masking this.) */
+.fieldwork-shell .survey-workbench-embed .progress {
+  height: auto;
+  background: none;
+  border: 0;
+}
+.fieldwork-shell .survey-workbench-embed .progress > span {
+  display: inline;
+  height: auto;
+  background: none;
+}
+.fieldwork-shell .survey-workbench-embed .empty { padding: 0; }
+.fieldwork-shell .survey-workbench-embed .eyebrow { font-family: inherit; }
+
+/* --- Grounded evidence -------------------------------------------------------
+   The highlighted span is the product: it is the proof that a proposed value
+   came from the source text. Give it a wash, a brand-coloured underline, and
+   enough weight to survive a screenshot. */
+.fieldwork-shell .survey-workbench-embed .inspector-source mark {
+  background: color-mix(in srgb, var(--k-brand) 22%, transparent);
+  color: var(--k-text);
+  box-shadow: inset 0 -2px 0 var(--k-brand);
+  /* No horizontal padding: Survey's 1px keyboard anchor sits immediately
+     before the mark, and padding would cover its only hit area. */
+  padding: 1px 0;
+  outline: 0;
+}
+
+/* Survey's keyboard return-anchor sizes a native <button> to a 1px sliver but
+   never removes its user-agent chrome, so under `box-sizing: border-box` it
+   paints a 16x13 outset-grey box inline in the source text. */
+.fieldwork-shell .survey-workbench-embed .highlight-anchor {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  width: 1px;
+  height: 1em;
+  vertical-align: baseline;
+}
+.fieldwork-shell .survey-workbench-embed .highlight-anchor:focus-visible {
+  outline: 2px solid var(--k-brand);
+  outline-offset: 2px;
+  width: 3px;
+}
+
+/* A disabled primary rendered as brand-contrast text at 45% opacity sits at
+   roughly 1.1:1 on the panel. Keep it legible and obviously inert. */
+.fieldwork-shell .survey-workbench-embed .apply:disabled {
+  opacity: 1;
+  background: color-mix(in srgb, var(--k-text-muted) 18%, transparent);
+  color: var(--k-text-muted);
+  border: 1px solid var(--k-line-strong);
+}
+
+@media (max-width: 700px) {
+  .fieldwork-shell { padding: .75rem; }
+  .topbar { grid-template-columns: 1fr; align-items: stretch; gap: .5rem; }
+  .topbar-meta { grid-template-columns: minmax(0, 1fr); }
+  .topbar h1 { font-size: 1.55rem; }
+  .panel { min-width: 0; overflow: hidden; }
+  .survey-workbench-embed .rhead, .survey-workbench-embed .fbody { padding-inline: 12px; }
+}

@@ -7,8 +7,8 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { assertServerReviewSessionEvents, createServerReviewSessionRecord, deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
-import { buildExtractionInspectorModel, importExtractionEnvelope, type ReviewSessionEvent } from "@kontourai/survey";
-import { FIELDWORK_LIMITS, failure } from "./contracts.js";
+import { buildExtractionInspectorModel, importExtractionEnvelope, type ReviewItem, type ReviewSessionEvent } from "@kontourai/survey";
+import { FIELDWORK_LIMITS, canonicalJson, failure } from "./contracts.js";
 import {
   fieldworkHostPresentationSchema, parseFieldworkRunView, parsePreparedArtifactView,
   parseReviewMutationSuccess, type FieldworkHostPresentationV1,
@@ -17,7 +17,7 @@ import {
   type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
-import { canonicalReviewItems, importNameFor, reviewSessionName } from "./fieldwork.js";
+import { canonicalReviewItems, decidableReviewItem, importNameFor, reviewSessionName } from "./fieldwork.js";
 
 const reviewRequestSchema = z.object({
   events: z.array(z.custom<ReviewSessionEvent>((value) => Boolean(value && typeof value === "object"))).max(FIELDWORK_LIMITS.events),
@@ -30,7 +30,7 @@ const defaultPresentation: FieldworkHostPresentationV1 = {
   kind: "FieldworkHostPresentation",
   eyebrow: "Fieldwork",
   title: "Grounded review",
-  theme: "light",
+  theme: "dark",
   navigation: [],
 };
 
@@ -170,12 +170,21 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
     eventCount: stored.run.review.events.length
   });
   const apply = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
+  // The browser mounts the persisted snapshot, so its items pass through the
+  // same decidability adapter as the item list. Runs written before the adapter
+  // existed then present decidable items without rewriting storage. The
+  // snapshot's own candidates are left untouched: it stays the server-owned
+  // review authority and may carry host-seeded candidates of its own.
+  const snapshot = {
+    ...stored.run.review.snapshot,
+    items: (stored.run.review.snapshot.items as ReviewItem[]).map(decidableReviewItem),
+  };
   return parseFieldworkRunView({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunView", ok: true,
     run: { resource: stored.run.runResource, revision: stored.run.review.revision },
     inspector,
     review: {
-      snapshot: stored.run.review.snapshot,
+      snapshot,
       items: canonicalReviewItems(imported.reviewItems, stored.envelope),
       events: stored.run.review.events,
       apply
@@ -188,7 +197,13 @@ async function submit(directory: string, input: unknown): Promise<ReviewMutation
   if (!parsed.success) return failure("INVALID_REVIEW", "Bounded Survey events, event count, and revision are required");
   return withRunReviewLock(directory, async (stored) => {
     const { events, expectedEventCount, expectedRevision } = parsed.data;
-    const prefixMatches = JSON.stringify(events.slice(0, stored.run.review.events.length)) === JSON.stringify(stored.run.review.events);
+    // The append-only check compares CONTENT, not key order. The submitted
+    // prefix and the persisted history describe the same events but are
+    // produced by different schemas — the browser posts Survey's own ordering
+    // while storage returns this repository's persisted-event ordering — so a
+    // literal JSON.stringify comparison rejected byte-identical history.
+    const prefixMatches = canonicalJson(events.slice(0, stored.run.review.events.length))
+      === canonicalJson(stored.run.review.events);
     if (expectedRevision !== stored.run.review.revision
       || expectedEventCount !== stored.run.review.events.length
       || events.length <= stored.run.review.events.length
