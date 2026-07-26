@@ -131,6 +131,52 @@ test("the review surface resolves shared @kontourai/ui tokens", async ({ page })
   } finally { await server.close(); }
 });
 
+test("the embed survives @kontourai/ui's unscoped global class names", async ({ page }) => {
+  // `.progress`, `.empty` and `.eyebrow` are generic names that @kontourai/ui's
+  // React primitives claim as unscoped globals and Survey's workbench uses for
+  // different elements. This is a host-composition collision, not a Survey
+  // defect: it is unaffected by survey#202/#203 and still live on survey 2.2.3.
+  // Without src/browser/style.css's containment, ui's `.progress` collapses the
+  // decided-count row to its own 8px determinate bar — with an opaque
+  // background and a border — and the apply button overflows its container.
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-global-collisions"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const measured = await page.evaluate(() => {
+      const el = (selector: string) => document.querySelector(selector);
+      const progress = el(".survey-workbench-embed .progress")!;
+      const apply = el(".survey-workbench-embed .apply")!;
+      const style = getComputedStyle(progress);
+      const empty = el(".survey-workbench-embed .val.empty");
+      const eyebrow = el(".survey-workbench-embed .eyebrow");
+      return {
+        progressHeight: progress.getBoundingClientRect().height,
+        progressBackground: style.backgroundColor,
+        progressBorder: style.borderTopWidth,
+        applyOverflow: apply.getBoundingClientRect().bottom - progress.getBoundingClientRect().bottom,
+        emptyPadding: empty ? getComputedStyle(empty).padding : undefined,
+        eyebrowFont: eyebrow ? getComputedStyle(eyebrow).fontFamily : undefined,
+      };
+    });
+    // Survey's header row, not ui's 8px bar.
+    expect(measured.progressHeight).toBeGreaterThan(24);
+    expect(measured.progressBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(measured.progressBorder).toBe("0px");
+    // The apply button must sit inside the row that holds it.
+    expect(measured.applyOverflow).toBeLessThanOrEqual(0);
+    expect(measured.emptyPadding).toBe("0px");
+    expect(measured.eyebrowFont).not.toMatch(/Mono/i);
+  } finally {
+    await server.close();
+  }
+});
+
 test("a host can brand the selected run and inject bounded navigation", async ({ page }) => {
   const run = await runFieldwork({
     taskPath: "examples/generic/task.json",
