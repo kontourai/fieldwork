@@ -84,6 +84,152 @@ test("a reviewer can decide every field, including typed ones, and export", asyn
   } finally { await server.close(); }
 });
 
+test("one 1440x900 frame carries the document, the evidence, and an open decision", async ({ page }) => {
+  // The measured failure this replaces: a single fixed-width column at every
+  // viewport, 4245px tall for seven fields, whose first screen reached a filter
+  // bar and never a decision.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-first-screen"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const frame = await page.evaluate(() => {
+      const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const source = box(".fieldwork-column-source");
+      const review = box(".fieldwork-column-review");
+      const document_ = box(".inspector-source pre");
+      const highlights = [...document.querySelectorAll(".inspector-source mark")];
+      const decision = box('[data-testid="use-proposed"]');
+      return {
+        sideBySide: source.right <= review.left + 1,
+        documentTop: document_.top,
+        documentShare: (document_.width * Math.min(document_.height, 900 - document_.top)) / (1440 * 900),
+        highlightsInFrame: highlights.filter((mark) => mark.getBoundingClientRect().bottom <= 900).length,
+        progressBottom: box(".rhead .progress").bottom,
+        decisionBottom: decision.bottom,
+        pageHeight: document.body.scrollHeight,
+      };
+    });
+    expect(frame.sideBySide).toBe(true);
+    // The document, its highlights, how far the review has got, and a decision
+    // the reviewer can actually take — all above the fold.
+    expect(frame.documentTop).toBeLessThan(400);
+    expect(frame.highlightsInFrame).toBeGreaterThanOrEqual(7);
+    expect(frame.progressBottom).toBeLessThan(900);
+    expect(frame.decisionBottom).toBeLessThan(900);
+    // The document was 3.5% of the screen. It is now the left column's subject.
+    expect(frame.documentShare).toBeGreaterThan(0.15);
+    expect(frame.pageHeight).toBeLessThan(3_000);
+    // The frame itself is the acceptance criterion, so it gets a baseline of
+    // its own — a viewport capture, not a full-page scroll.
+    if (visualSnapshotsEnabled) {
+      await expect(page).toHaveScreenshot("fieldwork-review-frame.png", { maxDiffPixels: 1_500 });
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("every fact carries its locator and links to the source highlight it came from", async ({ page }) => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-locator"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const provenance = await page.evaluate(() => [...document.querySelectorAll('[data-testid="proposed-excerpt"] .from')]
+      .map((from) => {
+        const link = from.querySelector("a");
+        const href = link?.getAttribute("href") ?? "";
+        return {
+          text: from.textContent ?? "",
+          href,
+          resolves: href.startsWith("#") && Boolean(document.getElementById(href.slice(1))),
+        };
+      }));
+    expect(provenance).toHaveLength(7);
+    for (const entry of provenance) {
+      // The exact locator was sixth inside a collapsed audit accordion.
+      expect(entry.text).toMatch(/chars:\d+-\d+/);
+      expect(entry.text).toContain("Vendor renewal review");
+      // ...and the 64-hex digest that used to print here belongs in the record.
+      expect(entry.text).not.toMatch(/[0-9a-f]{32,}/);
+      // Trip-wire for main.tsx's mirror of Survey's private highlight id.
+      expect(entry.resolves).toBe(true);
+    }
+    // The digest is still one hover away, and still whole in the audit record.
+    await expect(page.locator(".fieldwork-document-digest")).toHaveAttribute("title", /[0-9a-f]{64}/);
+    await page.getByTestId("audit-details").first().click();
+    await expect(page.getByTestId("audit-details").first()).toContainText("Raw Source ID");
+  } finally {
+    await server.close();
+  }
+});
+
+test("selecting a fact shows it in the document, and selecting a span shows the fact", async ({ page }) => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-selection"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const card = page.locator('[data-field="renewal.date"]');
+    await card.locator(".excerpt .from a").click();
+    await expect(page.locator("mark[data-fw-active]")).toHaveText(/Renewal date: 2027-04-01/);
+    // The fragment link must never navigate: the launch capability is the hash.
+    expect(new URL(page.url()).hash).toContain("cap=");
+
+    await page.locator("mark", { hasText: "Hosting region: United States" }).click();
+    await expect(page.locator('[data-testid="review-field"][data-fw-active]'))
+      .toHaveAttribute("data-field", "data.hostingRegion");
+
+    // A decision rebuilds the queue; the selection has to survive that.
+    await card.getByTestId("use-proposed").click();
+    await expect(card.getByTestId("decided-chip")).toHaveText("Accepted");
+    await expect(page.locator('[data-testid="review-field"][data-fw-active]')).toHaveCount(1);
+    // Release the keep-alive socket the decision opened, so closing the loopback
+    // server does not sit out Node's idle timeout.
+    await page.close();
+  } finally {
+    await server.close();
+  }
+});
+
+test("the filter bar stays behind a disclosure until the queue needs it", async ({ page }) => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-filters"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    // Eight select elements filtering seven fields used to be the largest
+    // visual mass on the screen.
+    await expect(page.locator("select:visible")).toHaveCount(0);
+    await page.getByRole("button", { name: "Filter evidence" }).click();
+    await expect(page.locator(".inspector-filters select:visible")).toHaveCount(7);
+    await page.getByRole("button", { name: "Find fields" }).click();
+    await expect(page.getByTestId("queue-disposition")).toBeVisible();
+    await page.getByRole("button", { name: "Filter evidence" }).click();
+    await expect(page.locator(".inspector-filters select:visible")).toHaveCount(0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("the review surface resolves shared @kontourai/ui tokens", async ({ page }) => {
   const run = await runFieldwork({
     taskPath: "examples/vendor-obligations/task.json",
@@ -294,6 +440,9 @@ test("composed Survey workbench bounds and searches a thousand review items", as
     });
     await page.goto(server.url);
     await expect(page.getByTestId("review-field")).toHaveCount(50);
+    // A long queue is the case where filtering is the only way through, so the
+    // disclosure opens itself rather than hiding the only usable control.
+    await expect(page.getByTestId("queue-disposition")).toBeVisible();
     await expect(page.getByText("1–50 of 1005")).toBeVisible();
     await page.getByTestId("queue-search").fill("needle");
     await expect(page.getByTestId("review-field")).toHaveCount(1);
@@ -320,6 +469,16 @@ test("review has a responsive mobile layout and optional visual baseline", async
     await expect(page.getByTestId("could-not-confirm").first()).toBeVisible();
     const geometry = await page.evaluate(() => { const copy = document.querySelector(".topbar-copy")!.getBoundingClientRect(), meta = document.querySelector(".topbar-meta")!.getBoundingClientRect(); return { body: document.body.scrollWidth === document.body.clientWidth, doc: document.documentElement.scrollWidth === document.documentElement.clientWidth, overlap: !(copy.bottom <= meta.top || meta.bottom <= copy.top || copy.right <= meta.left || meta.right <= copy.left), brand: getComputedStyle(document.documentElement).getPropertyValue("--k-brand").trim(), topbar: getComputedStyle(document.querySelector(".topbar")!).backgroundColor }; });
     expect(geometry.body).toBe(true); expect(geometry.doc).toBe(true); expect(geometry.overlap).toBe(false); expect(geometry.brand).not.toBe(""); expect(geometry.topbar).not.toBe("rgba(0, 0, 0, 0)");
+    // Stacked, not side by side, and in the same order the story is told: the
+    // document first, bounded so it cannot push the queue off the page.
+    const stacked = await page.evaluate(() => {
+      const source = document.querySelector(".fieldwork-column-source")!.getBoundingClientRect();
+      const review = document.querySelector(".fieldwork-column-review")!.getBoundingClientRect();
+      const prepared = document.querySelector(".inspector-source pre")!;
+      return { order: source.bottom <= review.top + 1, boundedDocument: prepared.getBoundingClientRect().height <= 844 * 0.5 };
+    });
+    expect(stacked.order).toBe(true);
+    expect(stacked.boundedDocument).toBe(true);
     if (visualSnapshotsEnabled) {
       await expect(page).toHaveScreenshot("fieldwork-review-mobile.png", { fullPage: true, maxDiffPixels: 500 });
     }
