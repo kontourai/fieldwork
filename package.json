@@ -66,7 +66,7 @@
     "@kontourai/lookout": "0.3.3",
     "@kontourai/relay": "0.6.0",
     "@kontourai/surface": "2.13.0",
-    "@kontourai/survey": "2.2.1",
+    "@kontourai/survey": "2.2.3",
     "@kontourai/traverse": "0.23.0",
     "zod": "3.24.1"
   },

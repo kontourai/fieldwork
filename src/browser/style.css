@@ -42,66 +42,28 @@ body { margin: 0; overflow-x: hidden; }
 
 .survey-workbench-embed { container-type: inline-size; min-width: 0; overflow-wrap: anywhere; }
 
-/* --- Survey embed token repair (kontourai/survey#202) ----------------------------------------------
-   @kontourai/survey bundles a copy of the @kontourai/ui token and theme layers
-   scoped to `.survey-workbench-embed`, declaring every token against itself:
-       --k-brand: var(--k-brand, #5ce0c6);
-   A custom property whose value references itself is a cycle, so it is invalid
-   at computed-value time and resolves to nothing. The result is that EVERY
-   design token dies inside the embed and the whole Survey surface renders
-   untokenised — which is why the grounded source highlight computed a
-   transparent background and no outline.
-   Restating the tokens as `inherit` makes the embed take the shell's resolved
-   theme, which is what the upstream fallback intended. The selector must
-   outrank survey's own `.survey-workbench-embed[data-theme].theme-*` variants
-   (0,3,0). `test/browser/review.spec.ts` fails if this repair stops landing. */
-.fieldwork-shell .survey-workbench-embed[data-theme].theme-survey {
-  --k-bg: inherit;
-  --k-panel: inherit;
-  --k-panel-raised: inherit;
-  --k-line: inherit;
-  --k-line-strong: inherit;
-  --k-shadow: inherit;
-  --k-text: inherit;
-  --k-text-muted: inherit;
-  --k-text-faint: inherit;
-  --k-brand: inherit;
-  --k-brand-contrast: inherit;
-  --k-positive: inherit;
-  --k-caution: inherit;
-  --k-negative: inherit;
-  --k-neutral: inherit;
-  --k-active: inherit;
-  --k-space-1: inherit;
-  --k-space-2: inherit;
-  --k-space-3: inherit;
-  --k-space-4: inherit;
-  --k-space-5: inherit;
-  --k-space-6: inherit;
-  --k-radius-sm: inherit;
-  --k-radius-md: inherit;
-  --k-text-xs: inherit;
-  --k-text-sm: inherit;
-  --k-text-md: inherit;
-  --k-text-lg: inherit;
-  --k-text-xl: inherit;
-  --k-text-2xl: inherit;
-  --k-font-display: inherit;
-  --k-font-ui: inherit;
-  --k-font-mono: inherit;
-  --k-ease: inherit;
-  --k-dur: inherit;
-  color-scheme: inherit;
-}
-
 /* --- Class-name collisions ---------------------------------------------------
    @kontourai/ui's React primitives are unscoped globals and claim generic names
    (`.progress`, `.empty`, `.eyebrow`) that Survey's workbench uses for
    different elements: ui's `.progress` is a determinate 8px bar whose `span`
    child is the gradient fill, while Survey's `.progress` is the header row
    holding the bar, the decided count, and the apply button. Inside the embed,
-   Survey owns them. (Only visible once the tokens above resolve — the broken
-   tokens were masking this.) */
+   Survey owns them.
+
+   This is a host-composition collision between two @kontourai packages, NOT a
+   Survey defect — survey#202 (embed tokens) did not and could not address it,
+   and it is still load-bearing on @kontourai/survey 2.2.3. Measured with these
+   rules removed: `.progress` collapses to ui's 8px bar with an opaque
+   background and a border (the decided count and the apply button then overflow
+   their own container), `.val.empty` gains ui's 10px/12px padding, and
+   `.eyebrow` switches to ui's mono face. `test/browser/review.spec.ts`
+   ("the embed survives @kontourai/ui's unscoped global class names") asserts
+   each of those, so this block cannot be dropped silently.
+
+   Survey 2.2.3 additionally neutralises its own `.ptext` against ui's
+   `.progress span` gradient, so the `> span` rule below is now belt-and-braces
+   rather than the sole defence; it is kept because the name collision is the
+   host's to contain. */
 .fieldwork-shell .survey-workbench-embed .progress {
   height: auto;
   background: none;

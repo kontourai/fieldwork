@@ -121,12 +121,19 @@ test("consecutive decisions append without a spurious review conflict", async ()
   }
 });
 
-test("every declared value type stays decidable through the mounted workbench", async () => {
-  // The Review Workbench validates the reviewer's inline edit against
-  // spec.valueDescriptor before accepting a proposal, but only renders the
-  // editor it reads that edit from when the item is editable. Envelope-imported
-  // items are not editable, so a surviving descriptor makes the workbench
-  // validate the empty string and refuse every number, date, and boolean field.
+test("the served review carries each field's declared value type", async () => {
+  // Fieldwork used to strip `spec.valueDescriptor` from every non-editable item,
+  // because the Review Workbench validated the reviewer's inline edit against it
+  // while only rendering the editor that edit comes from for editable items — so
+  // envelope-imported items validated the empty string and no number or date
+  // field could ever be decided (kontourai/survey#201).
+  //
+  // @kontourai/survey 2.2.3 validates only when an editor exists, so the
+  // descriptor is carried through untouched. Assert the served shape directly:
+  // every item keeps the value type Traverse declared for its field. That the
+  // typed fields are actually decidable is asserted where the gate lives, in
+  // test/browser/review.spec.ts ("a reviewer can decide every field, including
+  // typed ones, and export") — a DOM click handler, not an API response.
   const run = await runFieldwork({
     taskPath: "examples/vendor-obligations/task.json",
     sourcePath: "examples/vendor-obligations/source.txt",
@@ -136,17 +143,17 @@ test("every declared value type stays decidable through the mounted workbench", 
   try {
     const served = await view(server);
     const task = JSON.parse(await readFile("examples/vendor-obligations/task.json", "utf8")) as {
-      spec: { traverse: { targetSchema: Array<{ type: string }> } };
+      spec: { traverse: { targetSchema: Array<{ path: string; type: string }> } };
     };
-    const declared = new Set(task.spec.traverse.targetSchema.map((field) => field.type));
-    assert.ok(declared.has("number") && declared.has("date"),
+    const declaredType = new Map(task.spec.traverse.targetSchema.map((field) => [field.path, field.type]));
+    assert.ok([...declaredType.values()].includes("number") && [...declaredType.values()].includes("date"),
       "the fixture must declare typed fields for this guard to mean anything");
     for (const source of [served.review.items, served.review.snapshot.items as unknown[]]) {
-      for (const item of source as Array<{ spec: { editable?: boolean; valueDescriptor?: unknown } }>) {
-        if (item.spec.editable === false) {
-          assert.equal(item.spec.valueDescriptor, undefined,
-            "a non-editable item must not carry a descriptor the workbench cannot satisfy");
-        }
+      const items = source as Array<{ spec: { target: string; valueDescriptor?: { type?: string } } }>;
+      assert.equal(items.length, declaredType.size);
+      for (const item of items) {
+        assert.equal(item.spec.valueDescriptor?.type, declaredType.get(item.spec.target),
+          `${item.spec.target} must carry its declared value type`);
       }
     }
   } finally {

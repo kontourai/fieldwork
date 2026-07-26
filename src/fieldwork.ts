@@ -190,7 +190,7 @@ export function importNameFor(run: StoredRun): string { return `fieldwork-import
  * supplies `extraction.extractedAt`.
  */
 export function canonicalReviewItems(items: readonly ReviewItem[], envelope: PortableExtractionResultEnvelope): ReviewItem[] {
-  return items.map((item) => decidableReviewItem({
+  return items.map((item) => ({
     ...item,
     spec: {
       ...item.spec,
@@ -200,27 +200,6 @@ export function canonicalReviewItems(items: readonly ReviewItem[], envelope: Por
       })),
     },
   }));
-}
-
-/**
- * Temporary Survey #201 compatibility adapter.
- *
- * The Review Workbench validates the reviewer's inline edit against
- * `spec.valueDescriptor` before accepting a proposal, but it reads that edit
- * from an editor it only renders when the item is editable. Envelope-imported
- * items are declared `editable: false`, so the workbench validates the empty
- * string and permanently refuses every typed field — number, date, and boolean
- * proposals can never be accepted, and `export` can never be reached through
- * the UI. Dropping the descriptor from a non-editable item removes the only
- * consumer that can still observe it; the suppressed editor was the other.
- *
- * This adapts presentation only. It never adds, removes, or rewrites a
- * candidate, so a host-seeded snapshot keeps its own review authority.
- */
-export function decidableReviewItem(item: ReviewItem): ReviewItem {
-  if (item.spec.editable !== false || item.spec.valueDescriptor === undefined) return item;
-  const { valueDescriptor: _unsatisfiable, ...spec } = item.spec;
-  return { ...item, spec };
 }
 
 async function boundedInput(path: string, maxBytes: number, label: string): Promise<string> {
