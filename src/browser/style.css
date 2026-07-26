@@ -2,7 +2,13 @@
    Identity — colour, type, radius, elevation — belongs to @kontourai/ui tokens
    and the shared `.theme-survey` layer. Nothing here redefines a token value
    for the shell itself; local rules only consume them, so the review UI
-   resolves the same palette as every other Kontour surface. */
+   resolves the same palette as every other Kontour surface.
+
+   Layout is the host's job. Survey ships one column of stacked sections that
+   suits a full-page workbench; Fieldwork's screen has to answer four questions
+   at once — what is this document, what came out of it, how far along is the
+   review, and what needs a decision now — so the shell places the document and
+   the queue side by side and lets each surface fill its own column. */
 
 :root {
   font-family: var(--k-font-ui);
@@ -22,13 +28,22 @@
 
 body { margin: 0; overflow-x: hidden; }
 
-.fieldwork-shell { max-width: 1100px; margin: auto; padding: 2rem; }
-.fieldwork-shell section { min-width: 0; margin-block: 1.5rem; }
+/* border-box, or the shell's own padding is added to a 100% width and every
+   viewport gains a horizontal scrollbar. */
+.fieldwork-shell { box-sizing: border-box; width: min(100%, 1720px); margin: auto; padding: 1rem 1.25rem 0; }
+.fieldwork-shell section { min-width: 0; }
 
 /* @kontourai/ui's Panel declares the radius tokens but never applies one. */
 .fieldwork-shell .panel { border-radius: var(--k-radius-md); }
 
-.fieldwork-host-navigation { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1rem; }
+/* The masthead is chrome, not content: it may not cost a third of the first
+   screen before a reviewer reaches the document. */
+.fieldwork-shell .topbar { padding: .8rem 1rem; align-items: center; }
+.fieldwork-shell .topbar h1 { font-size: clamp(1.5rem, 1rem + 1.4vw, 2.1rem); }
+.fieldwork-shell .topbar-meta-item { padding: .4rem .55rem; }
+.fieldwork-shell .topbar-meta-item strong { font-family: var(--k-font-mono); font-size: .74rem; line-height: 1.4; }
+
+.fieldwork-host-navigation { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
 .fieldwork-host-navigation a {
   color: var(--k-brand);
   border: 1px solid color-mix(in srgb, var(--k-brand) 28%, transparent);
@@ -40,7 +55,180 @@ body { margin: 0; overflow-x: hidden; }
 .fieldwork-host-navigation a:hover,
 .fieldwork-host-navigation a:focus-visible { background: color-mix(in srgb, var(--k-brand) 10%, transparent); }
 
+/* --- Two-column review ------------------------------------------------------
+   Below the breakpoint the columns stack, document first, so a phone reads the
+   same story in the same order. Above it the document column is pinned: the
+   evidence must stay on screen while the reviewer works down the queue, which
+   is the whole point of grounding a value in a source. */
+.fieldwork-review { display: grid; gap: 1rem; margin-block: .9rem; align-items: start; }
+
+@media (min-width: 1080px) {
+  .fieldwork-review { grid-template-columns: minmax(21rem, 46fr) minmax(25rem, 54fr); }
+  .fieldwork-column-source {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.fieldwork-shell .fieldwork-column { box-sizing: border-box; padding: .9rem; }
+.fieldwork-shell .fieldwork-column .panel-head { padding-bottom: .55rem; }
+
+/* The Panel is already the card. Survey's inspector and review surfaces each
+   bring their own frame, so inside a column they would stack a second border,
+   background and shadow around the content and spend ~60px of the first screen
+   on chrome. Let the host's card be the only card. */
+.fieldwork-shell .fieldwork-column .survey-workbench-embed .extraction-inspector,
+.fieldwork-shell .fieldwork-column .survey-workbench-embed .review {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+
+.fieldwork-filter-toggle {
+  color: var(--k-text-muted);
+  background: var(--k-panel-raised);
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  padding: .2rem .6rem;
+  font: inherit;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.fieldwork-filter-toggle:hover,
+.fieldwork-filter-toggle:focus-visible { color: var(--k-brand); border-color: var(--k-brand); }
+.fieldwork-filter-toggle[aria-expanded="true"] { color: var(--k-brand); border-color: var(--k-brand); }
+
+/* The filter bars are power tools, not the subject. They stay one click away
+   until the queue is long enough that filtering is the only way through it —
+   main.tsx decides that and sets the shell class. */
+.fieldwork-shell:not(.fw-evidence-filters-open) .survey-workbench-embed .inspector-filters,
+.fieldwork-shell:not(.fw-evidence-filters-open) .survey-workbench-embed .inspector-pager { display: none; }
+.fieldwork-shell:not(.fw-queue-filters-open) .survey-workbench-embed .queue-controls { display: none; }
+
+/* --- The document -----------------------------------------------------------
+   A prepared source addressed only by a 64-hex digest reads as a database row.
+   Name it, size it, and give it a page-like surface, because "this is a
+   document" is the first thing the screen has to say. */
+.fieldwork-document-head { display: grid; gap: .2rem; margin: .8rem 0 .55rem; }
+.fieldwork-document-name { margin: 0; font-size: 1.15rem; line-height: 1.25; letter-spacing: -.01em; }
+.fieldwork-document-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin: 0; color: var(--k-text-muted); font-size: .75rem; }
+.fieldwork-document-digest {
+  font-family: var(--k-font-mono);
+  font-size: .66rem;
+  color: var(--k-text-faint);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-radius-sm);
+  padding: .05rem .3rem;
+  cursor: help;
+}
+
 .survey-workbench-embed { container-type: inline-size; min-width: 0; overflow-wrap: anywhere; }
+
+/* Survey's own inspector heading restates what the panel head and the document
+   name already say; the posture message beside it does not, so keep that. */
+.fieldwork-shell .survey-workbench-embed .inspector-heading { display: block; }
+.fieldwork-shell .survey-workbench-embed .inspector-heading > div:first-child { display: none; }
+.fieldwork-shell .survey-workbench-embed .inspector-posture {
+  flex-direction: row;
+  align-items: baseline;
+  gap: .4rem;
+  padding: .45rem .6rem;
+  font-size: .74rem;
+}
+/* The posture's heading repeats the import ref (one more 100-character digest).
+   Screen readers keep it; the panel does not need to print it a second time. */
+.fieldwork-shell .survey-workbench-embed .inspector-posture strong {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Document above, evidence index below — Survey's side-by-side split gives the
+   candidate list equal billing with the source it is grounded in. */
+.fieldwork-shell .survey-workbench-embed .inspector-layout { display: flex; flex-direction: column; gap: .8rem; }
+.fieldwork-shell .survey-workbench-embed .inspector-sources { order: 1; }
+.fieldwork-shell .survey-workbench-embed .inspector-candidates { order: 2; }
+
+.fieldwork-shell .survey-workbench-embed .inspector-source > h3 {
+  margin-bottom: .3rem;
+  font-family: var(--k-font-mono);
+  font-size: .7rem;
+  font-weight: 650;
+  color: var(--k-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* One source is already named by the host header above the embed. */
+.fieldwork-shell .survey-workbench-embed[data-fw-sources="1"] .inspector-source > h3 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.fieldwork-shell .survey-workbench-embed .inspector-source pre {
+  padding: 1.1rem 1.3rem;
+  background: var(--k-panel-raised);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-radius-sm);
+  box-shadow: var(--k-shadow);
+  font-size: .82rem;
+  line-height: 1.75;
+  min-height: 0;
+}
+
+/* --- Evidence index ---------------------------------------------------------
+   Seven candidate cards at ~100px each buried the document. The same list, laid
+   out as a compact index under the document, still carries every accessible
+   name and stays a keyboard target for the source anchors. */
+.fieldwork-shell .survey-workbench-embed .inspector-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.75rem, 1fr));
+  gap: .35rem;
+  padding-left: 0;
+  list-style: none;
+}
+/* Decorative only — the list already carries an "Extraction candidates" name. */
+.fieldwork-shell .survey-workbench-embed .inspector-candidates::before {
+  content: "Grounded spans";
+  grid-column: 1 / -1;
+  color: var(--k-text-faint);
+  font-size: .65rem;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.fieldwork-shell .survey-workbench-embed .inspector-candidate {
+  gap: .05rem;
+  padding: .4rem .5rem;
+  border-radius: var(--k-radius-sm);
+  font-size: .68rem;
+  cursor: pointer;
+}
+.fieldwork-shell .survey-workbench-embed .inspector-candidate strong { font-size: .78rem; }
+.fieldwork-shell .survey-workbench-embed .inspector-candidate span {
+  color: var(--k-text-faint);
+  font-size: .62rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fieldwork-shell .survey-workbench-embed .inspector-candidate:hover { border-color: var(--k-brand); }
 
 /* --- Class-name collisions ---------------------------------------------------
    @kontourai/ui's React primitives are unscoped globals and claim generic names
@@ -91,6 +279,16 @@ body { margin: 0; overflow-x: hidden; }
   outline: 0;
 }
 
+/* The selected fact, shown on both sides at once: the sentence in the document
+   and the card that has to decide it. */
+.fieldwork-shell .survey-workbench-embed .inspector-source mark[data-fw-active] {
+  background: color-mix(in srgb, var(--k-brand) 46%, transparent);
+  box-shadow: inset 0 -3px 0 var(--k-brand);
+}
+.fieldwork-shell .survey-workbench-embed [data-testid="review-field"][data-fw-active] {
+  background: color-mix(in srgb, var(--k-brand) 7%, transparent);
+}
+
 /* Survey's keyboard return-anchor sizes a native <button> to a 1px sliver but
    never removes its user-agent chrome, so under `box-sizing: border-box` it
    paints a 16x13 outset-grey box inline in the source text. */
@@ -118,11 +316,18 @@ body { margin: 0; overflow-x: hidden; }
   border: 1px solid var(--k-line-strong);
 }
 
+/* Stacked, the document must not push the queue off the bottom of the page. */
+@media (max-width: 1079px) {
+  .fieldwork-shell .survey-workbench-embed .inspector-source pre { max-height: 45vh; overflow: auto; }
+}
+
 @media (max-width: 700px) {
-  .fieldwork-shell { padding: .75rem; }
+  .fieldwork-shell { padding: .75rem .75rem 0; }
   .topbar { grid-template-columns: 1fr; align-items: stretch; gap: .5rem; }
   .topbar-meta { grid-template-columns: minmax(0, 1fr); }
   .topbar h1 { font-size: 1.55rem; }
   .panel { min-width: 0; overflow: hidden; }
+  .fieldwork-shell .fieldwork-column { padding: .75rem; }
   .survey-workbench-embed .rhead, .survey-workbench-embed .fbody { padding-inline: 12px; }
+  .fieldwork-shell .survey-workbench-embed .inspector-source pre { padding: .85rem .9rem; }
 }
