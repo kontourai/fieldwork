@@ -1,10 +1,19 @@
 Northstar Analytics — 2027 renewal brief
+Prepared by Procurement for the operations review board.
 
 Northstar Analytics provides the reporting platform used by the operations team.
+This brief covers the third renewal of the master agreement signed in 2024 and
+is circulated ahead of the notice deadline.
+
 Vendor: Northstar Analytics
 Annual renewal fee USD: 48000
 Renewal date: 2027-04-01
 Renewal posture: automatic
 Notice period days: 45
-Security assurance: SOC 2 Type II report every 12 months
+Security assurance: SOC 2 Type II report requested, 2026 report not yet received
 Hosting region: United States
+
+Open questions for the reviewer:
+The signature page of the executed agreement records a renewal date of
+2027-05-15, which does not match the commercial schedule reproduced above.
+Procurement has asked the vendor to confirm which date governs.

@@ -103,7 +103,20 @@ async function main(argv: string[]): Promise<void> {
     if (command === "open") {
       const run = args.find((value) => !value.startsWith("--"));
       if (!run) throw Object.assign(new Error("open requires <run>"), { code: "INVALID_ARGUMENT" });
-      const service = await openRun(resolve(run), { port: Number(flag(args, "--port") ?? 0) });
+      const theme = enumFlag(args, "--theme", ["dark", "light"] as const);
+      const service = await openRun(resolve(run), {
+        port: Number(flag(args, "--port") ?? 0),
+        ...(theme === undefined ? {} : {
+          presentation: {
+            apiVersion: "fieldwork.kontourai.io/v1",
+            kind: "FieldworkHostPresentation",
+            eyebrow: "Fieldwork",
+            title: "Grounded review",
+            theme,
+            navigation: [],
+          },
+        }),
+      });
       output({ ok: true, url: service.url, loopbackOnly: true }, has(args, "--json"));
       process.once("SIGINT", () => void service.close().then(() => process.exit(0)));
       return;

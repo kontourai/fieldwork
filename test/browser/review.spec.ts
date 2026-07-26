@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFieldwork } from "../../src/fieldwork.js";
+import { reviewedExport, runFieldwork } from "../../src/fieldwork.js";
 import { openRun } from "../../src/server.js";
 import { tempRoot } from "../helpers.js";
 import {
@@ -24,7 +24,13 @@ test("review presents grounded vendor-renewal evidence and a durable decision", 
     await candidate.click();
     const reviewField = page.locator('[data-field="vendor.name"]');
     await expect(page.getByLabel("Highlighted for vendor.name")).toBeVisible();
-    await page.getByRole("button", { name: /Source highlight for vendor\.name/ }).click();
+    // Survey's source anchor is a 1px keyboard skip-target ("activate to return
+    // to candidate"), not a pointer-sized control; it only accepted a mouse
+    // click while it was rendering as an unstyled native button.
+    const anchor = page.getByRole("button", { name: /Source highlight for vendor\.name/ });
+    await anchor.focus();
+    await expect(anchor).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect(candidate).toBeFocused();
     await reviewField.getByTestId("use-proposed").click();
     await expect(page.getByLabel("Fieldwork status")).toContainText("Saved");
@@ -38,6 +44,90 @@ test("review presents grounded vendor-renewal evidence and a durable decision", 
     if (visualSnapshotsEnabled) {
       await expect(page).toHaveScreenshot("fieldwork-review.png", { fullPage: true, maxDiffPixels: 1_500 });
     }
+  } finally { await server.close(); }
+});
+
+test("a reviewer can decide every field, including typed ones, and export", async ({ page }) => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-full-review"),
+  });
+  const server = await openRun(run.runDirectory);
+  const mutations: number[] = [];
+  page.on("response", (response) => {
+    if (response.url().includes("/api/v1/review")) mutations.push(response.status());
+  });
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const fields = await page.getByTestId("review-field")
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-field")));
+    // number and date fields were permanently undecidable: the click emitted no
+    // request at all, so `export` could never be reached through the UI.
+    expect(fields).toContain("commercial.annualFeeUsd");
+    expect(fields).toContain("renewal.date");
+    for (const field of fields) {
+      const card = page.locator(`[data-field="${field}"]`);
+      await card.getByTestId("use-proposed").click();
+      await expect(card.getByTestId("decided-chip")).toHaveText("Accepted");
+    }
+    await expect(page.getByLabel("Fieldwork status")).toContainText(`Saved ${fields.length}`);
+    // One accepted mutation per decision: no decision may be silently dropped,
+    // and none may be rejected as a spurious append-only conflict.
+    expect(mutations).toEqual(fields.map(() => 200));
+    await page.reload();
+    await expect(page.getByTestId("decided-chip").first()).toHaveText("Accepted");
+    await expect(page.getByTestId("decided-chip")).toHaveCount(fields.length);
+    const exported = await reviewedExport(run.runDirectory);
+    expect(exported.claims.map((claim) => claim.fieldOrBehavior).sort()).toEqual([...fields].sort());
+  } finally { await server.close(); }
+});
+
+test("the review surface resolves shared @kontourai/ui tokens", async ({ page }) => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("browser-tokens"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const measured = await page.evaluate(() => {
+      const read = (selector: string) => getComputedStyle(document.querySelector(selector)!);
+      const root = getComputedStyle(document.documentElement);
+      const embed = read(".survey-workbench-embed");
+      const mark = read(".inspector-source mark");
+      const anchor = read(".highlight-anchor");
+      return {
+        rootBrand: root.getPropertyValue("--k-brand").trim(),
+        shellBrand: read(".fieldwork-shell").getPropertyValue("--k-brand").trim(),
+        embedBrand: embed.getPropertyValue("--k-brand").trim(),
+        embedFont: embed.fontFamily,
+        markBackground: mark.backgroundColor,
+        markUnderline: mark.boxShadow,
+        anchorWidth: anchor.width,
+        anchorBorder: anchor.borderTopWidth,
+        panelRadius: read(".panel").borderRadius,
+        pageBackground: root.backgroundColor,
+      };
+    });
+    // One brand across the page: the host shell, the Kontour shell tokens, and
+    // the embedded Survey surface must all resolve the same value.
+    expect(measured.embedBrand).not.toBe("");
+    expect(measured.embedBrand).toBe(measured.shellBrand);
+    expect(measured.shellBrand).toBe(measured.rootBrand);
+    expect(measured.embedFont).toContain("Hanken Grotesk");
+    // The grounded highlight is the product; it must actually be painted.
+    expect(measured.markBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(measured.markBackground).not.toBe("transparent");
+    expect(measured.markUnderline).not.toBe("none");
+    // Survey's keyboard return-anchors must not render as native buttons.
+    expect(measured.anchorWidth).toBe("1px");
+    expect(measured.anchorBorder).toBe("0px");
+    expect(measured.panelRadius).not.toBe("0px");
+    expect(measured.pageBackground).not.toBe("rgba(0, 0, 0, 0)");
   } finally { await server.close(); }
 });
 

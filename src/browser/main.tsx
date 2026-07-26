@@ -20,8 +20,11 @@ function App() {
   const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("Review ready");
   const [presentation, setPresentation] = useState<FieldworkHostPresentationV1>({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
-    eyebrow: "Fieldwork", title: "Grounded review", theme: "light", navigation: [],
+    eyebrow: "Fieldwork", title: "Grounded review", theme: "dark", navigation: [],
   });
+  // The document root carries the theme too, so the page canvas outside the
+  // shell resolves the same tokens instead of painting an unthemed background.
+  useEffect(() => { document.documentElement.dataset.theme = presentation.theme; }, [presentation.theme]);
   const inspector = useRef<HTMLDivElement>(null), workbench = useRef<HTMLDivElement>(null);
   const load = async () => {
     try {

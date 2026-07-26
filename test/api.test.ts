@@ -5,6 +5,7 @@ import type { FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-co
 import { runFieldwork, reviewedExport } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
 import { persistedReviewSnapshotSchema } from "../src/survey-persistence.js";
+import { canonicalJson } from "../src/contracts.js";
 import { apiFetch, tempRoot } from "./helpers.js";
 import { buildReviewSessionEvents, type ReviewQueueSessionState, type ReviewWorkbenchDecision } from "@kontourai/survey/review-workbench";
 import { lstat, mkdir, readFile, rmdir, symlink, unlink, utimes, writeFile } from "node:fs/promises";
@@ -69,6 +70,88 @@ test("exports a canonical static inspection artifact with source disclosure off 
     includeExcerpts: true,
   });
   assert.match(disclosed, /Status: Active/);
+});
+
+test("consecutive decisions append without a spurious review conflict", async () => {
+  // The browser keeps its own copy of the events it already persisted and posts
+  // it back as the append-only prefix. That copy and the stored history describe
+  // identical events but are produced by different schemas, so their key order
+  // differs. The prefix check must compare content, not serialization.
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("api-append-order"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    const snapshot = (await view(server)).review.snapshot as unknown as ReviewQueueSessionState;
+    const decisionsFor = (count: number) => Object.fromEntries(
+      snapshot.items.slice(0, count).map((item) => [item.metadata.name, "accept-proposed" as const]),
+    );
+    const eventsAfter = (count: number) => buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: decisionsFor(count),
+      reviewedAt: "2026-07-26T00:00:00.000Z",
+      actorId: "test-reviewer",
+    });
+    const submit = async (events: ReturnType<typeof eventsAfter>, expectedEventCount: number, expectedRevision: number) =>
+      apiFetch(server, "/api/v1/review", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events, expectedEventCount, expectedRevision }),
+      }).then((response) => response.json() as Promise<ReviewMutationResponseV1>);
+
+    const first = eventsAfter(1);
+    assert.equal((await submit(first, 0, 0)).ok, true);
+
+    // The hazard this guards is real: the stored history is not byte-identical
+    // to what was posted, only content-identical.
+    const stored = (await view(server)).review.events;
+    assert.notEqual(JSON.stringify(stored), JSON.stringify(first));
+    assert.equal(canonicalJson(stored), canonicalJson(first));
+
+    const second = await submit(eventsAfter(2), first.length, 1);
+    assert.equal(second.ok, true, JSON.stringify(second));
+    if (second.ok) assert.equal(second.revision, 2);
+
+    const third = await submit(eventsAfter(3), second.ok ? second.eventCount : 0, 2);
+    assert.equal(third.ok, true, JSON.stringify(third));
+  } finally {
+    await server.close();
+  }
+});
+
+test("every declared value type stays decidable through the mounted workbench", async () => {
+  // The Review Workbench validates the reviewer's inline edit against
+  // spec.valueDescriptor before accepting a proposal, but only renders the
+  // editor it reads that edit from when the item is editable. Envelope-imported
+  // items are not editable, so a surviving descriptor makes the workbench
+  // validate the empty string and refuse every number, date, and boolean field.
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("api-typed-items"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    const served = await view(server);
+    const task = JSON.parse(await readFile("examples/vendor-obligations/task.json", "utf8")) as {
+      spec: { traverse: { targetSchema: Array<{ type: string }> } };
+    };
+    const declared = new Set(task.spec.traverse.targetSchema.map((field) => field.type));
+    assert.ok(declared.has("number") && declared.has("date"),
+      "the fixture must declare typed fields for this guard to mean anything");
+    for (const source of [served.review.items, served.review.snapshot.items as unknown[]]) {
+      for (const item of source as Array<{ spec: { editable?: boolean; valueDescriptor?: unknown } }>) {
+        if (item.spec.editable === false) {
+          assert.equal(item.spec.valueDescriptor, undefined,
+            "a non-editable item must not carry a descriptor the workbench cannot satisfy");
+        }
+      }
+    }
+  } finally {
+    await server.close();
+  }
 });
 
 test("accepts a thousand-item Survey snapshot while preserving bounded task projections", async () => {
