@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { connect } from "node:net";
-import { openRun } from "../src/server.js";
+import { withRunReviewLock } from "../src/run-store.js";
+import { openRun, readRunView } from "../src/server.js";
 import type { FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-contracts.js";
 import { runFieldwork, reviewedExport } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
@@ -376,4 +377,44 @@ test("close returns promptly while a client holds a connection open", async () =
     socket.destroy();
     await server.close();
   }
+});
+
+test("close waits for a decision that is still committing rather than cutting it", async () => {
+  // The failure this pins: shutdown used to force sockets shut on a fixed
+  // grace, but a review decision can legitimately wait on the run lock before
+  // it persists (REVIEW_LOCK_WAIT_MS in run-store). Cutting its socket lost
+  // the decision outright, because the CLI exits as soon as close() resolves.
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("close-inflight")
+  });
+  const server = await openRun(run.runDirectory);
+  const initial = await view(server);
+  const events = eventsFor(initial, "accept-proposed");
+  let released!: () => void;
+  const holdReleased = new Promise<void>((resolvePromise) => { released = resolvePromise; });
+  // Hold the run lock so the decision is provably still in flight when the
+  // server is asked to close.
+  const holding = withRunReviewLock(run.runDirectory, async () => { await holdReleased; });
+  await new Promise((resolvePromise) => { setTimeout(resolvePromise, 50); });
+  const saving = post(server, events);
+  await new Promise((resolvePromise) => { setTimeout(resolvePromise, 50); });
+  const closing = server.close();
+  // Hold well past any fixed grace a shutdown might use, so the decision is
+  // provably still committing when the server would otherwise force sockets
+  // shut. This is the whole point of the test: a short hold completes before
+  // the cut and passes either way.
+  await new Promise((resolvePromise) => { setTimeout(resolvePromise, 600); });
+  released();
+  await holding;
+  const saved = await saving;
+  await closing;
+  assert.equal(saved.ok, true, `decision was cut off by shutdown: ${JSON.stringify(saved)}`);
+  // And it is actually on disk, not merely acknowledged.
+  const reloaded = await readRunView(run.runDirectory);
+  assert.ok(
+    reloaded.review.events.some((event) => event.spec.eventType === "decision-changed"),
+    "decision did not survive shutdown"
+  );
 });
