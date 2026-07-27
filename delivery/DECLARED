@@ -1,0 +1,14 @@
+[
+  {
+    "scope": "author:briananderson1222 branch-prefix:agent/fable/",
+    "reason": "Fieldwork terminal-state delivery arc (issues #74, #78, #79 and the v0.4.0 release bump): adopts Survey 2.4.0's queue-binding attestation, migrates the embedded workbench to the 2.3.0 DOM hooks, lands the zod 4 major, and creates this repo's Trust Verify gate and this file. These branches predate or carry the gate itself, so there is no bundle to reconcile; verification in lieu of a bundle is each PR's own CI (verify matrix on node 22/24) plus the locally-run full `npm run verify` and the 10/10 `npm run check:guards` fault-injection matrix reported on each PR. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
+    "approved_by": "brian.anderson1222 (delegated approval, 2026-07-27 session: fieldwork terminal-state brief, item 4)",
+    "declared_at": "2026-07-27T23:50:00Z"
+  },
+  {
+    "scope": "author:dependabot[bot] branch-prefix:dependabot/",
+    "reason": "Dependabot dependency-bump PR; no agent delivery involved, nothing to reconcile. Compound scope binds the platform-set actor identity to the bot's branch namespace per ADR 0022's fork-PR guidance, paired per the 2026-07-03 addendum since branch-prefix alone resolves against a pusher-controlled ref. Known and accepted cost: if the bot identity rotates this stops matching and dependency PRs break loudly, which the pinned action reports by naming the failed condition (flow-agents#1015). No release-automation entry exists because release-please does not run in this repo — fieldwork releases via a human/agent-authored version-bump PR (covered by the entry above) and a manual workflow_dispatch of publish-npm.yml at the version tag; verified against .github/workflows at adoption time.",
+    "approved_by": "brian.anderson1222 (delegated approval, 2026-07-27 session: fieldwork terminal-state brief, item 4)",
+    "declared_at": "2026-07-27T23:50:00Z"
+  }
+]
