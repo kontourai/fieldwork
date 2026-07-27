@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { connect } from "node:net";
 import { openRun } from "../src/server.js";
 import type { FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-contracts.js";
 import { runFieldwork, reviewedExport } from "../src/fieldwork.js";
@@ -337,3 +338,42 @@ for (const decision of ["accept-proposed", "keep-current", "reject-proposed", "c
     } finally { await server.close(); }
   });
 }
+
+test("close returns promptly while a client holds a connection open", async () => {
+  // The failure this pins: node's server.close() refuses new connections but
+  // waits for open ones to end. Loading the review page makes a browser open
+  // several sockets (script, styles, ten font files), and a socket it opened
+  // but has not sent a request on is not "idle" — close() will not reap it.
+  // Closing therefore blocked until the client hung up, which for a reviewer
+  // who left the tab open is indefinitely. It surfaced as browser tests timing
+  // out in teardown (#62), a different test each run, and it blocked 0.2.7.
+  //
+  // A connected-but-silent socket is the case that broke. A socket whose
+  // request completed is NOT: close() reaps those on its own, so a test built
+  // on one passes with the fix removed and proves nothing.
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("close-openconn")
+  });
+  const server = await openRun(run.runDirectory);
+  const port = Number(new URL(server.url).port);
+  const socket = connect({ host: "127.0.0.1", port });
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      socket.once("connect", () => resolvePromise());
+      socket.once("error", reject);
+    });
+    // Raced rather than awaited: unfixed, close() does not return for as long
+    // as the socket is held, and a test that hangs reports worse than one that
+    // fails.
+    const outcome = await Promise.race([
+      server.close().then(() => "closed" as const),
+      new Promise<"blocked">((resolvePromise) => { setTimeout(() => resolvePromise("blocked"), 2_000).unref(); })
+    ]);
+    assert.equal(outcome, "closed", "close did not return while a client socket was still open");
+  } finally {
+    socket.destroy();
+    await server.close();
+  }
+});

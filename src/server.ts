@@ -19,6 +19,11 @@ import {
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import { canonicalReviewItems, importNameFor, reviewSessionName } from "./fieldwork.js";
 
+// How long close() lets an in-flight request finish before parked sockets are
+// dropped. Requests here are local and settle in milliseconds; this only has to
+// outlast one of them, not a slow network.
+const CLOSE_GRACE_MS = 250;
+
 const reviewRequestSchema = z.object({
   events: z.array(z.custom<ReviewSessionEvent>((value) => Boolean(value && typeof value === "object"))).max(FIELDWORK_LIMITS.events),
   expectedEventCount: z.number().int().nonnegative().max(FIELDWORK_LIMITS.events),
@@ -102,7 +107,22 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
       try { finalView = await readRunView(runDirectory); }
       catch (error) { readError = error; }
       try {
-        await new Promise<void>((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
+        await new Promise<void>((resolvePromise, reject) => {
+          server.close((error) => error ? reject(error) : resolvePromise());
+          // close() refuses new connections but waits for open ones to end, and
+          // a browser holds its socket open against keepAliveTimeout above. Node
+          // does not count that socket as idle, so closing idle connections is
+          // not enough — the close blocks until the client happens to hang up,
+          // which for a reviewer who left the tab open is indefinitely.
+          //
+          // Give anything genuinely in flight a bounded window to finish, then
+          // drop the rest. Shutdown is deliberate here and the final view has
+          // already been read, so waiting on a parked browser socket buys
+          // nothing that the grace period does not already cover.
+          server.closeIdleConnections();
+          const forced = setTimeout(() => server.closeAllConnections(), CLOSE_GRACE_MS);
+          forced.unref();
+        });
       } finally {
         if (finalView) emit("run-closed", finalView.run.revision, finalView.review.events.length);
         listeners.clear();
