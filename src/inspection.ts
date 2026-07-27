@@ -3,7 +3,7 @@ import {
   exportExtractionInspector,
   importExtractionEnvelope,
 } from "@kontourai/survey";
-import { importNameFor } from "./fieldwork.js";
+import { FIELDWORK_SOURCE_KIND, importNameFor } from "./fieldwork.js";
 import { assertPortableOutput, readRun } from "./run-store.js";
 
 export interface FieldworkInspectionExportOptions {
@@ -26,7 +26,7 @@ export async function inspectionExport(
   const imported = importExtractionEnvelope(stored.envelope, {
     importName: importNameFor(stored.run),
     producerNamespace: "fieldwork",
-    sourceKind: "uploaded-document",
+    sourceKind: FIELDWORK_SOURCE_KIND,
     claimTarget: (proposal) => {
       const projection = stored.run.task.spec.projections.find(
         (entry) => entry.fieldPath === proposal.fieldPath,

@@ -75,6 +75,8 @@ Lookout owns conditional source checks, proposal-observation continuity, concurr
 
 The prior run is immutable. A new round carries exact old and new snapshot references, observation identities, locators, excerpts, values, and extraction times. Replaying the same observation pair yields the same transition and item identities. Fieldwork persists proposal observations under the selected observation root and rejects a stale concurrent writer with `RECHECK_CONFLICT`.
 
+`fieldwork export` exports one run's own review authority. A first round's queue is the whole extraction, so its reviewed output covers every field. A recheck round's queue is the transition, so its reviewed output covers the fields that moved — decisions from the earlier round stay in the earlier run's export rather than being copied forward under a second run identity. Each claim in a recheck export carries its round: the transition and observation identities, the change kind, and whether the reviewed value was carried forward from the prior observation or affirmed against the new one. Two things are refused rather than exported: a round that decides one field two ways, and a decision resolved onto a proposal that is absent from its observation, which has no source span to cite.
+
 ## Runtime choice
 
 The task file does not name a provider or runtime. Choose execution when the run starts, so the same task can move between a credential-free fixture, an already-authenticated local harness, a Datum-resolved SDK target, or a host-supplied Relay runtime.

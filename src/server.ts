@@ -6,7 +6,7 @@ import { isIP } from "node:net";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { assertServerReviewSessionEvents, createServerReviewSessionRecord, deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
+import { assertServerReviewSessionEvents, deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
 import { buildExtractionInspectorModel, importExtractionEnvelope, type ReviewSessionEvent } from "@kontourai/survey";
 import { FIELDWORK_LIMITS, canonicalJson, failure } from "./contracts.js";
 import {
@@ -17,7 +17,7 @@ import {
   type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
-import { canonicalReviewItems, importNameFor, reviewSessionName } from "./fieldwork.js";
+import { canonicalReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionRecord } from "./fieldwork.js";
 
 const reviewRequestSchema = z.object({
   events: z.array(z.custom<ReviewSessionEvent>((value) => Boolean(value && typeof value === "object"))).max(FIELDWORK_LIMITS.events),
@@ -184,7 +184,7 @@ async function handle(
 export async function readRunView(directory: string): Promise<FieldworkRunViewV1> {
   const stored = await readRun(directory);
   const imported = importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: "uploaded-document",
+    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
     claimTarget: (proposal) => {
       const projection = stored.run.task.spec.projections.find((entry) => entry.fieldPath === proposal.fieldPath);
       if (!projection) throw new Error("Unknown projection");
@@ -195,10 +195,7 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
     importResult: imported,
     artifact: { status: "available", text: stored.preparedText, actualDigest: stored.run.preparedArtifact.digest }
   });
-  const record = createServerReviewSessionRecord({
-    sessionName: reviewSessionName(stored.run), snapshot: stored.run.review.snapshot,
-    eventCount: stored.run.review.events.length
-  });
+  const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
   const apply = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
   const snapshot = stored.run.review.snapshot;
   return parseFieldworkRunView({
@@ -232,13 +229,16 @@ async function submit(directory: string, input: unknown): Promise<ReviewMutation
       || !prefixMatches) {
       return { ...failure("REVIEW_CONFLICT", "Review history is stale or not append-only"), eventCount: stored.run.review.events.length };
     }
-    const record = createServerReviewSessionRecord({
-      sessionName: reviewSessionName(stored.run), snapshot: stored.run.review.snapshot, eventCount: events.length
-    });
+    const record = reviewSessionRecord(stored.run, events.length);
     assertServerReviewSessionEvents(record, events);
     const apply = deriveServerReviewSessionApplyResult({ record, events, requiredResolvedItems: "none" });
     const revision = stored.run.review.revision + 1;
-    await saveReview(stored.directory, stored.run, { snapshot: stored.run.review.snapshot, events, revision });
+    // The queue is unchanged by a decision, so its binding is carried forward
+    // verbatim: a mutating writer that recomputed the digest would re-bless a
+    // queue edited between the decision and this append.
+    await saveReview(stored.directory, stored.run, {
+      snapshot: stored.run.review.snapshot, events, revision, snapshotHash: stored.run.review.snapshotHash
+    });
     return parseReviewMutationSuccess({
       apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewMutationResult", ok: true,
       events, eventCount: events.length, revision, apply

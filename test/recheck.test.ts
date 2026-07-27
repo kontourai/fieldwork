@@ -15,7 +15,13 @@ import {
   type LookoutSource,
   type ProposalSetObservation,
 } from "@kontourai/lookout";
-import { runFieldwork } from "../src/fieldwork.js";
+import type { ReviewItem } from "@kontourai/survey";
+import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
+import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
+import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, reviewedExport, runFieldwork } from "../src/fieldwork.js";
+import { reviewSnapshotHash } from "../src/survey-persistence.js";
+import { openRun } from "../src/server.js";
+import { apiFetch } from "./helpers.js";
 import { recheckFieldwork } from "../src/recheck.js";
 import { readRun } from "../src/run-store.js";
 
@@ -223,8 +229,345 @@ test("replaying the same observation pair produces byte-identical semantic items
   const first = buildSemanticReviewWork(input);
   const second = buildSemanticReviewWork(input);
   assert.deepEqual(first, second);
-  assert.equal(first.ok && JSON.stringify(first.value.items), JSON.stringify(result.review.items));
+  /* Fieldwork completes Lookout's items with the application-owned provenance a
+     trust projection needs (fieldwork#59) before they become the reviewed
+     snapshot, so the persisted round is the adapter applied to Lookout's output
+     and nothing else — no reordering, no invented item, no changed value. */
+  assert.ok(first.ok);
+  assert.equal(
+    JSON.stringify(canonicalSemanticReviewItems(first.value.items as unknown as ReviewItem[], {
+      sourceKind: FIELDWORK_SOURCE_KIND,
+      transitionId: result.review.transitionId!,
+      prior: { observationId: result.priorObservation.observationId, extractor: prior.proposals[0]!.extractor },
+      current: { observationId: result.currentObservation!.observationId, extractor: current.proposals[0]!.extractor },
+    })),
+    JSON.stringify(result.review.items),
+  );
 });
+
+/* fieldwork#59: a recheck round could be reviewed but never exported, because
+   reviewedExport rebuilt its items from a fresh envelope import (every proposal
+   in the new source) while the results came from the round (the fields that
+   moved). The export is a receipt of the run's own review authority — the round
+   — so these drive a real round through the loopback API and read the artifact,
+   not the exit status. */
+test("a decided recheck round exports as a receipt of that round", async () => {
+  const result = await semanticPair();
+  const runDirectory = result.run!.runDirectory;
+  const stored = await readRun(runDirectory);
+  assert.equal(stored.envelope.result.proposals.length, 1);
+  assert.equal(stored.run.review.snapshot.items.length, result.review.itemCount);
+
+  await decideRound(runDirectory, () => "accept-proposed");
+  const exported = await reviewedExport(runDirectory) as ExportedBundle;
+  assert.equal(exported.source, stored.run.runResource);
+  assert.equal(exported.claims.length, stored.run.review.snapshot.items.length);
+  for (const claim of exported.claims) {
+    assert.equal(claim.fieldOrBehavior, "record.status");
+    assert.equal(claim.value, "Pending");
+    const round = roundOf(exported, claim.id);
+    assert.equal(round.evidenceObservation, "current");
+    assert.equal(round.priorObservationId, result.priorObservation.observationId);
+    assert.equal(round.currentObservationId, result.currentObservation!.observationId);
+    assert.equal(round.transitionId, result.review.transitionId);
+    assert.equal(evidenceOf(exported, claim.id).excerptOrSummary, "Status: Pending");
+  }
+});
+
+test("a carried-forward decision is distinguishable from one affirmed against the new source", async () => {
+  const result = await semanticPair();
+  const runDirectory = result.run!.runDirectory;
+  await decideRound(runDirectory, () => "keep-current");
+  const exported = await reviewedExport(runDirectory) as ExportedBundle;
+  for (const claim of exported.claims) {
+    assert.equal(claim.value, "Active");
+    const round = roundOf(exported, claim.id);
+    assert.equal(round.evidenceObservation, "prior");
+    const evidence = evidenceOf(exported, claim.id);
+    assert.equal(evidence.excerptOrSummary, "Status: Active");
+    // The evidence cites the observation the value came from, not the run's own
+    // snapshot: a receipt that could not tell those apart would read as though
+    // the old value had been re-observed in the new source.
+    assert.equal(evidence.sourceRef, priorCandidateSourceRef(result));
+  }
+});
+
+test("a recheck round resolved onto an absent proposal is refused, and keeping the current value exports", async () => {
+  const refused = await roundFor("capture-gone-a", "No status is present");
+  await decideRound(refused.run!.runDirectory, () => "accept-proposed");
+  await assert.rejects(
+    () => reviewedExport(refused.run!.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_UNGROUNDED_SELECTION");
+      assert.match(error.message, /record\.status/);
+      assert.match(error.message, /records no source span/);
+      assert.match(error.message, /keep current/);
+      return true;
+    },
+  );
+
+  // The refusal's advice has to be true, not merely reassuring.
+  const kept = await roundFor("capture-gone-b", "No status is present");
+  await decideRound(kept.run!.runDirectory, () => "keep-current");
+  const exported = await reviewedExport(kept.run!.runDirectory) as ExportedBundle;
+  assert.equal(exported.claims.length, 1);
+  assert.equal(exported.claims[0]!.value, "Active");
+  assert.equal(roundOf(exported, exported.claims[0]!.id).evidenceObservation, "prior");
+});
+
+test("a round's new-source side is attested by this run's own extraction", async () => {
+  const round = await roundFor("capture-attest", "Status: Pending");
+  await decideRound(round.run!.runDirectory, () => "accept-proposed");
+  assert.equal((await reviewedExport(round.run!.runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+
+  // Edit the value the round proposes AND refresh the queue binding, so the
+  // only thing left to disagree is an artifact the editor did not write.
+  const runPath = join(round.run!.runDirectory, "run.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  for (const item of stored.review.snapshot.items) {
+    for (const candidate of item.spec.candidates) {
+      if (candidate.role === "proposed") candidate.value = "Forged after review";
+    }
+  }
+  stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+  await assert.rejects(
+    () => reviewedExport(round.run!.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_UNATTESTED_QUEUE");
+      assert.match(error.message, /this run's extraction does not/);
+      return true;
+    },
+  );
+});
+
+/* Which observation a candidate came from decides which attestation applies, so
+   it must not be readable off one mutable field. Relabelling `evidenceObservation`
+   from "current" to "prior" downgraded a candidate this run *had* extracted into
+   one nothing checks — the unattested side of #65 — without any of its other
+   provenance agreeing. */
+test("a recheck candidate cannot be relabelled onto the side nothing attests", async () => {
+  const substitute = (review: RecheckReview, alsoMoveObservationId: boolean): void => {
+    for (const item of review.snapshot.items) {
+      const transition = item.metadata.producer["lookout.kontourai.io/semantic-transition"]!;
+      for (const candidate of item.spec.candidates) {
+        const round = candidate.producer["fieldwork.kontourai.io/recheck-round"]!;
+        if (round.evidenceObservation !== "current") continue;
+        candidate.value = "Substituted after review";
+        round.evidenceObservation = "prior";
+        if (!alsoMoveObservationId) continue;
+        // Move every id the label could be checked against, too.
+        round.currentObservationId = transition.priorObservationId as string;
+        candidate.producer["lookout.kontourai.io/semantic-transition"]!.observationId = transition.priorObservationId as string;
+      }
+    }
+  };
+
+  for (const alsoMoveObservationId of [false, true]) {
+    const round = await roundFor(`capture-relabel-${alsoMoveObservationId}`, "Status: Pending");
+    const runDirectory = round.run!.runDirectory;
+    await decideRound(runDirectory, () => "accept-proposed");
+    assert.equal((await reviewedExport(runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+
+    const runPath = join(runDirectory, "run.json");
+    const stored = JSON.parse(await readFile(runPath, "utf8"));
+    substitute(stored.review, alsoMoveObservationId);
+    stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+    await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+    await assert.rejects(
+      () => reviewedExport(runDirectory),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, "EXPORT_UNATTESTED_QUEUE");
+        assert.match(error.message, /disagrees with itself about which observation it came from/);
+        return true;
+      },
+      `relabel with alsoMoveObservationId=${alsoMoveObservationId}`,
+    );
+  }
+});
+
+/* The consistent version of the same manoeuvre. Relabelling one candidate makes
+   it contradict itself; swapping the two sides *wholesale* — roles, observation
+   ids, labels and values together — leaves every identity inside the item
+   agreeing, and would land an `accept-proposed` decision on the prior side,
+   which is the half no artifact in this run attests (#65).
+   
+   Survey already closes this: a decision event names both its decision and its
+   candidate id, and replay validation requires the candidate to be the one that
+   decision's role selects. Fieldwork adding its own version would be duplicate
+   enforcement, so this pins the property rather than a second guard — it fails
+   if that upstream check ever relaxes. */
+test("a decision cannot be walked onto the unattested side by swapping the roles under it", async () => {
+  const round = await roundFor("capture-roleswap", "Status: Pending");
+  const runDirectory = round.run!.runDirectory;
+  await decideRound(runDirectory, () => "accept-proposed");
+  assert.equal((await reviewedExport(runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+
+  const runPath = join(runDirectory, "run.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  for (const item of (stored.review as RecheckReview).snapshot.items) {
+    const [first, second] = item.spec.candidates as [Candidate, Candidate];
+    const swap = <K extends keyof Candidate>(key: K): void => {
+      const held = first[key]; first[key] = second[key]; second[key] = held;
+    };
+    swap("role");
+    swap("value");
+    swap("locator");
+    swap("source");
+    swap("extraction");
+    swap("producer");
+    // The decision still names `.proposed`; that candidate is now the prior side
+    // in every field, and carries a value this run never extracted.
+    second.value = "Substituted after review";
+  }
+  stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+  await assert.rejects(
+    () => reviewedExport(runDirectory),
+    (error: Error) => {
+      assert.match(error.message, /Review session events are invalid/);
+      assert.match(error.message, /decision accept-proposed expects candidate/);
+      return true;
+    },
+  );
+});
+
+interface Candidate {
+  role?: unknown;
+  value?: unknown;
+  locator?: unknown;
+  source?: unknown;
+  extraction?: unknown;
+  producer?: unknown;
+}
+
+interface RecheckReview {
+  snapshot: {
+    items: {
+      metadata: { producer: Record<string, Record<string, unknown>> };
+      spec: { candidates: (Candidate & { value: unknown; producer: Record<string, Record<string, unknown>> })[] };
+    }[];
+  };
+}
+
+test("an added proposal is told to accept it, not to keep a value that was never there", async () => {
+  // The mirror of the removal case: here the *prior* side is the absence, so
+  // advising "keep current" would prescribe the decision that is failing.
+  const added = await roundFor("capture-added-a", "Status: Active", "Nothing recorded yet");
+  assert.deepEqual(
+    (await readRun(added.run!.runDirectory)).run.review.snapshot.items.map((item) =>
+      (item.metadata.producer?.["lookout.kontourai.io/semantic-transition"] as { semanticKind: string }).semanticKind),
+    ["proposal-added"],
+  );
+  await decideRound(added.run!.runDirectory, () => "keep-current");
+  await assert.rejects(
+    () => reviewedExport(added.run!.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_UNGROUNDED_SELECTION");
+      assert.match(error.message, /Decide the item "accept proposed"/);
+      assert.doesNotMatch(error.message, /keep current/);
+      return true;
+    },
+  );
+
+  const accepted = await roundFor("capture-added-b", "Status: Active", "Nothing recorded yet");
+  await decideRound(accepted.run!.runDirectory, () => "accept-proposed");
+  const exported = await reviewedExport(accepted.run!.runDirectory) as ExportedBundle;
+  assert.deepEqual(exported.claims.map((claim) => claim.value), ["Active"]);
+});
+
+test("a round that decides one field two ways is refused rather than exported as two claims", async () => {
+  // A changed value also changes its excerpt, so Lookout raises both a
+  // value-changed and a provenance-changed item for the one field.
+  const split = await roundFor("capture-both-a", "Status: Paused");
+  const stored = await readRun(split.run!.runDirectory);
+  assert.equal(stored.run.review.snapshot.items.length, 2);
+  assert.equal(new Set(stored.run.review.snapshot.items.map((item) => item.spec.target)).size, 1);
+
+  await decideRound(split.run!.runDirectory, (_name, index) => index === 0 ? "accept-proposed" : "keep-current");
+  await assert.rejects(
+    () => reviewedExport(split.run!.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_CONFLICTING_DECISIONS");
+      assert.match(error.message, /conflicting decisions for record\.status/);
+      return true;
+    },
+  );
+
+  const agreed = await roundFor("capture-both-b", "Status: Paused");
+  await decideRound(agreed.run!.runDirectory, () => "accept-proposed");
+  const exported = await reviewedExport(agreed.run!.runDirectory) as ExportedBundle;
+  assert.deepEqual(exported.claims.map((claim) => claim.value), ["Paused", "Paused"]);
+});
+
+interface ExportedBundle {
+  readonly source: string;
+  readonly claims: readonly { readonly id: string; readonly fieldOrBehavior: string; readonly value: unknown }[];
+  readonly evidence: readonly {
+    readonly claimId: string;
+    readonly sourceRef: string;
+    readonly excerptOrSummary?: string;
+    readonly metadata?: { readonly producer?: Record<string, Record<string, string>> };
+  }[];
+}
+
+function evidenceOf(bundle: ExportedBundle, claimId: string): ExportedBundle["evidence"][number] {
+  const entry = bundle.evidence.find((item) => item.claimId === claimId);
+  assert.ok(entry, `no evidence for ${claimId}`);
+  return entry;
+}
+
+function roundOf(bundle: ExportedBundle, claimId: string): Record<string, string> {
+  const round = evidenceOf(bundle, claimId).metadata?.producer?.["fieldwork.kontourai.io/recheck-round"];
+  assert.ok(round, `no recheck-round provenance for ${claimId}`);
+  return round;
+}
+
+function priorCandidateSourceRef(result: Awaited<ReturnType<typeof semanticPair>>): string {
+  const item = result.review.items[0] as unknown as ReviewItem;
+  return item.spec.candidates.find((candidate) => candidate.role === "current")!.source.sourceRef;
+}
+
+/** A fresh baseline plus one recheck round against `body`. */
+async function roundFor(captureId: string, body: string, priorBody = "Status: Active") {
+  const setup = await baseline(priorBody);
+  const current = snapshot(captureId, body, "2026-07-23T16:00:00.000Z");
+  await setup.store.put(current);
+  return recheckFieldwork({
+    ...setup.options,
+    acquisition: { check: async () => check("changed", setup.priorRef, buildSnapshotSourceRef(current)) },
+  });
+}
+
+/** Records one decision per queued item through the same loopback API the browser uses. */
+async function decideRound(
+  runDirectory: string,
+  choose: (itemName: string, index: number) => string,
+  expectedRevision = 0,
+): Promise<void> {
+  const service = await openRun(runDirectory);
+  try {
+    const view = await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = view.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(
+        snapshot.items.map((item, index) => [item.metadata.name, choose(item.metadata.name, index)]),
+      ),
+    } as Parameters<typeof buildReviewSessionEvents>[0]);
+    const saved = await apiFetch(service, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision }),
+    }).then((response) => response.json()) as { ok: boolean };
+    assert.equal(saved.ok, true);
+  } finally {
+    await service.close();
+  }
+}
 
 async function semanticPair() {
   const setup = await baseline("Status: Active");

@@ -19,7 +19,19 @@ export interface StoredRun {
   execution: FieldworkStoredExecution;
   preparedArtifact: { ref: string; digest: string; contentLength: number; file: "prepared.txt" };
   envelopeFile: "extraction-envelope.json";
-  review: { snapshot: ReviewQueueSessionState; events: ReviewSessionEvent[]; revision: number };
+  review: {
+    snapshot: ReviewQueueSessionState;
+    events: ReviewSessionEvent[];
+    revision: number;
+    /**
+     * Digest of the queue this run's decisions were recorded against, written
+     * when the queue was created and carried forward unchanged by every event
+     * append. It is the binding between a decision and the exact ReviewItem
+     * bytes it was made against, so a snapshot edited after the fact no longer
+     * reads as the thing the reviewer decided.
+     */
+    snapshotHash: string;
+  };
 }
 
 export const storedRunSchema = z.object({
@@ -39,7 +51,8 @@ export const storedRunSchema = z.object({
   review: z.object({
     snapshot: persistedReviewSnapshotSchema,
     events: z.array(persistedReviewEventSchema).max(FIELDWORK_LIMITS.events),
-    revision: z.number().int().nonnegative()
+    revision: z.number().int().nonnegative(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/)
   }).strict()
 }).strict();
 
@@ -99,6 +112,8 @@ export async function readRun(runDirectory: string): Promise<StoredRunRead> {
     ...parsedRun,
     review: { ...validatedReview, revision: parsedRun.review.revision }
   } as StoredRun;
+  // Fail closed on every read path, not only export: a queue that no longer
+  // matches the decisions recorded against it must not be servable either.
   const envelopePath = await containedRegularFile(directory, run.envelopeFile);
   const envelopeText = await readBounded(envelopePath, FIELDWORK_LIMITS.artifactBytes);
   const validated = validatePortableExtractionResultEnvelope(JSON.parse(envelopeText));
@@ -139,6 +154,12 @@ export async function withRunReviewLock<T>(
   }
 }
 
+/**
+ * `review.snapshotHash` is written once, when the queue is created, and every
+ * later write carries it forward rather than recomputing it — a digest a mutating
+ * writer refreshes is not a binding. `parsePersistedReview` therefore rejects any
+ * write whose queue no longer matches the digest recorded with its decisions.
+ */
 export async function saveReview(directory: string, run: StoredRun, review: StoredRun["review"]): Promise<void> {
   parsePersistedReview(review);
   storedRunSchema.parse({ ...run, review });

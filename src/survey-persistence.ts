@@ -3,8 +3,9 @@ import type { ReviewItem, ReviewSessionEvent } from "@kontourai/survey";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import {
   assertServerReviewSessionEvents,
-  createServerReviewSessionRecord,
-  deriveServerReviewSessionApplyResult
+  assertServerReviewSessionFreshness,
+  deriveServerReviewSessionApplyResult,
+  hashReviewSessionSnapshot
 } from "@kontourai/survey/review-workbench/server-review-session";
 import { FIELDWORK_LIMITS } from "./contracts.js";
 
@@ -138,11 +139,20 @@ export const persistedReviewEventSchema = z.object({
   status: z.object({ replayed: z.boolean().optional() }).strict().optional()
 }).strict();
 
+/**
+ * Digest of the review queue a session's decisions were recorded against.
+ * Survey owns the derivation; Fieldwork only persists what it produced.
+ */
+export function reviewSnapshotHash(snapshot: ReviewQueueSessionState): string {
+  return hashReviewSessionSnapshot(snapshot);
+}
+
 /** Temporary transport validator pending Survey issue #188. Survey remains semantic authority. */
 export function parsePersistedReview(input: {
   snapshot: unknown;
   events: unknown;
-}): { snapshot: ReviewQueueSessionState; events: ReviewSessionEvent[] } {
+  snapshotHash: string;
+}): { snapshot: ReviewQueueSessionState; events: ReviewSessionEvent[]; snapshotHash: string } {
   const snapshot = persistedReviewSnapshotSchema.parse(input.snapshot) as ReviewQueueSessionState;
   const events = z.array(persistedReviewEventSchema).max(FIELDWORK_LIMITS.events).parse(input.events) as ReviewSessionEvent[];
   const names = new Set(snapshot.items.map((item) => item.metadata.name));
@@ -157,8 +167,33 @@ export function parsePersistedReview(input: {
       throw new Error("Persisted Survey snapshot has duplicate candidate identity");
     }
   }
-  const record = createServerReviewSessionRecord({ sessionName: "review-workbench-session", snapshot, eventCount: events.length });
+  /* The queue a decision was recorded against is persisted beside the decision,
+     and the stored digest is the authority — not one recomputed from the same
+     bytes being checked. Rebuilding the session record from the snapshot alone
+     would agree with itself; Survey's own staleness check only has teeth when
+     the hash it compares against was written earlier, at queue construction,
+     and carried forward untouched through every event append. */
+  const record = {
+    sessionName: "review-workbench-session",
+    snapshot,
+    snapshotHash: input.snapshotHash,
+    eventCount: events.length,
+    updatedAt: new Date(0).toISOString(),
+  };
+  try {
+    assertServerReviewSessionFreshness(record, snapshot, events.length);
+  } catch (cause) {
+    throw Object.assign(
+      new Error(
+        "Stored review queue does not match the decisions recorded against it. The queue is bound to its round when the "
+        + "round opens, so a queue that changed after a decision no longer describes what the reviewer decided; "
+        + "re-run the source rather than editing stored review state.",
+        { cause },
+      ),
+      { code: "REVIEW_BINDING_BROKEN" },
+    );
+  }
   assertServerReviewSessionEvents(record, events);
   deriveServerReviewSessionApplyResult({ record, events, requiredResolvedItems: "none" });
-  return { snapshot, events };
+  return { snapshot, events, snapshotHash: input.snapshotHash };
 }

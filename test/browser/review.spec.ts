@@ -830,6 +830,54 @@ test("a recheck round says what changed, and shows it in the document", async ({
   }
 });
 
+/* The dead end fieldwork#59 recorded: every item of a recheck round decided in
+   the browser, four HTTP 200s, decisions surviving a reload — and then `export`
+   refusing, because it rebuilt its items from the new extraction's seven
+   proposals instead of the four the reviewer actually decided. */
+test("a decided recheck round exports a receipt of the round", async ({ page }) => {
+  const { runDirectory, itemCount } = await recheckedRun("browser-recheck-export");
+  const server = await openRun(runDirectory);
+  const mutations: number[] = [];
+  page.on("response", (response) => {
+    if (response.url().includes("/api/v1/review")) mutations.push(response.status());
+  });
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const items = await page.getByTestId("review-field")
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-item-name")!));
+    expect(items).toHaveLength(itemCount);
+    for (const item of items) {
+      const card = page.locator(`[data-item-name="${item}"][data-testid="review-field"]`);
+      await card.getByTestId("use-proposed").click();
+      await expect(card.getByTestId("decided-chip")).toHaveText("Accepted");
+    }
+    // One accepted mutation per decision: no decision may be dropped, and none
+    // may be rejected as a spurious append-only conflict.
+    await expect.poll(() => mutations.length).toBe(itemCount);
+    expect(mutations).toEqual(items.map(() => 200));
+    await page.reload();
+    await expect(page.getByTestId("decided-chip")).toHaveCount(itemCount);
+
+    const exported = await reviewedExport(runDirectory) as unknown as {
+      claims: { id: string; fieldOrBehavior: string; value: unknown }[];
+      evidence: { claimId: string; excerptOrSummary?: string; metadata?: { producer?: Record<string, Record<string, string>> } }[];
+    };
+    // The round, not the document: the new extraction still carries seven
+    // proposals, and five of them were never re-decided.
+    expect(exported.claims).toHaveLength(itemCount);
+    expect([...new Set(exported.claims.map((claim) => claim.fieldOrBehavior))].sort())
+      .toEqual(["commercial.annualFeeUsd", "renewal.noticeDays"]);
+    for (const claim of exported.claims) {
+      const evidence = exported.evidence.find((entry) => entry.claimId === claim.id)!;
+      const round = evidence.metadata?.producer?.["fieldwork.kontourai.io/recheck-round"];
+      expect(round?.evidenceObservation).toBe("current");
+      expect(round?.priorObservationId).not.toBe(round?.currentObservationId);
+      expect(evidence.excerptOrSummary).toContain(String(claim.value));
+    }
+  } finally { await server.close(); }
+});
+
 test("a first round is not dressed as a recheck", async ({ page }) => {
   const run = await runFieldwork({
     taskPath: "examples/vendor-obligations/task.json",
