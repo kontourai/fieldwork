@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Panel, StatusBar, Topbar } from "@kontourai/ui/react";
 import { createPersistentReviewSessionEventStore, mountExtractionInspector, mountReviewWorkbench } from "@kontourai/survey/review-workbench";
-import type { ExtractionInspectorModel, ReviewSessionEvent } from "@kontourai/survey";
+import type { ExtractionInspectorModel, ReviewItem, ReviewSessionEvent } from "@kontourai/survey";
 import type { ReviewPresentationAdapter, ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import "@kontourai/survey/review-workbench.css";
 import "@kontourai/ui/tokens";
@@ -24,15 +24,117 @@ const FILTER_DISCLOSURE_THRESHOLD = 12;
 const DIGEST_SEGMENT = /^[0-9a-f]{12,}$/i;
 const VERSION_SEGMENT = /^v\d+(?:alpha\d*|beta\d*)?$/i;
 
-/** Kontour refs read `fieldwork-source:v1:<name>:<digest>`. Reviewers need the name. */
+/** Fieldwork refs read `fieldwork-source:v1:<name>:<digest>`; Forage snapshot
+    refs read `forage-snapshot:<sourceId>?url=…&sha256=…&fetchedAt=…`. Reviewers
+    need the name from either. Dropping the query first matters: without it every
+    snapshot-backed run — which is every acquired source and every recheck round —
+    printed its whole 200-character locator on the face of each card. */
 function readableRefName(ref: string): string {
-  const named = ref.split(":").filter((segment) => segment && !DIGEST_SEGMENT.test(segment) && !VERSION_SEGMENT.test(segment));
-  const name = (named[named.length - 1] ?? ref).replace(/[-_]+/g, " ").trim();
+  const named = refPath(ref).split(":")
+    .filter((segment) => segment && !DIGEST_SEGMENT.test(segment) && !VERSION_SEGMENT.test(segment));
+  const name = (named[named.length - 1] ?? refPath(ref)).replace(/[-_]+/g, " ").trim();
   return name ? `${name[0].toUpperCase()}${name.slice(1)}` : ref;
 }
 
+function refPath(ref: string): string {
+  return ref.split("?")[0] ?? ref;
+}
+
 function refDigest(ref: string): string | undefined {
-  return ref.split(":").filter((segment) => DIGEST_SEGMENT.test(segment)).pop();
+  return refPath(ref).split(":").filter((segment) => DIGEST_SEGMENT.test(segment)).pop();
+}
+
+/** Forage records when a snapshot was taken in its ref; it is the only place a
+    recheck round carries "when was this captured", so read it where it exists. */
+function refFetchedAt(ref: string): string | undefined {
+  const query = ref.slice(ref.indexOf("?") + 1);
+  const value = ref.includes("?") ? new URLSearchParams(query).get("fetchedAt") : null;
+  return value && !Number.isNaN(Date.parse(value)) ? value : undefined;
+}
+
+const ACRONYMS = new Set(["id", "url", "uri", "api", "utc", "iso", "pdf", "html", "json", "csv", "sla", "vat", "kpi", "pii", "usd", "eur", "gbp", "jpy", "cad", "aud", "chf", "cny", "inr"]);
+const UNIT_SUFFIXES = new Set(["usd", "eur", "gbp", "jpy", "cad", "aud", "chf", "cny", "inr", "pct", "days", "hours", "months", "years"]);
+
+/** Survey's `humanizeIdentifier` renders `commercial.annualFeeUsd` as
+    `Commercial.Annual Fee Usd` — the machine identifier with spaces pushed into
+    it. A reviewer reads a field name, so write one: dotted segments joined,
+    camelCase split, sentence case, known acronyms cased, a trailing unit
+    parenthesised. `labelForTarget` is Survey's supported hook for exactly this. */
+function humanizeFieldPath(target: string): string {
+  const words = target.split(".")
+    .flatMap((segment) => segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-_]+/g, " ").split(/\s+/))
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
+  if (words.length === 0) return target;
+  const unit = words.length > 1 && UNIT_SUFFIXES.has(words[words.length - 1]!) ? words.pop()! : undefined;
+  const cased = words.map((word, index) => ACRONYMS.has(word) ? word.toUpperCase()
+    : index === 0 ? `${word[0]!.toUpperCase()}${word.slice(1)}`
+    : word);
+  const label = cased.join(" ");
+  return unit ? `${label} (${ACRONYMS.has(unit) ? unit.toUpperCase() : unit})` : label;
+}
+
+/* --- Recheck ---------------------------------------------------------------
+   `fieldwork recheck` builds its review round through Lookout's semantic
+   transition, which stamps every item it emits with the kind of change that put
+   it there. Nothing about that reached the screen: a re-review looked exactly
+   like a first review, and a reviewer had no way to tell which of the seven
+   highlighted spans were the two that actually moved. This reads the metadata
+   the shipped CLI genuinely emits — no new run-store field, no invented shape. */
+const SEMANTIC_TRANSITION = "lookout.kontourai.io/semantic-transition";
+
+const CHANGE_LABELS: Record<string, string> = {
+  "proposal-added": "New",
+  "proposal-removed": "Removed",
+  "proposal-moved": "Moved",
+  "proposal-value-changed": "Value changed",
+  "proposal-provenance-changed": "Evidence changed",
+  "coverage-gap": "Not covered",
+  "provenance-gap": "No evidence",
+};
+
+interface RecheckChange {
+  readonly itemName: string;
+  readonly target: string;
+  readonly label: string;
+}
+
+interface RecheckRound {
+  readonly changes: readonly RecheckChange[];
+  readonly fields: ReadonlySet<string>;
+  readonly capturedAt?: string;
+  readonly previouslyCapturedAt?: string;
+}
+
+function readRecheckRound(items: readonly ReviewItem[]): RecheckRound | undefined {
+  const changes: RecheckChange[] = [];
+  let capturedAt: string | undefined, previouslyCapturedAt: string | undefined;
+  for (const item of items) {
+    const transition = item.metadata.producer?.[SEMANTIC_TRANSITION] as { semanticKind?: string } | undefined;
+    if (!transition?.semanticKind) continue;
+    changes.push({
+      itemName: item.metadata.name,
+      target: item.spec.target,
+      label: CHANGE_LABELS[transition.semanticKind] ?? "Changed",
+    });
+    for (const candidate of item.spec.candidates) {
+      const at = refFetchedAt(candidate.source.sourceRef);
+      if (!at) continue;
+      if (candidate.role === "proposed") capturedAt = at;
+      if (candidate.role === "current") previouslyCapturedAt = at;
+    }
+  }
+  if (changes.length === 0) return undefined;
+  return {
+    changes,
+    fields: new Set(changes.map((change) => change.target)),
+    ...(capturedAt === undefined ? {} : { capturedAt }),
+    ...(previouslyCapturedAt === undefined ? {} : { previouslyCapturedAt }),
+  };
+}
+
+function readableInstant(value: string): string {
+  return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /* Mirrors @kontourai/survey's private `safeId` (extraction-inspector.js), the
@@ -46,27 +148,66 @@ function surveyElementId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
+/** Elements that own their own click. Selecting a card must not swallow these. */
+const CARD_CONTROLS = "button, a, input, textarea, select, label, summary, [contenteditable]";
+
 /** Keeps the document and the queue pointing at the same fact, in both directions. */
 function linkDocumentAndQueue(
   inspectorHost: HTMLElement,
   workbenchHost: HTMLElement,
   candidates: ExtractionInspectorModel["candidates"],
+  recheck: RecheckRound | undefined,
 ): () => void {
-  const candidateByItem = new Map(candidates.map((candidate) => [candidate.reviewItemName, candidate.id]));
   const itemByCandidate = new Map(candidates.map((candidate) => [candidate.id, candidate.reviewItemName]));
   let activeItemName: string | undefined;
 
   const cardFor = (itemName: string) =>
     workbenchHost.querySelector<HTMLElement>(`[data-testid="review-field"][data-item-name="${itemName}"]`);
+  /* A recheck round's items are Lookout's (`lookout-semantic.…`) while the
+     inspector's candidates are the new extraction's (`extraction-envelope.…`),
+     so review-item identity does not join the two surfaces there. The field path
+     does, and it is the same join Survey's own card header uses. */
   const anchorFor = (itemName: string) => {
-    const candidateId = candidateByItem.get(itemName);
-    return candidateId ? inspectorHost.querySelector<HTMLElement>(`[data-highlight-candidate-id="${candidateId}"]`) : null;
+    const field = cardFor(itemName)?.dataset.field;
+    const candidate = candidates.find((entry) => entry.reviewItemName === itemName)
+      ?? (field ? candidates.find((entry) => entry.field === field) : undefined);
+    return candidate ? inspectorHost.querySelector<HTMLElement>(`[data-highlight-candidate-id="${candidate.id}"]`) : null;
+  };
+
+  /* Survey rebuilds both surfaces wholesale, so everything the host stamps on
+     their DOM has to be re-stamped rather than set once. Writes are guarded by
+     an equality check: the MutationObserver that triggers this also watches it. */
+  const decorate = () => {
+    /* Audit rows are `<div class="kv"><dt class="field-label">Raw Source ID</dt>`
+       with nothing to select a single row by. Slugging the label gives the
+       stylesheet a name to prune against, which survives Survey reordering the
+       list in a way `nth-child` would not. */
+    for (const row of workbenchHost.querySelectorAll<HTMLElement>(".audit-body .kv")) {
+      const slug = row.querySelector(".field-label")?.textContent?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "";
+      if (slug && row.dataset.auditRow !== slug) row.dataset.auditRow = slug;
+    }
+    if (!recheck) return;
+    for (const change of recheck.changes) {
+      const kind = cardFor(change.itemName)?.querySelector<HTMLElement>(".fkind");
+      // Two fields drifting can raise four items (a value change and a
+      // provenance change each). Undifferentiated, the duplicate reads as a bug.
+      if (kind && kind.textContent !== change.label) kind.textContent = change.label;
+    }
+    for (const candidate of candidates) {
+      const anchor = inspectorHost.querySelector<HTMLElement>(`[data-highlight-candidate-id="${candidate.id}"]`);
+      const changed = recheck.fields.has(candidate.field);
+      for (const node of [anchor, anchor?.nextElementSibling ?? null]) {
+        if (!node || node.hasAttribute("data-fw-changed") === changed) continue;
+        if (changed) node.setAttribute("data-fw-changed", ""); else node.removeAttribute("data-fw-changed");
+      }
+    }
   };
 
   const paint = () => {
     for (const host of [inspectorHost, workbenchHost]) {
       host.querySelectorAll("[data-fw-active]").forEach((node) => node.removeAttribute("data-fw-active"));
     }
+    decorate();
     if (!activeItemName) return;
     const anchor = anchorFor(activeItemName);
     anchor?.setAttribute("data-fw-active", "");
@@ -87,6 +228,21 @@ function linkDocumentAndQueue(
   const onClick = (event: MouseEvent) => {
     const target = event.target as HTMLElement | null;
     if (!target?.closest) return;
+    /* "Could not confirm" requires a reason, and Survey renders the reviewer
+       note inside the collapsed `Audit details` accordion. Pressing the button
+       without one therefore focused a hidden textarea and called reportValidity
+       on it: no request, no state change, no message — a permanently dead
+       control, on the one decision the vendor-renewal example is written around
+       ("the security assurance names a report that has not been delivered").
+       This runs in capture, ahead of Survey's own handler, so the field the
+       reviewer is about to be asked for is on screen before it is asked for. */
+    const unconfirmed = target.closest<HTMLElement>('[data-testid="could-not-confirm"]');
+    if (unconfirmed) {
+      const card = unconfirmed.closest<HTMLElement>('[data-testid="review-field"]');
+      const note = card?.querySelector<HTMLTextAreaElement>('[data-testid="reviewer-note"]');
+      if (note && !note.value.trim()) card?.querySelector("details.audit-details")?.setAttribute("open", "");
+      return;
+    }
     const jump = target.closest<HTMLAnchorElement>('a[href^="#highlight-"]');
     if (jump) {
       // The launch capability lives in location.hash. A fragment navigation
@@ -104,7 +260,15 @@ function linkDocumentAndQueue(
     }
     const mark = target.closest("mark");
     const markAnchor = mark?.previousElementSibling as HTMLElement | undefined;
-    if (markAnchor?.dataset.highlightCandidateId) select(itemByCandidate.get(markAnchor.dataset.highlightCandidateId), "card");
+    if (markAnchor?.dataset.highlightCandidateId) {
+      select(itemByCandidate.get(markAnchor.dataset.highlightCandidateId), "card");
+      return;
+    }
+    // Clicking the fact you are reading is the obvious way to ask "where did
+    // this come from"; before this it was the one gesture that did nothing, and
+    // the only way through was the small `from` link inside the card.
+    const card = target.closest<HTMLElement>('[data-testid="review-field"]');
+    if (card && !target.closest(CARD_CONTROLS)) select(card.dataset.itemName, "source");
   };
 
   // Survey stops propagation on its own inspector handlers, so listen in capture.
@@ -121,8 +285,11 @@ function linkDocumentAndQueue(
   workbenchHost.addEventListener("focusin", onFocusIn);
 
   // Both surfaces re-render themselves wholesale (a decision rebuilds the queue,
-  // a filter rebuilds the source), so the selection has to be repainted.
-  const observer = new MutationObserver(() => { if (activeItemName) paint(); });
+  // a filter rebuilds the source), so the selection and the host's own stamps
+  // have to be repainted. Attribute writes are not observed and text writes are
+  // equality-guarded, so this cannot drive itself.
+  decorate();
+  const observer = new MutationObserver(() => { decorate(); if (activeItemName) paint(); });
   observer.observe(inspectorHost, { childList: true, subtree: true });
   observer.observe(workbenchHost, { childList: true, subtree: true });
 
@@ -166,25 +333,42 @@ function App() {
     () => (state ? state.inspector as unknown as ExtractionInspectorModel : undefined),
     [state],
   );
+  /* `review.items` is the extraction envelope's proposal list; the queue renders
+     `review.snapshot.items`. On a first round they match, so the panel badge was
+     right by coincidence. On a recheck they do not — the badge counted the new
+     run's seven proposals beside a queue reading "4 fields to review". Count the
+     queue a reviewer is actually looking at. */
+  const queueItems = useMemo(
+    () => (state ? (state.review.snapshot as unknown as ReviewQueueSessionState).items : []),
+    [state],
+  );
+  const recheck = useMemo(() => readRecheckRound(queueItems), [queueItems]);
   useEffect(() => {
     if (!state || !inspectorModel) return;
     setEvidenceFiltersOpen(inspectorModel.candidates.length > FILTER_DISCLOSURE_THRESHOLD);
-    setQueueFiltersOpen(state.review.items.length > FILTER_DISCLOSURE_THRESHOLD);
-  }, [state, inspectorModel]);
+    setQueueFiltersOpen(queueItems.length > FILTER_DISCLOSURE_THRESHOLD);
+  }, [state, inspectorModel, queueItems]);
   useEffect(() => {
     if (!state || !inspectorModel || !inspector.current || !workbench.current) return;
     const inspectorHost = inspector.current, workbenchHost = workbench.current;
     inspectorHost.replaceChildren(); workbenchHost.replaceChildren();
     const disposeInspector = mountExtractionInspector(inspectorHost, inspectorModel);
     const candidateByItem = new Map(inspectorModel.candidates.map((candidate) => [candidate.reviewItemName, candidate.id]));
+    // Recheck items are Lookout's, the inspector's candidates are the new
+    // extraction's; only the field path joins them. Without this the provenance
+    // link silently degraded to a raw ref on every recheck round.
+    const candidateByField = new Map(inspectorModel.candidates.map((candidate) => [candidate.field, candidate.id]));
     // "Where did this come from" is the reviewer's question. Answer it on the
     // face of the card — readable source name plus the exact locator — and make
     // the answer a jump to the highlighted sentence. The 64-hex source digest
     // stays where a digest belongs: the audit record.
     const presentationAdapter: ReviewPresentationAdapter = {
+      // A field is a thing a person reads, not an identifier they decode.
+      labelForTarget: (target) => humanizeFieldPath(target),
       linkForSource: (sourceRef, context) => {
         if (context.candidate.role !== "proposed") return undefined;
-        const candidateId = candidateByItem.get(context.item.metadata.name);
+        const candidateId = candidateByItem.get(context.item.metadata.name)
+          ?? candidateByField.get(context.item.spec.target);
         if (!candidateId || !sourceRef) return undefined;
         const locator = context.candidate.locator?.locator;
         const name = readableRefName(sourceRef);
@@ -210,9 +394,9 @@ function App() {
       }
     } });
     mountReviewWorkbench(workbenchHost, state.review.snapshot as unknown as ReviewQueueSessionState, { eventStore: store, presentationAdapter });
-    const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates);
+    const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates, recheck);
     return () => { disposeLinking(); disposeInspector(); workbenchHost.replaceChildren(); };
-  }, [state, inspectorModel]);
+  }, [state, inspectorModel, recheck]);
   const sources = inspectorModel?.sources ?? [];
   const inspectorCount = inspectorModel?.candidates.length ?? 0;
   const singleSource = sources.length === 1 ? sources[0] : undefined;
@@ -225,7 +409,9 @@ function App() {
     "fieldwork-shell", "theme-survey",
     evidenceFiltersOpen ? "fw-evidence-filters-open" : "",
     queueFiltersOpen ? "fw-queue-filters-open" : "",
+    recheck ? "fw-recheck" : "",
   ].filter(Boolean).join(" ");
+  const recheckFieldCount = recheck?.fields.size ?? 0;
   const filterToggle = (open: boolean, toggle: () => void, label: string) => (
     <button type="button" className="fieldwork-filter-toggle" aria-expanded={open} onClick={toggle}>{label}</button>
   );
@@ -239,15 +425,32 @@ function App() {
         <header className="fieldwork-document-head">
           <h3 className="fieldwork-document-name">{documentName}</h3>
           <p className="fieldwork-document-meta">
-            <span>{inspectorCount} grounded {inspectorCount === 1 ? "span" : "spans"}</span>
+            {/* On a recheck the count a reviewer needs is not how many spans are
+                grounded but how many of them moved. */}
+            <span>{recheck
+              ? `${recheckFieldCount} of ${inspectorCount} spans changed`
+              : `${inspectorCount} grounded ${inspectorCount === 1 ? "span" : "spans"}`}</span>
             {documentDigest && <span className="fieldwork-document-digest" title={documentDigestTitle}>{documentDigest.slice(0, 12)}</span>}
           </p>
         </header>
         <div className="survey-workbench-embed theme-survey" data-theme={presentation.theme}
           data-fw-sources={sources.length} ref={inspector}/>
       </Panel>
-      <Panel className="fieldwork-column fieldwork-column-review" title="Facts to decide" count={state?.review.items.length ?? 0}
+      <Panel className="fieldwork-column fieldwork-column-review"
+        title={recheck ? "What changed" : "Facts to decide"} count={queueItems.length}
         actions={filterToggle(queueFiltersOpen, () => setQueueFiltersOpen((open) => !open), "Find fields")}>
+        {recheck && <aside className="fieldwork-recheck" data-testid="recheck-summary">
+          <p className="fieldwork-recheck-lede">
+            The source moved. {recheckFieldCount} {recheckFieldCount === 1 ? "field" : "fields"} changed,
+            raising {recheck.changes.length} {recheck.changes.length === 1 ? "item" : "items"} to re-decide.
+          </p>
+          <p className="fieldwork-recheck-when">
+            {recheck.capturedAt && recheck.previouslyCapturedAt
+              ? <>Captured {readableInstant(recheck.capturedAt)}, previously {readableInstant(recheck.previouslyCapturedAt)}. </>
+              : undefined}
+            Everything else is unchanged, and the run you already reviewed is untouched.
+          </p>
+        </aside>}
         <div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={workbench}/>
       </Panel>
     </div>

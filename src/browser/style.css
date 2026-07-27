@@ -289,6 +289,123 @@ body { margin: 0; overflow-x: hidden; }
   background: color-mix(in srgb, var(--k-brand) 7%, transparent);
 }
 
+/* --- What changed ------------------------------------------------------------
+   A recheck round is the product's best story and the screen used to tell none
+   of it: the same seven spans highlighted identically, a queue headed "Facts to
+   decide", and no hint that a source had moved under an already-reviewed run.
+   Everything below is driven by Lookout's semantic-transition metadata, which
+   `fieldwork recheck` already emits on every item it raises. */
+.fieldwork-recheck {
+  margin: .1rem 0 .7rem;
+  padding: .55rem .7rem;
+  border: 1px solid color-mix(in srgb, var(--k-brand) 34%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--k-radius-sm);
+  background: color-mix(in srgb, var(--k-brand) 8%, transparent);
+}
+.fieldwork-recheck p { margin: 0; }
+.fieldwork-recheck-lede { font-size: .86rem; font-weight: 650; line-height: 1.35; }
+.fieldwork-recheck-when { margin-top: .2rem; color: var(--k-text-muted); font-size: .72rem; line-height: 1.45; }
+
+/* The two spans that moved have to be findable among the five that did not.
+   Only a recheck round dims anything: on a first round every span is news. */
+.fieldwork-shell.fw-recheck .survey-workbench-embed .inspector-source mark:not([data-fw-changed]) {
+  background: color-mix(in srgb, var(--k-text-faint) 14%, transparent);
+  box-shadow: inset 0 -1px 0 var(--k-line-strong);
+}
+.fieldwork-shell.fw-recheck .survey-workbench-embed .inspector-source mark[data-fw-changed] {
+  background: color-mix(in srgb, var(--k-brand) 26%, transparent);
+}
+/* Survey's own "New"/"Update" chip; main.tsx replaces its text with the precise
+   change kind, so two items raised for one field stop reading as a duplicate. */
+.fieldwork-shell.fw-recheck .survey-workbench-embed .fkind {
+  color: var(--k-brand);
+  border-color: color-mix(in srgb, var(--k-brand) 40%, transparent);
+}
+
+/* --- One heading per list -----------------------------------------------------
+   Survey's queue header restates the panel head three times over: an eyebrow
+   ("Proposed changes"), an <h1> ("Review queue"), and a meta line ("7 fields to
+   review") sit above the progress row, while the host's own panel head already
+   reads "Facts to decide 7" an inch higher. That is ~90px of the first screen
+   spent saying the same thing a third time, directly above the frame that has to
+   reach a decision. The progress row — bar, decided count, apply — stays: it is
+   the only part a reviewer acts on.
+
+   The <h1> is clipped rather than removed so the document outline and screen
+   readers keep it; the meta line goes, because the progress row beside it
+   already carries the same total. */
+/* Clipped on `.top` rather than the `.subj` inside it: `.rhead` is a grid with a
+   14px gap, so a zero-height in-flow row would still cost its gap. Out of flow,
+   it claims no track — and the <h1> inside stays in the accessibility tree. */
+.fieldwork-shell .survey-workbench-embed .rhead .top {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.fieldwork-shell .survey-workbench-embed .rhead .meta { display: none; }
+.fieldwork-shell .survey-workbench-embed .rhead { padding: .85rem 1.1rem; }
+
+/* Every candidate in the index repeats the same provider/model string — one run
+   has one extractor — so the column reads as seven copies of a constant. Clipped,
+   not dropped: it is the candidate button's accessible name, and the inspector's
+   provider and model filters still select on it. */
+.fieldwork-shell .survey-workbench-embed .inspector-candidate > span:nth-of-type(1) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- Audit details ------------------------------------------------------------
+   Deciding a field expanded this accordion from 8 rows to 27 plus a 2KB JSON
+   payload — 2040px of record for one card. Thirteen of those rows were the same
+   value printed a second or third time under a different label, or a constant
+   saying nothing was there. An audit trail is who decided what, when, and on
+   what evidence; the identifiers stay whole in `fieldwork inspect` and in the
+   exported claim, and the ones a reviewer actually reads are on the card face.
+
+   Keyed on Survey's published `data-testid` values. test/browser/review.spec.ts
+   ("audit details reads as an audit trail, not a database dump") asserts both
+   what is gone and what survives, so an upstream rename fails there rather than
+   quietly restoring the pile. */
+
+/* Duplicated by the "Raw Source" section below, row for row. */
+.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="raw-source-id"],
+.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="model"],
+.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="extractor"],
+.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="extracted-at"],
+/* Stage 3 promoted the locator to the face of every card. */
+.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="locator"],
+/* Printed verbatim in the card's own excerpt, two rows up the card. */
+.fieldwork-shell .survey-workbench-embed [data-testid="surface-source-evidence"] [data-audit-row="excerpt"],
+/* Third and second printing of the two ids the Raw Source section already lists. */
+.fieldwork-shell .survey-workbench-embed [data-testid="surface-integrity-posture"] .reference-details {
+  display: none;
+}
+
+/* Survey marks an absent authority trace `is-neutral`; two rows to say a thing
+   is not there is not an audit trail. When one is present, it renders. */
+.fieldwork-shell .survey-workbench-embed .preview-section.is-neutral { display: none; }
+/* Likewise the candidate history: with nothing unselected Survey emits the
+   single "No unselected candidates." row and no reference list to go with it. */
+.fieldwork-shell .survey-workbench-embed [data-testid="surface-candidate-history"]:not(:has(.reference-details)) {
+  display: none;
+}
+
+/* "Current — Not set", seven times down a first-round queue, in a box as wide as
+   the value beside it. The `New` chip on the same row already says a field has
+   no prior value; the box repeats it and halves the room the proposed value
+   gets. On a recheck round Current carries the old value and stays. */
+.fieldwork-shell .survey-workbench-embed .diff:has(> .val.current.empty) { grid-template-columns: 1fr; }
+.fieldwork-shell .survey-workbench-embed .val.current.empty,
+.fieldwork-shell .survey-workbench-embed .diff:has(> .val.current.empty) > .arrow { display: none; }
+
 /* Survey's keyboard return-anchor sizes a native <button> to a 1px sliver but
    never removes its user-agent chrome, so under `box-sizing: border-box` it
    paints a 16x13 outset-grey box inline in the source text. */
