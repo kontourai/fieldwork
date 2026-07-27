@@ -271,9 +271,9 @@ export interface FieldworkTask {
 export const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(),
   z.array(jsonValueSchema),
-  z.record(jsonValueSchema)
+  z.record(z.string(), jsonValueSchema)
 ]));
-export const jsonObjectSchema: z.ZodType<JsonObject> = z.record(jsonValueSchema);
+export const jsonObjectSchema: z.ZodType<JsonObject> = z.record(z.string(), jsonValueSchema);
 const failureSchema = z.object({
   ok: z.literal(false),
   error: z.object({ code: z.string(), message: z.string() }).strict()
