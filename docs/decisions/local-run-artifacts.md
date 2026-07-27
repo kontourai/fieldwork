@@ -33,3 +33,29 @@ complete snapshot at once.
 read-only inspector export. Prepared text and excerpts are redacted by default
 and require separate explicit disclosure flags. This artifact never represents
 a review decision or reviewed trust output.
+
+## Amendment (fieldwork#79, survey 2.4.0)
+
+The queue binding and the whole-extraction rule described above are now
+Survey's exports, not local code (kontourai/survey#213, adopted in
+[fieldwork#79](https://github.com/kontourai/fieldwork/issues/79)): the stored
+round digest is carried into Survey's `ReviewQueueBinding` at every read and
+enforced through `deriveServerReviewSessionApplyResult`'s `binding` option,
+and export's set-equality/byte-equality/empty-queue refusals run through
+`assertReviewQueueAgainstExtractionImport`. The rules themselves are
+unchanged — they moved down a layer so every consumer inherits them.
+
+What stayed local is exactly what Survey's consumer guide names the caller's
+storage obligation: this file's storage bindings (prepared-bytes/digest/ref
+agreement on every read), the recheck observation dispatch and its
+current-side attestation, and the disclosed fieldwork#65 gap. Survey's
+cross-check attests queue-to-record consistency only; a writer who edits the
+stored envelope's proposals and re-derives the queue from the edited record
+presents a self-consistent pair Survey blesses, which is why `readRun`'s
+prepared-bytes binding and the envelope-side checks above remain this repo's.
+
+`npm run check:guards` was re-pointed with the swap: the collapsed local
+guards became call-site injections (self-agreement, call deletion,
+binding-not-passed) plus a pinned refusal for the empty-queue rule, and the
+matrix adopted Survey's stricter attribution rule — an injection that fails
+to compile fails the matrix; only a red test run counts as a catch.
