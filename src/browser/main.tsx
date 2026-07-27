@@ -137,17 +137,6 @@ function readableInstant(value: string): string {
   return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-/* Mirrors @kontourai/survey's private `safeId` (extraction-inspector.js), the
-   derivation behind every source highlight's element id. Survey does not export
-   it, so the review card's source link has to reconstruct the same id.
-   test/browser/review.spec.ts ("every decided fact links to the source
-   highlight it came from") resolves each generated href against the live
-   inspector, so a change to Survey's derivation fails there rather than
-   silently shipping dead links. */
-function surveyElementId(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "-");
-}
-
 /** Elements that own their own click. Selecting a card must not swallow these. */
 const CARD_CONTROLS = "button, a, input, textarea, select, label, summary, [contenteditable]";
 
@@ -158,7 +147,8 @@ function linkDocumentAndQueue(
   candidates: ExtractionInspectorModel["candidates"],
   recheck: RecheckRound | undefined,
 ): () => void {
-  const itemByCandidate = new Map(candidates.map((candidate) => [candidate.id, candidate.reviewItemName]));
+  const itemByHighlight = new Map(candidates.flatMap((candidate) =>
+    candidate.highlightElementId ? [[candidate.highlightElementId, candidate.reviewItemName] as const] : []));
   let activeItemName: string | undefined;
 
   const cardFor = (itemName: string) =>
@@ -167,25 +157,25 @@ function linkDocumentAndQueue(
      inspector's candidates are the new extraction's (`extraction-envelope.…`),
      so review-item identity does not join the two surfaces there. The field path
      does, and it is the same join Survey's own card header uses. */
-  const anchorFor = (itemName: string) => {
+  const highlightIdFor = (itemName: string) => {
     const field = cardFor(itemName)?.dataset.field;
     const candidate = candidates.find((entry) => entry.reviewItemName === itemName)
       ?? (field ? candidates.find((entry) => entry.field === field) : undefined);
-    return candidate ? inspectorHost.querySelector<HTMLElement>(`[data-highlight-candidate-id="${candidate.id}"]`) : null;
+    return candidate?.highlightElementId;
+  };
+  /* The painted `<mark class="source-highlight">` is the visible, focusable
+     return control (survey 2.3.0); `data-highlight-return-to` is its published
+     reverse binding, a space-separated list of the `highlightElementId`s it
+     covers — `~=` because two candidates can share one span. */
+  const markFor = (itemName: string) => {
+    const id = highlightIdFor(itemName);
+    return id ? inspectorHost.querySelector<HTMLElement>(`mark[data-highlight-return-to~="${id}"]`) : null;
   };
 
   /* Survey rebuilds both surfaces wholesale, so everything the host stamps on
      their DOM has to be re-stamped rather than set once. Writes are guarded by
      an equality check: the MutationObserver that triggers this also watches it. */
   const decorate = () => {
-    /* Audit rows are `<div class="kv"><dt class="field-label">Raw Source ID</dt>`
-       with nothing to select a single row by. Slugging the label gives the
-       stylesheet a name to prune against, which survives Survey reordering the
-       list in a way `nth-child` would not. */
-    for (const row of workbenchHost.querySelectorAll<HTMLElement>(".audit-body .kv")) {
-      const slug = row.querySelector(".field-label")?.textContent?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "";
-      if (slug && row.dataset.auditRow !== slug) row.dataset.auditRow = slug;
-    }
     if (!recheck) return;
     for (const change of recheck.changes) {
       const kind = cardFor(change.itemName)?.querySelector<HTMLElement>(".fkind");
@@ -194,12 +184,11 @@ function linkDocumentAndQueue(
       if (kind && kind.textContent !== change.label) kind.textContent = change.label;
     }
     for (const candidate of candidates) {
-      const anchor = inspectorHost.querySelector<HTMLElement>(`[data-highlight-candidate-id="${candidate.id}"]`);
+      if (!candidate.highlightElementId) continue;
+      const mark = inspectorHost.querySelector<HTMLElement>(`mark[data-highlight-return-to~="${candidate.highlightElementId}"]`);
       const changed = recheck.fields.has(candidate.field);
-      for (const node of [anchor, anchor?.nextElementSibling ?? null]) {
-        if (!node || node.hasAttribute("data-fw-changed") === changed) continue;
-        if (changed) node.setAttribute("data-fw-changed", ""); else node.removeAttribute("data-fw-changed");
-      }
+      if (!mark || mark.hasAttribute("data-fw-changed") === changed) continue;
+      if (changed) mark.setAttribute("data-fw-changed", ""); else mark.removeAttribute("data-fw-changed");
     }
   };
 
@@ -209,9 +198,7 @@ function linkDocumentAndQueue(
     }
     decorate();
     if (!activeItemName) return;
-    const anchor = anchorFor(activeItemName);
-    anchor?.setAttribute("data-fw-active", "");
-    anchor?.nextElementSibling?.setAttribute("data-fw-active", "");
+    markFor(activeItemName)?.setAttribute("data-fw-active", "");
     cardFor(activeItemName)?.setAttribute("data-fw-active", "");
   };
 
@@ -221,7 +208,7 @@ function linkDocumentAndQueue(
     paint();
     // Instant, nearest-edge scrolling only: a smooth scroll would keep the
     // decision buttons moving under a reviewer (and under a test) mid-click.
-    const reveals = { card: cardFor, source: anchorFor, none: () => null }[reveal];
+    const reveals = { card: cardFor, source: markFor, none: () => null }[reveal];
     reveals(itemName)?.scrollIntoView({ block: "nearest", behavior: "auto" });
   };
 
@@ -250,19 +237,18 @@ function linkDocumentAndQueue(
       event.preventDefault();
       const itemName = jump.closest<HTMLElement>('[data-testid="review-field"]')?.dataset.itemName;
       select(itemName, "source");
-      if (itemName) anchorFor(itemName)?.focus();
+      if (itemName) markFor(itemName)?.focus();
       return;
     }
-    const highlight = target.closest<HTMLElement>("[data-highlight-candidate-id]");
-    if (highlight?.dataset.highlightCandidateId) {
-      select(itemByCandidate.get(highlight.dataset.highlightCandidateId), "card");
-      return;
-    }
-    const mark = target.closest("mark");
-    const markAnchor = mark?.previousElementSibling as HTMLElement | undefined;
-    if (markAnchor?.dataset.highlightCandidateId) {
-      select(itemByCandidate.get(markAnchor.dataset.highlightCandidateId), "card");
-      return;
+    // The painted mark is the click target now (survey 2.3.0); the anchor the
+    // published id names is an inert zero-width span.
+    const highlight = target.closest<HTMLElement>("[data-highlight-return-to]");
+    if (highlight) {
+      const bound = highlight.getAttribute("data-highlight-return-to")?.split(/\s+/, 1)[0];
+      if (bound) {
+        select(itemByHighlight.get(bound), "card");
+        return;
+      }
     }
     // Clicking the fact you are reading is the obvious way to ask "where did
     // this come from"; before this it was the one gesture that did nothing, and
@@ -353,11 +339,14 @@ function App() {
     const inspectorHost = inspector.current, workbenchHost = workbench.current;
     inspectorHost.replaceChildren(); workbenchHost.replaceChildren();
     const disposeInspector = mountExtractionInspector(inspectorHost, inspectorModel);
-    const candidateByItem = new Map(inspectorModel.candidates.map((candidate) => [candidate.reviewItemName, candidate.id]));
+    // `highlightElementId` is Survey's published id for each candidate's source
+    // anchor (2.3.0); the server builds the model with
+    // `buildExtractionInspectorModel`, which always supplies it.
+    const candidateByItem = new Map(inspectorModel.candidates.map((candidate) => [candidate.reviewItemName, candidate.highlightElementId]));
     // Recheck items are Lookout's, the inspector's candidates are the new
     // extraction's; only the field path joins them. Without this the provenance
     // link silently degraded to a raw ref on every recheck round.
-    const candidateByField = new Map(inspectorModel.candidates.map((candidate) => [candidate.field, candidate.id]));
+    const candidateByField = new Map(inspectorModel.candidates.map((candidate) => [candidate.field, candidate.highlightElementId]));
     // "Where did this come from" is the reviewer's question. Answer it on the
     // face of the card — readable source name plus the exact locator — and make
     // the answer a jump to the highlighted sentence. The 64-hex source digest
@@ -367,12 +356,12 @@ function App() {
       labelForTarget: (target) => humanizeFieldPath(target),
       linkForSource: (sourceRef, context) => {
         if (context.candidate.role !== "proposed") return undefined;
-        const candidateId = candidateByItem.get(context.item.metadata.name)
+        const highlightElementId = candidateByItem.get(context.item.metadata.name)
           ?? candidateByField.get(context.item.spec.target);
-        if (!candidateId || !sourceRef) return undefined;
+        if (!highlightElementId || !sourceRef) return undefined;
         const locator = context.candidate.locator?.locator;
         const name = readableRefName(sourceRef);
-        return { label: locator ? `${name} · ${locator}` : name, href: `#highlight-${surveyElementId(candidateId)}` };
+        return { label: locator ? `${name} · ${locator}` : name, href: `#${highlightElementId}` };
       },
     };
     let revision = state.run.revision;

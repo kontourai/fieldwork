@@ -375,26 +375,18 @@ body { margin: 0; overflow-x: hidden; }
    what is gone and what survives, so an upstream rename fails there rather than
    quietly restoring the pile. */
 
-/* Duplicated by the "Raw Source" section below, row for row. */
-.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="raw-source-id"],
+/* Survey 2.3.0 deduplicates `raw-source-id`, `extractor`, `extraction-id` and
+   `excerpt` itself, prunes sections that would only report an absence, and
+   stamps every row with its stable `data-audit-row` key — so the rules that
+   compensated for those duplicates are gone: keeping them would hide the only
+   copy. What remains below is host judgment, not deduplication. */
+/* Still printed a second time by the "Raw Source" section below. */
 .fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="model"],
-.fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="extractor"],
 .fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="extracted-at"],
 /* Stage 3 promoted the locator to the face of every card. */
 .fieldwork-shell .survey-workbench-embed .audit-body > .field-stack [data-audit-row="locator"],
 /* Printed verbatim in the card's own excerpt, two rows up the card. */
-.fieldwork-shell .survey-workbench-embed [data-testid="surface-source-evidence"] [data-audit-row="excerpt"],
-/* Third and second printing of the two ids the Raw Source section already lists. */
-.fieldwork-shell .survey-workbench-embed [data-testid="surface-integrity-posture"] .reference-details {
-  display: none;
-}
-
-/* Survey marks an absent authority trace `is-neutral`; two rows to say a thing
-   is not there is not an audit trail. When one is present, it renders. */
-.fieldwork-shell .survey-workbench-embed .preview-section.is-neutral { display: none; }
-/* Likewise the candidate history: with nothing unselected Survey emits the
-   single "No unselected candidates." row and no reference list to go with it. */
-.fieldwork-shell .survey-workbench-embed [data-testid="surface-candidate-history"]:not(:has(.reference-details)) {
+.fieldwork-shell .survey-workbench-embed [data-testid="surface-source-evidence"] [data-audit-row="excerpt"] {
   display: none;
 }
 
@@ -406,23 +398,9 @@ body { margin: 0; overflow-x: hidden; }
 .fieldwork-shell .survey-workbench-embed .val.current.empty,
 .fieldwork-shell .survey-workbench-embed .diff:has(> .val.current.empty) > .arrow { display: none; }
 
-/* Survey's keyboard return-anchor sizes a native <button> to a 1px sliver but
-   never removes its user-agent chrome, so under `box-sizing: border-box` it
-   paints a 16x13 outset-grey box inline in the source text. */
-.fieldwork-shell .survey-workbench-embed .highlight-anchor {
-  appearance: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  width: 1px;
-  height: 1em;
-  vertical-align: baseline;
-}
-.fieldwork-shell .survey-workbench-embed .highlight-anchor:focus-visible {
-  outline: 2px solid var(--k-brand);
-  outline-offset: 2px;
-  width: 3px;
-}
+/* Survey 2.3.0 made the painted `source-highlight` mark the return control and
+   the anchor an inert zero-width span, so the host rules that stripped the old
+   anchor-button's user-agent chrome are gone with the button. */
 
 /* A disabled primary rendered as brand-contrast text at 45% opacity sits at
    roughly 1.1:1 on the panel. Keep it legible and obviously inert. */

@@ -6,7 +6,7 @@ import { parseFieldworkTask } from "../src/contracts.js";
 import { reviewedExport, reviewSessionRecord, runFieldwork } from "../src/fieldwork.js";
 import { tempRoot } from "./helpers.js";
 import { assertPortableOutput, portablePath, readRun } from "../src/run-store.js";
-import { reviewSnapshotHash } from "../src/survey-persistence.js";
+import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { openRun } from "../src/server.js";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
@@ -198,7 +198,7 @@ test("a first round's reviewed queue has to be the whole extraction", async () =
     };
     review.events = [];
   });
-  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/reviewed queue is empty/));
+  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/stored queue is empty/));
 
   // One item removed, with a valid event stream rebuilt over what is left — so
   // Survey's own replay validation has nothing to object to.
@@ -211,7 +211,7 @@ test("a first round's reviewed queue has to be the whole extraction", async () =
   });
   await assert.rejects(
     () => reviewedExport(run.runDirectory),
-    refusal(/is in this run's extraction but missing from its reviewed queue/),
+    refusal(/is in the extraction but missing from the stored queue/),
   );
 
   // An item the extraction never produced is the same failure from the other side.
@@ -222,7 +222,7 @@ test("a first round's reviewed queue has to be the whole extraction", async () =
     review.snapshot.decisionsByItemName[copy.metadata.name] = "accept-proposed";
     review.events = buildReviewSessionEvents(review.snapshot) as unknown[];
   });
-  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/is not in this run's extraction/));
+  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/is in the stored queue but not in the extraction/));
 });
 
 /* The one guard whose fault injection nothing caught, because `readRun` refuses
