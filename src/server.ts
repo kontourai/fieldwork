@@ -42,7 +42,7 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
   const listeners = new Set<FieldworkLifecycleListener>();
   if (options.onLifecycleEvent) listeners.add(options.onLifecycleEvent);
   let sequence = 0;
-  let closed = false;
+  let closing: Promise<void> | undefined;
   const emit = (
     type: FieldworkLifecycleEventV1["type"],
     revision: number,
@@ -63,14 +63,21 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
     }
   };
   let expectedOrigin = "";
-  const server = createServer(async (request, response) => {
-    try {
-      if (!allowedHost(request.headers.host, expectedOrigin)) return void json(response, 400, failure("INVALID_HOST", "Host is not an allowed Fieldwork loopback authority"));
-      await handle(runDirectory, capabilityToken, expectedOrigin, embeddingOrigin, presentation, emit, request, response);
-    } catch (error) {
-      const result = publicError(error);
-      json(response, result.status, failure(result.code, result.message));
-    }
+  // Accepted requests, tracked so shutdown can wait for them to commit rather
+  // than cutting their sockets on a timer. Never rejects: the handler catches.
+  const inFlight = new Set<Promise<void>>();
+  const server = createServer((request, response) => {
+    const settled = (async () => {
+      try {
+        if (!allowedHost(request.headers.host, expectedOrigin)) return void json(response, 400, failure("INVALID_HOST", "Host is not an allowed Fieldwork loopback authority"));
+        await handle(runDirectory, capabilityToken, expectedOrigin, embeddingOrigin, presentation, emit, request, response);
+      } catch (error) {
+        const result = publicError(error);
+        json(response, result.status, failure(result.code, result.message));
+      }
+    })();
+    inFlight.add(settled);
+    void settled.then(() => { inFlight.delete(settled); });
   });
   server.requestTimeout = 10_000;
   server.headersTimeout = 5_000;
@@ -95,19 +102,42 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
       return () => listeners.delete(listener);
     },
     close: async () => {
-      if (closed) return;
-      closed = true;
-      let finalView: FieldworkRunViewV1 | undefined;
-      let readError: unknown;
-      try { finalView = await readRunView(runDirectory); }
-      catch (error) { readError = error; }
-      try {
-        await new Promise<void>((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
-      } finally {
-        if (finalView) emit("run-closed", finalView.run.revision, finalView.review.events.length);
-        listeners.clear();
-      }
-      if (readError) throw readError;
+      // Every caller awaits the same shutdown. Latching a flag instead would
+      // let a second caller return while the first is still closing, and would
+      // hide a failed first close from everyone after it.
+      closing ??= (async () => {
+        // close() refuses new connections but waits for open ones to end, and
+        // a browser parks sockets it has opened but not yet sent a request on
+        // — node does not count those as idle, so it will not reap them and
+        // the close blocks until the client happens to hang up. For a reviewer
+        // who left the tab open that is indefinitely.
+        const stopped = new Promise<void>((resolvePromise, reject) => {
+          server.close((error) => error ? reject(error) : resolvePromise());
+        });
+        server.closeIdleConnections();
+        // Requests already accepted are allowed to finish. A review decision
+        // can legitimately wait on the run lock before it persists, so cutting
+        // its socket on a timer would lose the decision — the CLI exits as soon
+        // as this resolves. Handlers are already bounded by requestTimeout.
+        await Promise.allSettled([...inFlight]);
+        // Whatever still holds a socket now is not carrying accepted work.
+        server.closeAllConnections();
+        try {
+          await stopped;
+        } finally {
+          // Read the terminal state only once accepted handlers have settled,
+          // so a decision that persisted during shutdown is reflected here
+          // rather than the event being emitted behind its own review-event.
+          let finalView: FieldworkRunViewV1 | undefined;
+          let readError: unknown;
+          try { finalView = await readRunView(runDirectory); }
+          catch (error) { readError = error; }
+          if (finalView) emit("run-closed", finalView.run.revision, finalView.review.events.length);
+          listeners.clear();
+          if (readError) throw readError;
+        }
+      })();
+      await closing;
     },
   };
 }
