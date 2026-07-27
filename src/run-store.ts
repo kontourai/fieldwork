@@ -37,7 +37,7 @@ export interface StoredRun {
 export const storedRunSchema = z.object({
   schemaVersion: z.literal(1),
   runResource: z.string().regex(/^fieldwork-run:v1:[a-z0-9][a-z0-9-]*:[a-f0-9]{16}$/),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
   taskName: z.string().max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
   task: fieldworkTaskSchema,
   execution: fieldworkStoredExecutionSchema,
