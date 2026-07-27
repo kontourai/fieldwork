@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, readdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseFieldworkTask } from "../src/contracts.js";
-import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
+import { reviewedExport, reviewSessionRecord, runFieldwork } from "../src/fieldwork.js";
 import { tempRoot } from "./helpers.js";
 import { assertPortableOutput, portablePath, readRun } from "../src/run-store.js";
 import { reviewSnapshotHash } from "../src/survey-persistence.js";
@@ -160,6 +160,122 @@ test("a review queue edited after its decisions cannot be exported", async () =>
     },
   );
 });
+
+/* Per-item integrity does not give set integrity: dropping an item leaves every
+   survivor valid, and `origin/main` only got completeness for free because it
+   projected the envelope's item set directly. A check that walks the stored side
+   cannot notice what is no longer on it. */
+test("a first round's reviewed queue has to be the whole extraction", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("queue-set-integrity"),
+  });
+  await decideEveryItem(run.runDirectory);
+  const honest = await reviewedExport(run.runDirectory) as { claims: unknown[] };
+  assert.equal(honest.claims.length, 7);
+
+  const runPath = join(run.runDirectory, "run.json");
+  const original = await readFile(runPath, "utf8");
+  const rewrite = async (mutate: (review: PersistedReview) => void): Promise<void> => {
+    const stored = JSON.parse(original);
+    mutate(stored.review);
+    stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+    await writeFile(runPath, JSON.stringify(stored, null, 2));
+  };
+  const refusal = (pattern: RegExp) => (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_UNATTESTED_QUEUE");
+    assert.match(error.message, pattern);
+    return true;
+  };
+
+  // An emptied queue passes every per-item rule vacuously and would export a
+  // receipt of nothing.
+  await rewrite((review) => {
+    review.snapshot = {
+      items: [], activeItemName: "", notesByItemName: {}, decisionsByItemName: {},
+      reviewedAt: "2026-06-04T00:00:00.000Z", actorId: "review-workbench-operator",
+    };
+    review.events = [];
+  });
+  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/reviewed queue is empty/));
+
+  // One item removed, with a valid event stream rebuilt over what is left — so
+  // Survey's own replay validation has nothing to object to.
+  await rewrite((review) => {
+    const dropped = review.snapshot.items[1]!.metadata.name;
+    review.snapshot.items.splice(1, 1);
+    delete review.snapshot.decisionsByItemName[dropped];
+    review.snapshot.activeItemName = review.snapshot.items[0]!.metadata.name;
+    review.events = buildReviewSessionEvents(review.snapshot) as unknown[];
+  });
+  await assert.rejects(
+    () => reviewedExport(run.runDirectory),
+    refusal(/is in this run's extraction but missing from its reviewed queue/),
+  );
+
+  // An item the extraction never produced is the same failure from the other side.
+  await rewrite((review) => {
+    const copy = JSON.parse(JSON.stringify(review.snapshot.items[0]));
+    copy.metadata.name = "extraction-envelope.invented";
+    review.snapshot.items.push(copy);
+    review.snapshot.decisionsByItemName[copy.metadata.name] = "accept-proposed";
+    review.events = buildReviewSessionEvents(review.snapshot) as unknown[];
+  });
+  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/is not in this run's extraction/));
+});
+
+/* The one guard whose fault injection nothing caught, because `readRun` refuses
+   a rewritten queue before any production caller reaches it. Behaviourally
+   redundant is not the same as unobservable: called directly, it must carry the
+   digest it was given rather than derive one from the snapshot in front of it,
+   which is the whole argument of this change in miniature. */
+test("a review session record carries the stored digest instead of deriving one", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("session-record-binding"),
+  });
+  const stored = (await readRun(run.runDirectory)).run;
+  const derived = reviewSnapshotHash(stored.review.snapshot);
+  assert.equal(reviewSessionRecord(stored, 0).snapshotHash, derived);
+
+  const inconsistent = { ...stored, review: { ...stored.review, snapshotHash: "0".repeat(64) } };
+  const record = reviewSessionRecord(inconsistent, 0);
+  assert.equal(record.snapshotHash, "0".repeat(64));
+  assert.notEqual(record.snapshotHash, reviewSnapshotHash(record.snapshot));
+});
+
+interface PersistedReview {
+  snapshot: {
+    items: { metadata: { name: string } }[];
+    activeItemName: string;
+    notesByItemName: Record<string, string>;
+    decisionsByItemName: Record<string, string>;
+    reviewedAt: string;
+    actorId: string;
+  };
+  events: unknown[];
+  snapshotHash: string;
+}
+
+async function decideEveryItem(runDirectory: string): Promise<void> {
+  const server = await openRun(runDirectory);
+  try {
+    const initial = await apiFetch(server, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = initial.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(snapshot.items.map((item) => [item.metadata.name, "accept-proposed"])),
+    });
+    const saved = await apiFetch(server, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }),
+    }).then((response) => response.json()) as { ok: boolean };
+    assert.equal(saved.ok, true);
+  } finally { await server.close(); }
+}
 
 test("prepared text and mutable run metadata cannot be jointly retargeted away from the Traverse envelope", async () => {
   const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("tamper") });

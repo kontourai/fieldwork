@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
-  createInMemoryPreparedArtifactStore, extract, resolvePreparedArtifact, serializePortableExtractionResult, type PortableExtractionResultEnvelope
+  createInMemoryPreparedArtifactStore, extract, resolvePreparedArtifact, serializePortableExtractionResult,
+  type ExtractionProposal, type PortableExtractionResultEnvelope
 } from "@kontourai/traverse";
 import { importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle, type ReviewCandidate, type ReviewItem } from "@kontourai/survey";
 import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
@@ -235,58 +236,148 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
  * the prepared bytes by digest and re-validated on every read
  * (`assertPreparedIdentity`).
  *
- * - An envelope-derived item must be exactly what importing that envelope
- *   produces.
- * - A recheck item's current-observation candidates are this run's own
- *   extraction, so each must match a stored proposal — or, when it records an
- *   absence, match no proposal at all.
- * - Anything else has no attesting artifact and is refused rather than trusted.
+ * Two rules run this, and the first matters more than it looks:
  *
- * A recheck item's *prior*-observation candidates are the one part no artifact
- * in this run can attest: they came from a snapshot this run never extracted.
- * They are covered only by the persisted queue binding, which a rewrite of
- * `run.json` could keep consistent. That gap is accepted and disclosed
- * (docs/decisions/local-run-artifacts.md, fieldwork#65); closing it needs the
- * prior observation to carry an attestation this run can check on its own.
+ * 1. Ask whether the stored queue is the *same set* as the attesting side, not
+ *    merely whether each thing still in it is well-formed. A check that only
+ *    walks what is present cannot notice what was removed — an emptied queue
+ *    passes every per-item rule and exports a receipt of nothing.
+ * 2. Never decide which attestation applies from a single mutable label. Which
+ *    observation a recheck candidate came from is derived from agreement
+ *    between its Lookout observation id, its role, and the round identity, so
+ *    relabelling one field contradicts the others instead of changing the
+ *    answer.
+ *
+ * A recheck item's *prior*-observation candidates, and the recheck item set
+ * itself, are what no artifact in this run can attest: both are functions of a
+ * snapshot this run never extracted. They are covered only by the persisted
+ * queue binding, which a rewrite of `run.json` could keep consistent. That gap
+ * is accepted and disclosed (docs/decisions/local-run-artifacts.md,
+ * fieldwork#65).
  */
 function assertReviewedQueueIsAttested(
   items: readonly ReviewItem[],
   envelopeItems: readonly ReviewItem[],
   envelope: PortableExtractionResultEnvelope
 ): void {
-  const envelopeByName = new Map(envelopeItems.map((item) => [item.metadata.name, item]));
-  const proposals = envelope.result.proposals;
-  for (const item of items) {
-    const attested = envelopeByName.get(item.metadata.name);
-    if (attested) {
-      if (canonicalJson(item) !== canonicalJson(attested)) {
-        throw unattested(`review item ${item.metadata.name} does not match the extraction it was imported from`);
+  if (items.length === 0 && envelope.result.proposals.length > 0) {
+    // Either a round that found nothing to re-decide, or one emptied after the
+    // fact. Both produce a receipt with no claims, and neither is worth
+    // emitting; the run whose round did record decisions still has its own.
+    throw unattested("its reviewed queue is empty while this run extracted proposals, so there is nothing it can certify");
+  }
+  const recheckItems = items.filter((item) => item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]);
+  if (recheckItems.length > 0 && recheckItems.length !== items.length) {
+    throw unattested("the queue mixes imported extraction items with recheck-round items, so neither set can attest it");
+  }
+  if (recheckItems.length === 0) {
+    assertQueueIsTheWholeExtraction(items, envelopeItems);
+    return;
+  }
+  const proposalsByField = new Map<string, ExtractionProposal[]>();
+  for (const proposal of envelope.result.proposals) {
+    proposalsByField.set(proposal.fieldPath, [...proposalsByField.get(proposal.fieldPath) ?? [], proposal]);
+  }
+  for (const item of recheckItems) assertRecheckItemIsAttested(item, proposalsByField);
+}
+
+/**
+ * A first round's queue is the whole extraction, so the envelope attests the
+ * set as well as each item. Set equality both ways is the part `origin/main`
+ * got for free by projecting the envelope directly, and the part per-item
+ * equality alone does not recover: dropping an item leaves every survivor
+ * valid.
+ */
+function assertQueueIsTheWholeExtraction(items: readonly ReviewItem[], envelopeItems: readonly ReviewItem[]): void {
+  const stored = new Map(items.map((item) => [item.metadata.name, item]));
+  const attesting = new Map(envelopeItems.map((item) => [item.metadata.name, item]));
+  for (const [name, item] of attesting) {
+    const found = stored.get(name);
+    if (!found) throw unattested(`review item ${name} is in this run's extraction but missing from its reviewed queue`);
+    if (canonicalJson(found) !== canonicalJson(item)) {
+      throw unattested(`review item ${name} does not match the extraction it was imported from`);
+    }
+  }
+  for (const name of stored.keys()) {
+    if (!attesting.has(name)) {
+      throw unattested(`review item ${name} is not in this run's extraction`);
+    }
+  }
+}
+
+/**
+ * A recheck item is a transition between two observations. Which side a
+ * candidate belongs to is not read off `evidenceObservation` — that is one
+ * mutable field, and trusting it let a current-observation candidate be
+ * relabelled `"prior"` to skip attestation entirely. It is derived from
+ * agreement between the item's transition metadata, the candidate's Lookout
+ * observation id, the round block, and the candidate's role, which Lookout
+ * assigns as `current`→prior observation and `proposed`→current observation.
+ * The role is load-bearing for the decision itself, so it cannot be moved
+ * quietly to change the answer.
+ */
+function assertRecheckItemIsAttested(item: ReviewItem, proposalsByField: ReadonlyMap<string, ExtractionProposal[]>): void {
+  const name = item.metadata.name;
+  const transition = item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER] as Record<string, unknown> | undefined;
+  const priorObservationId = transition?.priorObservationId;
+  const currentObservationId = transition?.currentObservationId;
+  if (typeof priorObservationId !== "string" || typeof currentObservationId !== "string"
+    || typeof transition?.transitionId !== "string" || priorObservationId === currentObservationId) {
+    throw unattested(`review item ${name} does not identify the two observations it is a transition between`);
+  }
+  const roles = item.spec.candidates.map((candidate) => candidate.role);
+  if (item.spec.candidates.length !== 2 || !roles.includes("current") || !roles.includes("proposed")) {
+    throw unattested(`review item ${name} is not the current/proposed candidate pair a transition projects`);
+  }
+  for (const candidate of item.spec.candidates) {
+    const observed = candidate.producer?.[SEMANTIC_TRANSITION_PRODUCER] as Record<string, unknown> | undefined;
+    const round = candidate.producer?.[RECHECK_ROUND_PRODUCER] as Record<string, unknown> | undefined;
+    const observationId = observed?.observationId;
+    // Every way of saying which observation this candidate came from has to say
+    // the same thing before any of them is believed.
+    const side = observationId === priorObservationId ? "prior"
+      : observationId === currentObservationId ? "current"
+        : undefined;
+    if (!side
+      || round?.transitionId !== transition.transitionId
+      || round.semanticKind !== transition.semanticKind
+      || round.priorObservationId !== priorObservationId
+      || round.currentObservationId !== currentObservationId
+      || round.evidenceObservation !== side
+      || (candidate.role === "current" ? side !== "prior" : side !== "current")) {
+      throw unattested(`candidate ${candidate.id} disagrees with itself about which observation it came from`);
+    }
+    if (side === "prior") continue;
+    const matches = proposalsByField.get(candidate.extraction.target) ?? [];
+    if (observed?.evidenceState !== "present") {
+      if (matches.length > 0) {
+        throw unattested(`review item ${name} records ${candidate.extraction.target} as absent, but this run extracted it`);
       }
       continue;
     }
-    if (!item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]) {
-      throw unattested(`review item ${item.metadata.name} has no extraction or recheck provenance to check it against`);
-    }
-    for (const candidate of item.spec.candidates) {
-      const round = candidate.producer?.[RECHECK_ROUND_PRODUCER] as { evidenceObservation?: unknown } | undefined;
-      if (round?.evidenceObservation !== "current") continue;
-      const observed = candidate.producer?.[SEMANTIC_TRANSITION_PRODUCER] as { evidenceState?: unknown } | undefined;
-      const matches = proposals.filter((proposal) => proposal.fieldPath === candidate.extraction.target);
-      if (observed?.evidenceState !== "present") {
-        if (matches.length > 0) {
-          throw unattested(`review item ${item.metadata.name} records ${candidate.extraction.target} as absent, but this run extracted it`);
-        }
-        continue;
-      }
-      const grounded = matches.some((proposal) => canonicalJson(proposal.candidateValue) === canonicalJson(candidate.value)
-        && proposal.provenance.locator === candidate.locator?.locator
-        && proposal.provenance.excerpt === candidate.locator?.excerpt
-        && proposal.extractor === candidate.extraction.extractor);
-      if (!grounded) {
-        throw unattested(`review item ${item.metadata.name} states a ${candidate.extraction.target} this run's extraction does not`);
-      }
+    const grounded = matches.some((proposal) => canonicalJson(proposal.candidateValue) === canonicalJson(candidate.value)
+      && proposal.provenance.locator === candidate.locator?.locator
+      && proposal.provenance.excerpt === candidate.locator?.excerpt
+      && proposal.extractor === candidate.extraction.extractor);
+    if (!grounded) {
+      throw unattested(`review item ${name} states a ${candidate.extraction.target} this run's extraction does not`);
     }
   }
+}
+
+/**
+ * A recorded decision whose item or candidate is no longer in the queue. Survey
+ * derives results from the queue, so production cannot reach this — which is
+ * exactly why it must refuse rather than `continue`: a guard that walks past
+ * what it cannot resolve stops being a guard the moment that assumption breaks.
+ */
+function unresolvableDecision(reviewItemName: string, candidateId: string): Error {
+  return Object.assign(
+    new Error(
+      `Export refused: decision on ${reviewItemName} selects candidate ${candidateId}, which is not in this run's reviewed queue.`
+    ),
+    { code: "EXPORT_UNRESOLVABLE_DECISION" }
+  );
 }
 
 function unattested(detail: string): Error {
@@ -341,7 +432,9 @@ function assertGroundedSelection(items: readonly ReviewItem[], results: readonly
   for (const result of results) {
     const item = itemsByName.get(result.reviewItemName);
     const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
-    if (!item || !selected || selected.locator?.locator) continue;
+    // Skipping what cannot be resolved is how a check stops noticing removals.
+    if (!item || !selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    if (selected.locator?.locator) continue;
     throw Object.assign(
       new Error(
         `Export refused: ${selected.claimTarget.fieldOrBehavior} is resolved onto a candidate that records no source span `
@@ -381,7 +474,7 @@ function assertOneDecisionPerClaimTarget(items: readonly ReviewItem[], results: 
   for (const result of results) {
     const item = itemsByName.get(result.reviewItemName);
     const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
-    if (!selected) continue;
+    if (!selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
     const { claimId: _claimId, ...target } = selected.claimTarget;
     const key = canonicalJson(target);
     const outcome = canonicalJson({ status: result.status, value: result.effectiveValue });

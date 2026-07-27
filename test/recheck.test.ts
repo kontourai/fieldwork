@@ -342,6 +342,117 @@ test("a round's new-source side is attested by this run's own extraction", async
   );
 });
 
+/* Which observation a candidate came from decides which attestation applies, so
+   it must not be readable off one mutable field. Relabelling `evidenceObservation`
+   from "current" to "prior" downgraded a candidate this run *had* extracted into
+   one nothing checks — the unattested side of #65 — without any of its other
+   provenance agreeing. */
+test("a recheck candidate cannot be relabelled onto the side nothing attests", async () => {
+  const substitute = (review: RecheckReview, alsoMoveObservationId: boolean): void => {
+    for (const item of review.snapshot.items) {
+      const transition = item.metadata.producer["lookout.kontourai.io/semantic-transition"]!;
+      for (const candidate of item.spec.candidates) {
+        const round = candidate.producer["fieldwork.kontourai.io/recheck-round"]!;
+        if (round.evidenceObservation !== "current") continue;
+        candidate.value = "Substituted after review";
+        round.evidenceObservation = "prior";
+        if (!alsoMoveObservationId) continue;
+        // Move every id the label could be checked against, too.
+        round.currentObservationId = transition.priorObservationId as string;
+        candidate.producer["lookout.kontourai.io/semantic-transition"]!.observationId = transition.priorObservationId as string;
+      }
+    }
+  };
+
+  for (const alsoMoveObservationId of [false, true]) {
+    const round = await roundFor(`capture-relabel-${alsoMoveObservationId}`, "Status: Pending");
+    const runDirectory = round.run!.runDirectory;
+    await decideRound(runDirectory, () => "accept-proposed");
+    assert.equal((await reviewedExport(runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+
+    const runPath = join(runDirectory, "run.json");
+    const stored = JSON.parse(await readFile(runPath, "utf8"));
+    substitute(stored.review, alsoMoveObservationId);
+    stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+    await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+    await assert.rejects(
+      () => reviewedExport(runDirectory),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, "EXPORT_UNATTESTED_QUEUE");
+        assert.match(error.message, /disagrees with itself about which observation it came from/);
+        return true;
+      },
+      `relabel with alsoMoveObservationId=${alsoMoveObservationId}`,
+    );
+  }
+});
+
+/* The consistent version of the same manoeuvre. Relabelling one candidate makes
+   it contradict itself; swapping the two sides *wholesale* — roles, observation
+   ids, labels and values together — leaves every identity inside the item
+   agreeing, and would land an `accept-proposed` decision on the prior side,
+   which is the half no artifact in this run attests (#65).
+   
+   Survey already closes this: a decision event names both its decision and its
+   candidate id, and replay validation requires the candidate to be the one that
+   decision's role selects. Fieldwork adding its own version would be duplicate
+   enforcement, so this pins the property rather than a second guard — it fails
+   if that upstream check ever relaxes. */
+test("a decision cannot be walked onto the unattested side by swapping the roles under it", async () => {
+  const round = await roundFor("capture-roleswap", "Status: Pending");
+  const runDirectory = round.run!.runDirectory;
+  await decideRound(runDirectory, () => "accept-proposed");
+  assert.equal((await reviewedExport(runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+
+  const runPath = join(runDirectory, "run.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  for (const item of (stored.review as RecheckReview).snapshot.items) {
+    const [first, second] = item.spec.candidates as [Candidate, Candidate];
+    const swap = <K extends keyof Candidate>(key: K): void => {
+      const held = first[key]; first[key] = second[key]; second[key] = held;
+    };
+    swap("role");
+    swap("value");
+    swap("locator");
+    swap("source");
+    swap("extraction");
+    swap("producer");
+    // The decision still names `.proposed`; that candidate is now the prior side
+    // in every field, and carries a value this run never extracted.
+    second.value = "Substituted after review";
+  }
+  stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+  await assert.rejects(
+    () => reviewedExport(runDirectory),
+    (error: Error) => {
+      assert.match(error.message, /Review session events are invalid/);
+      assert.match(error.message, /decision accept-proposed expects candidate/);
+      return true;
+    },
+  );
+});
+
+interface Candidate {
+  role?: unknown;
+  value?: unknown;
+  locator?: unknown;
+  source?: unknown;
+  extraction?: unknown;
+  producer?: unknown;
+}
+
+interface RecheckReview {
+  snapshot: {
+    items: {
+      metadata: { producer: Record<string, Record<string, unknown>> };
+      spec: { candidates: (Candidate & { value: unknown; producer: Record<string, Record<string, unknown>> })[] };
+    }[];
+  };
+}
+
 test("an added proposal is told to accept it, not to keep a value that was never there", async () => {
   // The mirror of the removal case: here the *prior* side is the absence, so
   // advising "keep current" would prescribe the decision that is failing.
