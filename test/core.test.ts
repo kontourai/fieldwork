@@ -6,6 +6,7 @@ import { parseFieldworkTask } from "../src/contracts.js";
 import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { tempRoot } from "./helpers.js";
 import { assertPortableOutput, portablePath, readRun } from "../src/run-store.js";
+import { reviewSnapshotHash } from "../src/survey-persistence.js";
 import { openRun } from "../src/server.js";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
@@ -94,6 +95,70 @@ test("identical rerun preserves the valid review log and revision", async () => 
   const stored = await readRun(second.runDirectory);
   assert.equal(stored.run.review.events.length, count);
   assert.equal(stored.run.review.revision, 1);
+});
+
+/* Projecting the decided queue (fieldwork#59) makes Survey's
+   `assertCanonicalResult` compare the queue with results derived from that same
+   queue, so it can no longer disagree with itself. Everything that check used to
+   catch has to be caught deliberately now, and this is the shape that matters:
+   a decision recorded honestly, then the queue edited underneath it. */
+test("a review queue edited after its decisions cannot be exported", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/generic/task.json",
+    sourcePath: "examples/generic/source.txt",
+    root: await tempRoot("post-decision-tamper"),
+  });
+  const server = await openRun(run.runDirectory);
+  try {
+    const initial = await apiFetch(server, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = initial.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(snapshot.items.map((item) => [item.metadata.name, "accept-proposed"])),
+    });
+    const saved = await apiFetch(server, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }),
+    }).then((response) => response.json()) as { ok: boolean };
+    assert.equal(saved.ok, true);
+  } finally { await server.close(); }
+
+  // The honest export first, so a refusal below cannot be a refusal of everything.
+  const honest = await reviewedExport(run.runDirectory) as { claims: { value: unknown }[] };
+  assert.equal(honest.claims[0]?.value, "Active");
+
+  const runPath = join(run.runDirectory, "run.json");
+  const forge = async (rebind: boolean): Promise<void> => {
+    const stored = JSON.parse(await readFile(runPath, "utf8"));
+    stored.review.snapshot.items[0].spec.candidates[0].value = "Forged after review";
+    // The extraction envelope, the prepared text, and the decision events are
+    // left exactly as the review recorded them.
+    if (rebind) stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+    await writeFile(runPath, JSON.stringify(stored, null, 2));
+  };
+
+  await forge(false);
+  await assert.rejects(
+    () => reviewedExport(run.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "REVIEW_BINDING_BROKEN");
+      assert.match(error.message, /does not match the decisions recorded against it/);
+      return true;
+    },
+  );
+
+  // An editor who also refreshes the binding still has to get past an artifact
+  // they did not write: the extraction the queue was imported from.
+  await forge(true);
+  await assert.rejects(
+    () => reviewedExport(run.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_UNATTESTED_QUEUE");
+      assert.match(error.message, /does not match the extraction it was imported from/);
+      return true;
+    },
+  );
 });
 
 test("prepared text and mutable run metadata cannot be jointly retargeted away from the Traverse envelope", async () => {

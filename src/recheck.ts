@@ -10,7 +10,6 @@ import {
 } from "@kontourai/lookout";
 import type { ExtractionProposal } from "@kontourai/traverse";
 import type { ReviewItem } from "@kontourai/survey";
-import { initialReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import { parseFieldworkTask, traverseTask } from "./contracts.js";
 import type {
   FieldworkSourceAdapters,
@@ -19,7 +18,7 @@ import type {
   JsonObject,
   RunOptions,
 } from "./api-contracts.js";
-import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, runFieldwork } from "./fieldwork.js";
+import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, newReviewRound, runFieldwork } from "./fieldwork.js";
 import {
   assertPortableOutput,
   readRun,
@@ -237,11 +236,7 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     prior: { observationId: priorStored.observationId, extractor: extractorFor(prior.envelope) },
     current: { observationId: committed.value.observationId, extractor: extractorFor(current.envelope) },
   });
-  await saveReview(current.directory, current.run, {
-    snapshot: initialReviewQueueSessionState(items),
-    events: [],
-    revision: 0,
-  });
+  await saveReview(current.directory, current.run, newReviewRound(items));
   const result = portableResult({
     classification: items.length === 0 ? "stable-proposals" : "semantic-drift",
     check,

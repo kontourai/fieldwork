@@ -6,7 +6,7 @@ import { openRun, readRunView } from "../src/server.js";
 import type { FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-contracts.js";
 import { runFieldwork, reviewedExport } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
-import { persistedReviewSnapshotSchema } from "../src/survey-persistence.js";
+import { persistedReviewSnapshotSchema, reviewSnapshotHash } from "../src/survey-persistence.js";
 import { canonicalJson } from "../src/contracts.js";
 import { apiFetch, tempRoot } from "./helpers.js";
 import { buildReviewSessionEvents, type ReviewQueueSessionState, type ReviewWorkbenchDecision } from "@kontourai/survey/review-workbench";
@@ -321,10 +321,17 @@ for (const decision of ["accept-proposed", "keep-current", "reject-proposed", "c
   test(`${decision} survives server persistence and reload`, async () => {
     const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot(`decision-${decision}`) });
     if (decision === "keep-current") {
+      // An envelope-imported item carries only a `proposed` candidate, so this
+      // builds a queue that also has a `current` one. That is round
+      // construction, not an edit to a decided round: the queue binding has to
+      // be taken over the queue actually being installed, exactly as
+      // `newReviewRound` does. Leaving the old digest in place would — rightly
+      // — make this unreadable.
       const path = join(run.runDirectory, "run.json");
       const stored = JSON.parse(await readFile(path, "utf8"));
       const proposed = stored.review.snapshot.items[0].spec.candidates[0];
       stored.review.snapshot.items[0].spec.candidates.unshift({ ...proposed, id: `${proposed.id}.current`, role: "current" });
+      stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
       await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
     }
     const server = await openRun(run.runDirectory);

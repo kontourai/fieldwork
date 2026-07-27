@@ -19,6 +19,7 @@ import type { ReviewItem } from "@kontourai/survey";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, reviewedExport, runFieldwork } from "../src/fieldwork.js";
+import { reviewSnapshotHash } from "../src/survey-persistence.js";
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
 import { recheckFieldwork } from "../src/recheck.js";
@@ -314,6 +315,59 @@ test("a recheck round resolved onto an absent proposal is refused, and keeping t
   assert.equal(roundOf(exported, exported.claims[0]!.id).evidenceObservation, "prior");
 });
 
+test("a round's new-source side is attested by this run's own extraction", async () => {
+  const round = await roundFor("capture-attest", "Status: Pending");
+  await decideRound(round.run!.runDirectory, () => "accept-proposed");
+  assert.equal((await reviewedExport(round.run!.runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+
+  // Edit the value the round proposes AND refresh the queue binding, so the
+  // only thing left to disagree is an artifact the editor did not write.
+  const runPath = join(round.run!.runDirectory, "run.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  for (const item of stored.review.snapshot.items) {
+    for (const candidate of item.spec.candidates) {
+      if (candidate.role === "proposed") candidate.value = "Forged after review";
+    }
+  }
+  stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+  await assert.rejects(
+    () => reviewedExport(round.run!.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_UNATTESTED_QUEUE");
+      assert.match(error.message, /this run's extraction does not/);
+      return true;
+    },
+  );
+});
+
+test("an added proposal is told to accept it, not to keep a value that was never there", async () => {
+  // The mirror of the removal case: here the *prior* side is the absence, so
+  // advising "keep current" would prescribe the decision that is failing.
+  const added = await roundFor("capture-added-a", "Status: Active", "Nothing recorded yet");
+  assert.deepEqual(
+    (await readRun(added.run!.runDirectory)).run.review.snapshot.items.map((item) =>
+      (item.metadata.producer?.["lookout.kontourai.io/semantic-transition"] as { semanticKind: string }).semanticKind),
+    ["proposal-added"],
+  );
+  await decideRound(added.run!.runDirectory, () => "keep-current");
+  await assert.rejects(
+    () => reviewedExport(added.run!.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_UNGROUNDED_SELECTION");
+      assert.match(error.message, /Decide the item "accept proposed"/);
+      assert.doesNotMatch(error.message, /keep current/);
+      return true;
+    },
+  );
+
+  const accepted = await roundFor("capture-added-b", "Status: Active", "Nothing recorded yet");
+  await decideRound(accepted.run!.runDirectory, () => "accept-proposed");
+  const exported = await reviewedExport(accepted.run!.runDirectory) as ExportedBundle;
+  assert.deepEqual(exported.claims.map((claim) => claim.value), ["Active"]);
+});
+
 test("a round that decides one field two ways is refused rather than exported as two claims", async () => {
   // A changed value also changes its excerpt, so Lookout raises both a
   // value-changed and a provenance-changed item for the one field.
@@ -367,8 +421,8 @@ function priorCandidateSourceRef(result: Awaited<ReturnType<typeof semanticPair>
 }
 
 /** A fresh baseline plus one recheck round against `body`. */
-async function roundFor(captureId: string, body: string) {
-  const setup = await baseline("Status: Active");
+async function roundFor(captureId: string, body: string, priorBody = "Status: Active") {
+  const setup = await baseline(priorBody);
   const current = snapshot(captureId, body, "2026-07-23T16:00:00.000Z");
   await setup.store.put(current);
   return recheckFieldwork({
