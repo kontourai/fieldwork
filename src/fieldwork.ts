@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import {
   createInMemoryPreparedArtifactStore, extract, resolvePreparedArtifact, serializePortableExtractionResult, type PortableExtractionResultEnvelope
 } from "@kontourai/traverse";
-import { importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle, type ReviewItem } from "@kontourai/survey";
+import { importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle, type ReviewCandidate, type ReviewItem } from "@kontourai/survey";
+import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
 import { initialReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import { createServerReviewSessionRecord, deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
 import { validateTrustBundle } from "@kontourai/surface";
@@ -22,6 +23,16 @@ import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
 import { resolveFieldworkSource } from "./source-input.js";
+
+/**
+ * Source kind Fieldwork reports to Survey for every raw source it records. Both
+ * review rounds must agree on it: a recheck round's trust projection records one
+ * RawSource per observation, and a kind that drifted between rounds would make
+ * two receipts about one source disagree about what the source is.
+ */
+export const FIELDWORK_SOURCE_KIND: FieldworkSourceKind = "uploaded-document";
+
+export type FieldworkSourceKind = NonNullable<ReviewCandidate["source"]["kind"]>;
 
 export async function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   const taskText = await boundedInput(options.taskPath, FIELDWORK_LIMITS.taskBytes, "task");
@@ -73,7 +84,7 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   assertPortableOutput(envelope);
   const imported = importExtractionEnvelope(envelope, {
     importName: `fieldwork-import:${task.metadata.name}:${runIdentity}`,
-    producerNamespace: "fieldwork", sourceKind: "uploaded-document",
+    producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
     claimTarget: (proposal) => {
       const projection = task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
       if (!projection) throw new Error(`No claim target for ${proposal.fieldPath}`);
@@ -158,11 +169,27 @@ function fixtureExecution(): FieldworkStoredExecution {
   return { identity: { mode: "fixture-v1" }, receipts: [] };
 }
 
+/**
+ * Export the reviewed authority of exactly one run: the decisions recorded
+ * against that run's persisted review queue, and nothing else.
+ *
+ * A first round's queue is the whole extraction, so its receipt is
+ * document-shaped. A `fieldwork recheck` round's queue is Lookout's semantic
+ * transition, so its receipt is round-shaped — the fields that actually moved.
+ * The rule is the same; only the queue differs. Earlier decisions are not
+ * folded in: they belong to the run whose snapshot they were made against, and
+ * copying them here would produce a second authoritative record of one
+ * decision under a different source identity.
+ *
+ * The persisted snapshot is the projected authority. Rebuilding items from the
+ * envelope instead (fieldwork#59) silently agreed on first rounds and refused
+ * on recheck rounds, because it projected items the reviewer never saw.
+ */
 export async function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   const stored = await readRun(runDirectory);
   assertPortableOutput(stored.envelope);
   const imported = importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: "uploaded-document",
+    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
     claimTarget: (proposal) => {
       const projection = stored.run.task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
       if (!projection) throw new Error(`No claim target for ${proposal.fieldPath}`);
@@ -170,20 +197,193 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
     }
   });
   if (imported.record.status.state !== "grounded") throw new Error("Export refused: extraction is not grounded");
+  const items = stored.run.review.snapshot.items as readonly ReviewItem[];
   const record = createServerReviewSessionRecord({ sessionName: reviewSessionName(stored.run), snapshot: stored.run.review.snapshot, eventCount: stored.run.review.events.length });
   const applied = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "all" });
-  if (!applied.ok) throw new Error(`Export refused: ${applied.issues.map((issue) => issue.code).join(", ")}`);
-  const canonical = buildCanonicalReviewedTrustInput({
-    source: stored.run.runResource, generatedAt: new Date().toISOString(), projectionContextId: stored.run.runResource,
-    items: canonicalReviewItems(imported.reviewItems, stored.envelope), results: applied.results
-  });
+  if (!applied.ok) {
+    throw new Error(`Export refused: ${applied.issues.map((issue) => `${issue.code}: ${issue.message}`).join(" ")}`);
+  }
+  assertGroundedSelection(items, applied.results);
+  assertOneDecisionPerClaimTarget(items, applied.results);
+  const canonical = projectCanonicalReview(stored.run.runResource, items, applied.results);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(canonical.surveyInput, { projectionContextId: canonical.projectionContextId }));
   assertPortableOutput(bundle);
   return parseReviewedExport(bundle);
 }
 
+function projectCanonicalReview(
+  runResource: string,
+  items: readonly ReviewItem[],
+  results: readonly ReviewWorkbenchResult[]
+): ReturnType<typeof buildCanonicalReviewedTrustInput> {
+  try {
+    return buildCanonicalReviewedTrustInput({
+      source: runResource, generatedAt: new Date().toISOString(), projectionContextId: runResource,
+      items, results
+    });
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : "the review round could not be projected";
+    throw Object.assign(
+      new Error(`Export refused: this run's reviewed round cannot be projected into a trust bundle. ${detail}`, { cause }),
+      { code: "EXPORT_NOT_PROJECTABLE" }
+    );
+  }
+}
+
+/**
+ * Survey requires every claim projected from a document to cite the span it
+ * came from (`assertProducerDiscipline`, to-surface.ts). A recheck round can
+ * resolve onto a candidate that records an *absence* — a removed proposal, a
+ * coverage or provenance gap — and an absence has no span. Say that plainly
+ * here instead of letting Survey's terse locator error be the whole story.
+ *
+ * Only `keep-current` carries such an item to an exportable outcome: every
+ * other workbench decision selects the proposed candidate, which is the absent
+ * one. Recording the removal *itself* would need a reviewed-retraction record,
+ * which the trust bundle has no shape for; that is an upstream question, not
+ * something to fake with an uncited claim.
+ */
+function assertGroundedSelection(items: readonly ReviewItem[], results: readonly ReviewWorkbenchResult[]): void {
+  const itemsByName = new Map(items.map((item) => [item.metadata.name, item]));
+  for (const result of results) {
+    const item = itemsByName.get(result.reviewItemName);
+    const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
+    if (!item || !selected || selected.locator?.locator) continue;
+    throw Object.assign(
+      new Error(
+        `Export refused: ${selected.claimTarget.fieldOrBehavior} is resolved onto a candidate that records no source span `
+        + `(review item ${item.metadata.name}, decision ${result.decision}). A reviewed claim about a document has to cite `
+        + "where in the document it came from, and this candidate is an absence. Decide the item \"keep current\" to carry "
+        + "the previously grounded value forward; a reviewed removal is not representable as a cited claim."
+      ),
+      { code: "EXPORT_UNGROUNDED_SELECTION" }
+    );
+  }
+}
+
+/**
+ * A trust bundle states one reviewed value per claim target. A recheck round can
+ * raise two items for one drifted field — a value change and a provenance
+ * change (kontourai/lookout#34) — and deciding those two differently would
+ * otherwise export a receipt that asserts two values for one field. Refuse,
+ * naming the field, rather than emit the contradiction.
+ */
+function assertOneDecisionPerClaimTarget(items: readonly ReviewItem[], results: readonly ReviewWorkbenchResult[]): void {
+  const itemsByName = new Map(items.map((item) => [item.metadata.name, item]));
+  const decided = new Map<string, { itemName: string; outcome: string }>();
+  for (const result of results) {
+    const item = itemsByName.get(result.reviewItemName);
+    const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
+    if (!selected) continue;
+    const { claimId: _claimId, ...target } = selected.claimTarget;
+    const key = canonicalJson(target);
+    const outcome = canonicalJson({ status: result.status, value: result.effectiveValue });
+    const existing = decided.get(key);
+    if (existing && existing.outcome !== outcome) {
+      throw Object.assign(
+        new Error(
+          `Export refused: this review round records conflicting decisions for ${target.fieldOrBehavior}. `
+          + `Items ${existing.itemName} and ${result.reviewItemName} resolve the same field to different reviewed values; `
+          + "decide them the same way and export again."
+        ),
+        { code: "EXPORT_CONFLICTING_DECISIONS" }
+      );
+    }
+    if (!existing) decided.set(key, { itemName: result.reviewItemName, outcome });
+  }
+}
+
 export function reviewSessionName(_run: StoredRun): string { return "review-workbench-session"; }
 export function importNameFor(run: StoredRun): string { return `fieldwork-import:${run.taskName}:${run.runResource.split(":").at(-1)}`; }
+
+export const SEMANTIC_TRANSITION_PRODUCER = "lookout.kontourai.io/semantic-transition";
+export const RECHECK_ROUND_PRODUCER = "fieldwork.kontourai.io/recheck-round";
+
+export interface RecheckRoundObservation {
+  /** Lookout's committed proposal-observation identity. */
+  readonly observationId: string;
+  /** Extractor that produced that observation, for candidates whose evidence is absent. */
+  readonly extractor: string;
+}
+
+export interface RecheckRoundBinding {
+  readonly sourceKind: FieldworkSourceKind;
+  readonly transitionId: string;
+  readonly prior: RecheckRoundObservation;
+  readonly current: RecheckRoundObservation;
+}
+
+/**
+ * Complete a Lookout semantic review round so the items the reviewer decides
+ * are already projectable into a Survey trust bundle, and stamp the round
+ * identity a receipt needs.
+ *
+ * Three application-owned facts are missing from `buildSemanticReviewWork`
+ * output and cannot be invented at export time without contradicting the
+ * decided snapshot (fieldwork#59):
+ *
+ * - `source.kind` — Survey takes the source kind as a caller option
+ *   (`importExtractionEnvelope`); Lookout has no equivalent, so every semantic
+ *   candidate lacks it and `buildCanonicalReviewedTrustInput` refuses.
+ * - `source.sourceId` — Lookout reuses the *registry* source id for both sides
+ *   of a transition, so two snapshots of one source collide on one RawSource
+ *   record. Survey's own importer identifies a raw source by its snapshot ref;
+ *   this matches that convention, and the registry id remains inside the ref.
+ * - `extraction.extractor` — omitted when a side has no evidence (an added or
+ *   removed proposal), which is exactly when the projection still needs to say
+ *   which extractor observed nothing there.
+ *
+ * The durable home for all three is Lookout (kontourai/lookout#35): this is a
+ * narrow composition adapter, in the same spirit as `canonicalReviewItems`.
+ *
+ * `RECHECK_ROUND_PRODUCER` rides the candidate producer channel because that is
+ * the only path from a ReviewItem into exported Evidence metadata, so a receipt
+ * can say which transition a claim belongs to and — via `evidenceObservation` —
+ * whether its value was carried forward from the prior observation or affirmed
+ * against the new one.
+ */
+export function canonicalSemanticReviewItems(items: readonly ReviewItem[], round: RecheckRoundBinding): ReviewItem[] {
+  return items.map((item) => {
+    const transition = item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER] as { semanticKind?: unknown } | undefined;
+    const semanticKind = transition?.semanticKind;
+    if (typeof semanticKind !== "string" || semanticKind.length === 0) {
+      throw new Error("Semantic review item does not carry its Lookout transition kind");
+    }
+    return {
+      ...item,
+      spec: {
+        ...item.spec,
+        candidates: item.spec.candidates.map((candidate) => {
+          const producer = candidate.producer?.[SEMANTIC_TRANSITION_PRODUCER] as { observationId?: unknown } | undefined;
+          const observationId = producer?.observationId;
+          const observedPrior = observationId === round.prior.observationId;
+          if (!observedPrior && observationId !== round.current.observationId) {
+            throw new Error("Semantic review candidate does not belong to the observations under review");
+          }
+          return {
+            ...candidate,
+            source: { ...candidate.source, kind: round.sourceKind, sourceId: candidate.source.sourceRef },
+            extraction: {
+              ...candidate.extraction,
+              extractor: candidate.extraction.extractor
+                ?? (observedPrior ? round.prior.extractor : round.current.extractor),
+            },
+            producer: {
+              ...candidate.producer,
+              [RECHECK_ROUND_PRODUCER]: {
+                transitionId: round.transitionId,
+                semanticKind,
+                priorObservationId: round.prior.observationId,
+                currentObservationId: round.current.observationId,
+                evidenceObservation: observedPrior ? "prior" : "current",
+              },
+            },
+          };
+        }),
+      },
+    };
+  });
+}
 
 /**
  * Temporary Survey #187 compatibility adapter; remove once the envelope importer

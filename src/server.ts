@@ -17,7 +17,7 @@ import {
   type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
-import { canonicalReviewItems, importNameFor, reviewSessionName } from "./fieldwork.js";
+import { canonicalReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionName } from "./fieldwork.js";
 
 const reviewRequestSchema = z.object({
   events: z.array(z.custom<ReviewSessionEvent>((value) => Boolean(value && typeof value === "object"))).max(FIELDWORK_LIMITS.events),
@@ -184,7 +184,7 @@ async function handle(
 export async function readRunView(directory: string): Promise<FieldworkRunViewV1> {
   const stored = await readRun(directory);
   const imported = importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: "uploaded-document",
+    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
     claimTarget: (proposal) => {
       const projection = stored.run.task.spec.projections.find((entry) => entry.fieldPath === proposal.fieldPath);
       if (!projection) throw new Error("Unknown projection");

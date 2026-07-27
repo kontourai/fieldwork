@@ -19,7 +19,7 @@ import type {
   JsonObject,
   RunOptions,
 } from "./api-contracts.js";
-import { runFieldwork } from "./fieldwork.js";
+import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, runFieldwork } from "./fieldwork.js";
 import {
   assertPortableOutput,
   readRun,
@@ -228,7 +228,15 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     throw withCode("RECHECK_DIFF_FAILED", "Proposal observations could not be compared", semantic.error);
   }
 
-  const items = semantic.value.items as unknown as ReviewItem[];
+  // The round is completed here, not at export: the snapshot the reviewer
+  // decides against is the projected authority, so anything the trust bundle
+  // needs has to be part of the item they saw (fieldwork#59).
+  const items = canonicalSemanticReviewItems(semantic.value.items as unknown as ReviewItem[], {
+    sourceKind: FIELDWORK_SOURCE_KIND,
+    transitionId: semantic.value.transitionId,
+    prior: { observationId: priorStored.observationId, extractor: extractorFor(prior.envelope) },
+    current: { observationId: committed.value.observationId, extractor: extractorFor(current.envelope) },
+  });
   await saveReview(current.directory, current.run, {
     snapshot: initialReviewQueueSessionState(items),
     events: [],
@@ -241,7 +249,7 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     priorObservation: evidence(priorStored),
     currentObservation: evidence(committed.value),
     transitionId: semantic.value.transitionId,
-    items: semantic.value.items as unknown as JsonObject[],
+    items: items as unknown as JsonObject[],
     run: currentRun,
   });
   return result;
@@ -311,6 +319,19 @@ function evidence(observation: {
     observedAt: observation.observedAt,
     proposals: observation.proposals as unknown as readonly JsonObject[],
   };
+}
+
+/**
+ * Extractor identity for one observation, used for the side of a transition
+ * that has no evidence: a removed proposal still needs to record which
+ * extractor observed nothing at that target.
+ */
+function extractorFor(envelope: Awaited<ReturnType<typeof readRun>>["envelope"]): string {
+  const extractor = envelope.result.provider;
+  if (typeof extractor !== "string" || extractor.length === 0) {
+    throw withCode("RECHECK_OBSERVATION_FAILED", "Stored extraction is missing its extractor identity");
+  }
+  return extractor;
 }
 
 function claimTarget(task: FieldworkTask, change: SemanticReviewChange) {
