@@ -93,7 +93,7 @@ const injections = [
     label: "ungrounded advice hardcoded to keep-current",
     file: "src/fieldwork.ts",
     from: "  const grounded = item.spec.candidates.filter((candidate) => candidate.locator?.locator);",
-    to: "  const grounded = [];",
+    to: "  const grounded = item.spec.candidates.filter(() => false);",
     suite: "test/recheck.test.ts",
   },
   {
