@@ -5,9 +5,18 @@ import {
   createInMemoryPreparedArtifactStore, extract, resolvePreparedArtifact, serializePortableExtractionResult,
   type ExtractionProposal, type PortableExtractionResultEnvelope
 } from "@kontourai/traverse";
-import { importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle, type ReviewCandidate, type ReviewItem } from "@kontourai/survey";
+import {
+  importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle,
+  type ExtractionEnvelopeImportResult, type ReviewCandidate, type ReviewItem
+} from "@kontourai/survey";
 import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
-import { initialReviewQueueSessionState } from "@kontourai/survey/review-workbench";
+import {
+  assertReviewQueueAgainstExtractionImport,
+  bindReviewQueue,
+  hashReviewQueueSnapshot,
+  initialReviewQueueSessionState,
+  UnattestedExtractionQueueError,
+} from "@kontourai/survey/review-workbench";
 import { deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
 import { validateTrustBundle } from "@kontourai/surface";
 import { FIELDWORK_LIMITS, canonicalJson, parseFieldworkTask, traverseTask, type FieldworkTask } from "./contracts.js";
@@ -21,7 +30,7 @@ import {
 } from "./api-contracts.js";
 import { createDeterministicProvider } from "./deterministic-provider.js";
 import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun } from "./run-store.js";
-import { reviewSnapshotHash } from "./survey-persistence.js";
+import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
 import { resolveFieldworkSource } from "./source-input.js";
@@ -208,7 +217,7 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
   });
   if (imported.record.status.state !== "grounded") throw new Error("Export refused: extraction is not grounded");
   const items = stored.run.review.snapshot.items as readonly ReviewItem[];
-  assertReviewedQueueIsAttested(items, canonicalReviewItems(imported.reviewItems, stored.envelope), stored.envelope);
+  assertReviewedQueueIsAttested(items, imported, stored.envelope);
   const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
   const applied = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "all" });
   if (!applied.ok) {
@@ -229,49 +238,45 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
  * came from the persisted queue, so `assertCanonicalResult` compared two
  * independent origins and a queue edited after the decision disagreed with the
  * envelope. Projecting the decided queue is the right authority but removes
- * that second origin, so it is restored here explicitly — and widened from the
- * selected candidate to the whole item.
+ * that second origin, so it is restored here explicitly.
  *
- * The extraction envelope is the independent side: a separate file, bound to
- * the prepared bytes by digest and re-validated on every read
- * (`assertPreparedIdentity`).
+ * The whole-extraction rule is Survey's now (survey#213, adopted for
+ * fieldwork#79): `assertReviewQueueAgainstExtractionImport` re-derives the
+ * canonical items through the public import boundary and requires the stored
+ * queue to be the same set, byte-identical per item, in both directions — an
+ * emptied queue is refused outright, because a receipt over nothing certifies
+ * nothing. What Survey deliberately does not own stays here: which attestation
+ * applies to a recheck round's items, whose evidence is a snapshot this run
+ * never extracted. That dispatch never trusts a single mutable label — which
+ * observation a recheck candidate came from is derived from agreement between
+ * its Lookout observation id, its role, and the round identity, so relabelling
+ * one field contradicts the others instead of changing the answer.
  *
- * Two rules run this, and the first matters more than it looks:
- *
- * 1. Ask whether the stored queue is the *same set* as the attesting side, not
- *    merely whether each thing still in it is well-formed. A check that only
- *    walks what is present cannot notice what was removed — an emptied queue
- *    passes every per-item rule and exports a receipt of nothing.
- * 2. Never decide which attestation applies from a single mutable label. Which
- *    observation a recheck candidate came from is derived from agreement
- *    between its Lookout observation id, its role, and the round identity, so
- *    relabelling one field contradicts the others instead of changing the
- *    answer.
- *
- * A recheck item's *prior*-observation candidates, and the recheck item set
- * itself, are what no artifact in this run can attest: both are functions of a
- * snapshot this run never extracted. They are covered only by the persisted
- * queue binding, which a rewrite of `run.json` could keep consistent. That gap
- * is accepted and disclosed (docs/decisions/local-run-artifacts.md,
- * fieldwork#65).
+ * Survey's cross-check attests queue-to-record consistency only; keeping the
+ * stored record equal to the record originally imported is the caller's
+ * storage obligation, met here by `readRun`'s prepared-bytes/digest binding
+ * and, for what no artifact in this run can attest — a recheck item's
+ * *prior*-observation candidates and the recheck item set itself — accepted
+ * and disclosed as a gap (docs/decisions/local-run-artifacts.md, fieldwork#65).
  */
 function assertReviewedQueueIsAttested(
   items: readonly ReviewItem[],
-  envelopeItems: readonly ReviewItem[],
+  imported: ExtractionEnvelopeImportResult,
   envelope: PortableExtractionResultEnvelope
 ): void {
-  if (items.length === 0 && envelope.result.proposals.length > 0) {
-    // Either a round that found nothing to re-decide, or one emptied after the
-    // fact. Both produce a receipt with no claims, and neither is worth
-    // emitting; the run whose round did record decisions still has its own.
-    throw unattested("its reviewed queue is empty while this run extracted proposals, so there is nothing it can certify");
-  }
   const recheckItems = items.filter((item) => item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]);
   if (recheckItems.length > 0 && recheckItems.length !== items.length) {
     throw unattested("the queue mixes imported extraction items with recheck-round items, so neither set can attest it");
   }
   if (recheckItems.length === 0) {
-    assertQueueIsTheWholeExtraction(items, envelopeItems);
+    try {
+      assertReviewQueueAgainstExtractionImport(withoutCompatExtractedAt(items, envelope), imported);
+    } catch (cause) {
+      if (cause instanceof UnattestedExtractionQueueError) {
+        throw unattested(cause.issues.map((issue) => issue.message).join(" "), cause);
+      }
+      throw cause;
+    }
     return;
   }
   const proposalsByField = new Map<string, ExtractionProposal[]>();
@@ -282,27 +287,32 @@ function assertReviewedQueueIsAttested(
 }
 
 /**
- * A first round's queue is the whole extraction, so the envelope attests the
- * set as well as each item. Set equality both ways is the part `origin/main`
- * got for free by projecting the envelope directly, and the part per-item
- * equality alone does not recover: dropping an item leaves every survivor
- * valid.
+ * Inverse of `canonicalReviewItems`, for handing the stored queue back to
+ * Survey's extraction cross-check: the queue was persisted through the Survey
+ * #187 compatibility adapter, which stamps `extraction.extractedAt` onto every
+ * candidate, while `assertReviewQueueAgainstExtractionImport` compares against
+ * items re-derived through the import boundary, which does not supply it yet.
+ *
+ * Only a value equal to the envelope's own `result.extractedAt` — the exact
+ * stamp the adapter applied — is removed. An edited timestamp is left in place
+ * and fails the byte comparison; a deleted one leaves the candidate matching
+ * the importer's shape here, but its queue no longer matches the digest bound
+ * at round open, and a coordinated re-bind still cannot project (Survey's
+ * canonical projection requires `extractedAt`, which is why the adapter
+ * exists). Remove alongside `canonicalReviewItems` once Survey #187 lands.
  */
-function assertQueueIsTheWholeExtraction(items: readonly ReviewItem[], envelopeItems: readonly ReviewItem[]): void {
-  const stored = new Map(items.map((item) => [item.metadata.name, item]));
-  const attesting = new Map(envelopeItems.map((item) => [item.metadata.name, item]));
-  for (const [name, item] of attesting) {
-    const found = stored.get(name);
-    if (!found) throw unattested(`review item ${name} is in this run's extraction but missing from its reviewed queue`);
-    if (canonicalJson(found) !== canonicalJson(item)) {
-      throw unattested(`review item ${name} does not match the extraction it was imported from`);
-    }
-  }
-  for (const name of stored.keys()) {
-    if (!attesting.has(name)) {
-      throw unattested(`review item ${name} is not in this run's extraction`);
-    }
-  }
+function withoutCompatExtractedAt(items: readonly ReviewItem[], envelope: PortableExtractionResultEnvelope): ReviewItem[] {
+  return items.map((item) => ({
+    ...item,
+    spec: {
+      ...item.spec,
+      candidates: item.spec.candidates.map((candidate) => {
+        if (candidate.extraction.extractedAt !== envelope.result.extractedAt) return candidate;
+        const { extractedAt: _extractedAt, ...extraction } = candidate.extraction;
+        return { ...candidate, extraction };
+      }),
+    },
+  }));
 }
 
 /**
@@ -380,12 +390,13 @@ function unresolvableDecision(reviewItemName: string, candidateId: string): Erro
   );
 }
 
-function unattested(detail: string): Error {
+function unattested(detail: string, cause?: Error): Error {
   return Object.assign(
     new Error(
-      `Export refused: this run's reviewed queue is not attested by its own extraction — ${detail}. `
+      `Export refused: this run's reviewed queue is not attested by its own extraction — ${detail.endsWith(".") ? detail : `${detail}.`} `
       + "The reviewed queue is the authority for what was decided, so it has to agree with the artifact it was built from; "
-      + "re-run the source rather than editing stored review state."
+      + "re-run the source rather than editing stored review state.",
+      cause === undefined ? undefined : { cause }
     ),
     { code: "EXPORT_UNATTESTED_QUEUE" }
   );
@@ -496,14 +507,26 @@ function assertOneDecisionPerClaimTarget(items: readonly ReviewItem[], results: 
 /**
  * Open a review round over `items` and bind it: the digest is taken once, here,
  * from the queue the reviewer is about to be shown, and every later write of
- * this run carries it forward rather than recomputing it.
+ * this run carries it forward rather than recomputing it. Survey owns the
+ * binding derivation (`bindReviewQueue`, survey#213); the run store persists
+ * its digest, and `storedReviewQueueBinding` rebuilds the record around that
+ * stored digest at every later read.
+ *
+ * `bindReviewQueue` refuses an empty queue outright, but a recheck round that
+ * found nothing to re-decide is a legitimate empty round: it is stored, served,
+ * and refused at export. Its digest is taken with the same hash Survey binds
+ * with, so the storage rule — written once, never recomputed by a later
+ * writer — is identical on both paths.
  */
 export function newReviewRound(items: readonly ReviewItem[]): StoredRun["review"] {
   const snapshot = initialReviewQueueSessionState(items as ReviewItem[]);
-  return { snapshot, events: [], revision: 0, snapshotHash: reviewSnapshotHash(snapshot) };
+  const snapshotHash = items.length > 0
+    ? bindReviewQueue(snapshot, { sessionName: REVIEW_SESSION_NAME }).spec.snapshotHash
+    : hashReviewQueueSnapshot(snapshot);
+  return { snapshot, events: [], revision: 0, snapshotHash };
 }
 
-export function reviewSessionName(_run: StoredRun): string { return "review-workbench-session"; }
+export function reviewSessionName(_run: StoredRun): string { return REVIEW_SESSION_NAME; }
 
 /**
  * Server review-session record for a stored run, carrying the queue digest

@@ -19,7 +19,7 @@ import type { ReviewItem } from "@kontourai/survey";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, reviewedExport, runFieldwork } from "../src/fieldwork.js";
-import { reviewSnapshotHash } from "../src/survey-persistence.js";
+import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
 import { recheckFieldwork } from "../src/recheck.js";

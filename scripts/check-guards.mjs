@@ -6,6 +6,22 @@
  * requires the suite that covers it to go red, so the claim "these checks are
  * load-bearing" is reproducible rather than reported.
  *
+ * Since fieldwork#79 the whole-extraction rule — set equality both ways,
+ * per-item byte equality, and the empty-queue refusal — lives in Survey
+ * (`assertReviewQueueAgainstExtractionImport`, survey#213), so the injections
+ * that used to remove those guards line by line now attack the call sites:
+ * the dispatcher that invokes Survey, the self-agreement shape Survey exists
+ * to rule out, and the stored-digest origin of the queue binding. One entry is
+ * the inverse — a PINNED REFUSAL that rewrites the emptied-queue test to
+ * expect success and requires the suite to go red, so Survey's empty-queue
+ * refusal is proven to reach this repo's export rather than assumed to.
+ *
+ * Compilation is judged separately from the suite (rule adopted from Survey's
+ * own matrix): an injection that does not compile is a matrix FAILURE
+ * (`DOES NOT COMPILE — wrong attribution`), never a catch — the "catch" would
+ * belong to the compiler, not a test. A reported catch always means a test
+ * went red.
+ *
  * Not part of `npm run verify`: it edits tracked source and restores it from
  * git, so it needs a clean tree and must not race a build. Run it directly.
  *
@@ -20,50 +36,43 @@ const injections = [
   {
     label: "queue binding re-derived from the queue it checks",
     file: "src/survey-persistence.ts",
-    from: "    snapshotHash: input.snapshotHash,",
-    to: "    snapshotHash: hashReviewSessionSnapshot(snapshot),",
+    from: "      snapshotHash,",
+    to: "      snapshotHash: hashReviewQueueSnapshot(snapshot),",
+    suite: "test/core.test.ts",
+  },
+  {
+    label: "stored binding never handed to Survey's derivation",
+    file: "src/survey-persistence.ts",
+    from: "      ...(binding === undefined ? {} : { binding }),",
+    to: "",
     suite: "test/core.test.ts",
   },
   {
     label: "session record re-derives the digest instead of carrying it",
     file: "src/fieldwork.ts",
     from: "    snapshotHash: run.review.snapshotHash, eventCount, updatedAt: run.createdAt,",
-    to: "    snapshotHash: reviewSnapshotHash(run.review.snapshot), eventCount, updatedAt: run.createdAt,",
+    to: "    snapshotHash: hashReviewQueueSnapshot(run.review.snapshot), eventCount, updatedAt: run.createdAt,",
     suite: "test/core.test.ts",
   },
   {
     label: "no attestation against the extraction envelope",
     file: "src/fieldwork.ts",
-    from: "  assertReviewedQueueIsAttested(items, canonicalReviewItems(imported.reviewItems, stored.envelope), stored.envelope);",
+    from: "  assertReviewedQueueIsAttested(items, imported, stored.envelope);",
     to: "",
     suite: "test/core.test.ts",
   },
   {
-    label: "envelope-derived items accepted without comparison",
+    label: "whole-extraction cross-check handed the extraction's own items (self-agreement)",
     file: "src/fieldwork.ts",
-    from: "    if (canonicalJson(found) !== canonicalJson(item)) {",
-    to: "    if (false) {",
+    from: "      assertReviewQueueAgainstExtractionImport(withoutCompatExtractedAt(items, envelope), imported);",
+    to: "      assertReviewQueueAgainstExtractionImport(withoutCompatExtractedAt(canonicalReviewItems(imported.reviewItems, envelope), envelope), imported);",
     suite: "test/core.test.ts",
   },
   {
-    label: "queue may omit an extracted item (set equality, forward)",
-    file: "src/fieldwork.ts",
-    from: "    if (!found) throw unattested(`review item ${name} is in this run's extraction but missing from its reviewed queue`);",
-    to: "    if (!found) continue;",
-    suite: "test/core.test.ts",
-  },
-  {
-    label: "queue may carry an item the extraction never produced (set equality, reverse)",
-    file: "src/fieldwork.ts",
-    from: "    if (!attesting.has(name)) {",
-    to: "    if (false) {",
-    suite: "test/core.test.ts",
-  },
-  {
-    label: "an emptied queue is allowed to certify nothing",
-    file: "src/fieldwork.ts",
-    from: "  if (items.length === 0 && envelope.result.proposals.length > 0) {",
-    to: "  if (false) {",
+    label: "pinned refusal: an emptied queue must stay refused at export (Survey's empty-queue rule reaches this repo)",
+    file: "test/core.test.ts",
+    from: "  await assert.rejects(() => reviewedExport(run.runDirectory), refusal(/stored queue is empty/));",
+    to: "  await reviewedExport(run.runDirectory);",
     suite: "test/core.test.ts",
   },
   {
@@ -84,7 +93,7 @@ const injections = [
     label: "ungrounded advice hardcoded to keep-current",
     file: "src/fieldwork.ts",
     from: "  const grounded = item.spec.candidates.filter((candidate) => candidate.locator?.locator);",
-    to: "  const grounded = [];",
+    to: "  const grounded = item.spec.candidates.filter(() => false);",
     suite: "test/recheck.test.ts",
   },
   {
@@ -112,17 +121,32 @@ for (const injection of injections) {
     continue;
   }
   writeFileSync(injection.file, source.replace(injection.from, injection.to));
-  let caught = false;
+  // Compile and test are judged SEPARATELY (Survey's rule). A guard whose
+  // removal only breaks the build is not covered by any test — counting a
+  // compile failure as "caught" is the decorative-attribution lie this matrix
+  // exists to rule out. Only a red run of the targeted suite counts.
+  let compiles = true;
   try {
-    execFileSync("npx", ["tsx", "--test", injection.suite], { stdio: "pipe" });
+    execFileSync("npx", ["tsc", "--noEmit"], { stdio: "pipe" });
   } catch {
-    caught = true;
+    compiles = false;
+  }
+  let caught = false;
+  if (compiles) {
+    try {
+      execFileSync("npx", ["tsx", "--test", injection.suite], { stdio: "pipe" });
+    } catch {
+      caught = true;
+    }
   }
   execFileSync("git", ["checkout", "--", injection.file]);
   if (digest(injection.file) !== before) {
     throw new Error(`${injection.file} was not restored byte-identically after injection "${injection.label}"`);
   }
-  results.push({ ...injection, outcome: caught ? "caught" : "NOT CAUGHT" });
+  results.push({
+    ...injection,
+    outcome: !compiles ? "DOES NOT COMPILE (wrong attribution)" : caught ? "caught" : "NOT CAUGHT",
+  });
 }
 
 for (const result of results) {
@@ -131,5 +155,5 @@ for (const result of results) {
 const failures = results.filter((result) => result.outcome !== "caught");
 console.log(`\n${results.length - failures.length}/${results.length} injections caught`);
 if (failures.length > 0) {
-  throw new Error(`${failures.length} injection(s) not caught by the suite that should cover them`);
+  throw new Error(`${failures.length} injection(s) not caught by a red run of the suite that should cover them (a non-compiling injection is wrong attribution, not a catch)`);
 }

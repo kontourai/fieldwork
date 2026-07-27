@@ -27,13 +27,12 @@ test("review presents grounded vendor-renewal evidence and a durable decision", 
     const candidate = page.getByRole("button", { name: /vendor\.name .*fieldwork-deterministic-v1/ });
     await candidate.click();
     const reviewField = page.locator('[data-field="vendor.name"]');
-    await expect(page.getByLabel("Highlighted for vendor.name")).toBeVisible();
-    // Survey's source anchor is a 1px keyboard skip-target ("activate to return
-    // to candidate"), not a pointer-sized control; it only accepted a mouse
-    // click while it was rendering as an unstyled native button.
-    const anchor = page.getByRole("button", { name: /Source highlight for vendor\.name/ });
-    await anchor.focus();
-    await expect(anchor).toBeFocused();
+    // Survey 2.3.0's return control is the painted mark itself — a real target
+    // the width of the highlighted phrase, carrying role=button and tabindex.
+    const highlight = page.getByRole("button", { name: /Highlighted for vendor\.name/ });
+    await expect(highlight).toBeVisible();
+    await highlight.focus();
+    await expect(highlight).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(candidate).toBeFocused();
     await reviewField.getByTestId("use-proposed").click();
@@ -166,7 +165,8 @@ test("every fact carries its locator and links to the source highlight it came f
       expect(entry.text).toContain("Vendor renewal review");
       // ...and the 64-hex digest that used to print here belongs in the record.
       expect(entry.text).not.toMatch(/[0-9a-f]{32,}/);
-      // Trip-wire for main.tsx's mirror of Survey's private highlight id.
+      // The href is Survey's published `highlightElementId`, which names the
+      // per-candidate source anchor in the live inspector.
       expect(entry.resolves).toBe(true);
     }
     // The digest is still one hover away, and still whole in the audit record.
@@ -389,7 +389,8 @@ test("the review surface resolves shared @kontourai/ui tokens", async ({ page })
       const root = getComputedStyle(document.documentElement);
       const embed = read(".survey-workbench-embed");
       const mark = read(".inspector-source mark");
-      const anchor = read(".highlight-anchor");
+      const markElement = document.querySelector(".inspector-source mark")!;
+      const anchorElement = document.querySelector(".highlight-anchor")!;
       return {
         rootBrand: root.getPropertyValue("--k-brand").trim(),
         shellBrand: read(".fieldwork-shell").getPropertyValue("--k-brand").trim(),
@@ -397,8 +398,10 @@ test("the review surface resolves shared @kontourai/ui tokens", async ({ page })
         embedFont: embed.fontFamily,
         markBackground: mark.backgroundColor,
         markUnderline: mark.boxShadow,
-        anchorWidth: anchor.width,
-        anchorBorder: anchor.borderTopWidth,
+        markRole: markElement.getAttribute("role"),
+        markTabindex: markElement.getAttribute("tabindex"),
+        anchorRole: anchorElement.getAttribute("role"),
+        anchorTabindex: anchorElement.getAttribute("tabindex"),
         panelRadius: read(".panel").borderRadius,
         pageBackground: root.backgroundColor,
       };
@@ -413,9 +416,12 @@ test("the review surface resolves shared @kontourai/ui tokens", async ({ page })
     expect(measured.markBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(measured.markBackground).not.toBe("transparent");
     expect(measured.markUnderline).not.toBe("none");
-    // Survey's keyboard return-anchors must not render as native buttons.
-    expect(measured.anchorWidth).toBe("1px");
-    expect(measured.anchorBorder).toBe("0px");
+    // Survey 2.3.0: the painted mark is the focusable return control, and the
+    // anchor the published highlight id names is an inert zero-width span.
+    expect(measured.markRole).toBe("button");
+    expect(measured.markTabindex).toBe("0");
+    expect(measured.anchorRole).toBeNull();
+    expect(measured.anchorTabindex).toBeNull();
     expect(measured.panelRadius).not.toBe("0px");
     expect(measured.pageBackground).not.toBe("rgba(0, 0, 0, 0)");
   } finally { await server.close(); }

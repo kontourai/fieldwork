@@ -1,11 +1,10 @@
 import { z } from "zod";
 import type { ReviewItem, ReviewSessionEvent } from "@kontourai/survey";
-import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
+import type { ReviewQueueBinding, ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
+import { hashReviewQueueSnapshot, UnattestedReviewQueueError } from "@kontourai/survey/review-workbench";
 import {
   assertServerReviewSessionEvents,
-  assertServerReviewSessionFreshness,
-  deriveServerReviewSessionApplyResult,
-  hashReviewSessionSnapshot
+  deriveServerReviewSessionApplyResult
 } from "@kontourai/survey/review-workbench/server-review-session";
 import { FIELDWORK_LIMITS } from "./contracts.js";
 
@@ -139,12 +138,46 @@ export const persistedReviewEventSchema = z.object({
   status: z.object({ replayed: z.boolean().optional() }).strict().optional()
 }).strict();
 
+export const REVIEW_SESSION_NAME = "review-workbench-session";
+
 /**
- * Digest of the review queue a session's decisions were recorded against.
- * Survey owns the derivation; Fieldwork only persists what it produced.
+ * Reconstruct the Survey `ReviewQueueBinding` for a stored round from the
+ * digest persisted when the round opened (survey#213, adopted for
+ * fieldwork#79).
+ *
+ * The stored digest is the binding's authority: it was written once, at queue
+ * construction, and carried forward unchanged by every event append — never
+ * recomputed here from the snapshot being checked (`hashReviewQueueSnapshot`
+ * of mutated bytes would agree with them by construction). Fieldwork's run
+ * schema predates the binding record and persists only the digest;
+ * `hashReviewQueueSnapshot` is byte-identical to the hash those runs already
+ * store, so the record is rebuilt around the stored digest instead of
+ * migrating storage. `itemNames` is derived from the presented queue, which
+ * makes the binding's set-membership diagnostics non-load-bearing — Survey
+ * documents them as deliberately redundant with the hash, and any membership
+ * edit changes the snapshot bytes the stored digest refuses.
+ *
+ * Returns undefined for an empty queue: Survey refuses to bind one (a binding
+ * over nothing attests nothing), while an empty round — a recheck that found
+ * nothing to re-decide — is still storable here. Its digest is checked
+ * directly by `parsePersistedReview`, and `reviewedExport` refuses to emit a
+ * receipt from it.
  */
-export function reviewSnapshotHash(snapshot: ReviewQueueSessionState): string {
-  return hashReviewSessionSnapshot(snapshot);
+export function storedReviewQueueBinding(
+  snapshotHash: string,
+  snapshot: ReviewQueueSessionState
+): ReviewQueueBinding | undefined {
+  if (snapshot.items.length === 0) return undefined;
+  return {
+    apiVersion: "survey.kontourai.io/v1alpha1",
+    kind: "ReviewQueueBinding",
+    spec: {
+      sessionName: REVIEW_SESSION_NAME,
+      snapshotHash,
+      itemNames: [...new Set(snapshot.items.map((item) => item.metadata.name))].sort(),
+      boundAt: new Date(0).toISOString(),
+    },
+  };
 }
 
 /** Temporary transport validator pending Survey issue #188. Survey remains semantic authority. */
@@ -170,30 +203,43 @@ export function parsePersistedReview(input: {
   /* The queue a decision was recorded against is persisted beside the decision,
      and the stored digest is the authority — not one recomputed from the same
      bytes being checked. Rebuilding the session record from the snapshot alone
-     would agree with itself; Survey's own staleness check only has teeth when
-     the hash it compares against was written earlier, at queue construction,
-     and carried forward untouched through every event append. */
+     would agree with itself; Survey's queue binding only has teeth because the
+     hash it compares against was written earlier, at queue construction, and
+     carried forward untouched through every event append. */
   const record = {
-    sessionName: "review-workbench-session",
+    sessionName: REVIEW_SESSION_NAME,
     snapshot,
     snapshotHash: input.snapshotHash,
     eventCount: events.length,
     updatedAt: new Date(0).toISOString(),
   };
-  try {
-    assertServerReviewSessionFreshness(record, snapshot, events.length);
-  } catch (cause) {
-    throw Object.assign(
-      new Error(
-        "Stored review queue does not match the decisions recorded against it. The queue is bound to its round when the "
-        + "round opens, so a queue that changed after a decision no longer describes what the reviewer decided; "
-        + "re-run the source rather than editing stored review state.",
-        { cause },
-      ),
-      { code: "REVIEW_BINDING_BROKEN" },
-    );
+  const binding = storedReviewQueueBinding(input.snapshotHash, snapshot);
+  if (binding === undefined && hashReviewQueueSnapshot(snapshot) !== input.snapshotHash) {
+    // Survey refuses to bind an empty queue, so an empty round's digest is
+    // held to the same rule directly.
+    throw brokenBinding(new Error("Stored empty review round does not match its recorded digest"));
   }
   assertServerReviewSessionEvents(record, events);
-  deriveServerReviewSessionApplyResult({ record, events, requiredResolvedItems: "none" });
+  try {
+    deriveServerReviewSessionApplyResult({
+      record, events, requiredResolvedItems: "none",
+      ...(binding === undefined ? {} : { binding }),
+    });
+  } catch (cause) {
+    if (cause instanceof UnattestedReviewQueueError) throw brokenBinding(cause);
+    throw cause;
+  }
   return { snapshot, events, snapshotHash: input.snapshotHash };
+}
+
+function brokenBinding(cause: Error): Error {
+  return Object.assign(
+    new Error(
+      "Stored review queue does not match the decisions recorded against it. The queue is bound to its round when the "
+      + "round opens, so a queue that changed after a decision no longer describes what the reviewer decided; "
+      + "re-run the source rather than editing stored review state.",
+      { cause },
+    ),
+    { code: "REVIEW_BINDING_BROKEN" },
+  );
 }
