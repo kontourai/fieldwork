@@ -22,5 +22,11 @@
     "reason": "Removes missing-bundle-policy: advisory from the Trust Verify workflow so it inherits the action default (required). Advisory was the adoption stance; with Trust Verify now a required status check in this repo's branch protection, advisory mode is a hole: a live gate probe (PR #90, deliberately carrying no bundle and no exemption) passed Trust Verify green and sat MERGEABLE. This change closes exactly that: one workflow line, no source or behaviour change, nothing for a bundle to reconcile. Verification in lieu of a bundle: this PR's own CI runs the full verify matrix, and after merge the same probe PR re-runs Trust Verify and must go red — the negative proof is executed and recorded before the probe closes. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
     "approved_by": "brian.anderson1222 (delegated approval, 2026-07-28 session: owner said fine-to-arm pending working-system evidence; this is the evidence loop)",
     "declared_at": "2026-07-28T19:30:00Z"
+  },
+  {
+    "scope": "author:briananderson1222 branch-prefix:chore/flow-agents-local-kit",
+    "reason": "Pins @kontourai/flow-agents 5.5.0 as an exact local devDependency and adds the workflow:sidecar / workflow:validate-artifacts scripts, matching the one proven configuration (the marketing-site repo). With bundle-required now enforced portfolio-wide, this repo demanded delivery bundles while providing no declared means to author them: bundle authoring worked only on machines with a coincidental global kit install, and sandboxed delegates without network access could not produce bundles at all. Dev-tooling-only change: no source, no behaviour, no shipped-dependency change, nothing for a bundle to reconcile. Verification in lieu of a bundle: this PR's own CI runs the full verify matrix, and the kit's bins resolve from the local install. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
+    "approved_by": "brian.anderson1222 (delegated approval, 2026-07-28 session: owner accepted rollout recommendation)",
+    "declared_at": "2026-07-28T21:00:00Z"
   }
 ]

@@ -52,7 +52,9 @@
     "check:veritas": "veritas readiness --working-tree",
     "trust-reconcile-verify": "npm run verify",
     "verify:static": "npm run typecheck && npm run build && npm test && npm run test:examples && npm run test:conformance && npm run test:cli && npm run test:api && npm run test:a11y && npm run test:browser && npm run test:package && npm run check:content && npm run check:decisions",
-    "verify": "npm run verify:static && npm run check:veritas"
+    "verify": "npm run verify:static && npm run check:veritas",
+    "workflow:sidecar": "flow-agents-workflow-sidecar",
+    "workflow:validate-artifacts": "flow-agents-validate-artifacts"
   },
   "trust-reconcile-manifest": [
     {
@@ -81,6 +83,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@kontourai/flow-agents": "5.5.0",
     "@kontourai/ui": "^1.11.1",
     "@kontourai/veritas": "1.5.3",
     "@playwright/test": "^1.61.1",
