@@ -177,3 +177,5 @@ rendering noise.
 ## License
 
 Apache-2.0.
+
+<!-- gate probe: deliberate no-bundle, no-exemption PR to prove the armed Trust Verify gate blocks; will be closed, never merged -->
