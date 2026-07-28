@@ -50,4 +50,3 @@ jobs:
           FIELDWORK_VISUAL_SNAPSHOTS: '0'
         with:
           verify-command: "npm run verify:static"
-          missing-bundle-policy: "advisory"
