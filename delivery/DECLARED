@@ -7,8 +7,14 @@
   },
   {
     "scope": "author:dependabot[bot] branch-prefix:dependabot/",
-    "reason": "Dependabot dependency-bump PR; no agent delivery involved, nothing to reconcile. Compound scope binds the platform-set actor identity to the bot's branch namespace per ADR 0022's fork-PR guidance, paired per the 2026-07-03 addendum since branch-prefix alone resolves against a pusher-controlled ref. Known and accepted cost: if the bot identity rotates this stops matching and dependency PRs break loudly, which the pinned action reports by naming the failed condition (flow-agents#1015). No release-automation entry exists because release-please does not run in this repo — fieldwork releases via a human/agent-authored version-bump PR (covered by the entry above) and a manual workflow_dispatch of publish-npm.yml at the version tag; verified against .github/workflows at adoption time.",
+    "reason": "Dependabot dependency-bump PR; no agent delivery involved, nothing to reconcile. Compound scope binds the platform-set actor identity to the bot's branch namespace per ADR 0022's fork-PR guidance, paired per the 2026-07-03 addendum since branch-prefix alone resolves against a pusher-controlled ref. Known and accepted cost: if the bot identity rotates this stops matching and dependency PRs break loudly, which the pinned action reports by naming the failed condition (flow-agents#1015). No release-automation entry exists because release-please does not run in this repo \u2014 fieldwork releases via a human/agent-authored version-bump PR (covered by the entry above) and a manual workflow_dispatch of publish-npm.yml at the version tag; verified against .github/workflows at adoption time.",
     "approved_by": "brian.anderson1222 (delegated approval, 2026-07-27 session: fieldwork terminal-state brief, item 4)",
     "declared_at": "2026-07-27T23:50:00Z"
+  },
+  {
+    "scope": "author:briananderson1222 branch-prefix:chore/ts7",
+    "reason": "TypeScript 7 with BOTH coupled changes tsgo demands and a bot cannot author: explicit types:[node] (tsgo no longer auto-includes @types/node \u2014 TS2591 on every node: builtin) and ambient declarations for side-effect style imports (TS2882, where tsc 5 accepted them silently). Proven pattern from the relay canary (relay#39), extended here for the browser bundle. verify:static green under the new toolchain, visual snapshots off as always on linux-parity runs. The Vite 8 half of the bot's grouped PR remains its own migration. Scope paired with author: per the ADR 0022 2026-07-03 addendum.",
+    "approved_by": "brian.anderson1222 (delegated approval, 2026-07-28 session: scoped-DECLARED-exemption route)",
+    "declared_at": "2026-07-28T03:30:00Z"
   }
 ]
