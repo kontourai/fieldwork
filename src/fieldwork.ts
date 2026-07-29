@@ -254,10 +254,17 @@ function withReviewedGroundingEvidence(
   results: readonly ReviewWorkbenchResult[],
   claims: ReadonlyArray<{ candidateId?: string; id: string }>,
 ): Record<string, unknown> {
-  const claimIdByCandidateId = new Map(
-    claims.filter((claim): claim is { candidateId: string; id: string } => claim.candidateId !== undefined)
-      .map((claim) => [claim.candidateId, claim.id] as const)
-  );
+  const claimIdByCandidateId = new Map<string, string>();
+  for (const claim of claims) {
+    if (claim.candidateId === undefined) continue;
+    // Survey's hash-based candidate ids make collisions impossible today; if
+    // that ever changes, guessing which claim an evidence entry grounds would
+    // misattribute provenance, so fail closed instead.
+    if (claimIdByCandidateId.has(claim.candidateId)) {
+      throw new Error(`Two claims reference candidate ${claim.candidateId}; cannot attribute reviewed evidence`);
+    }
+    claimIdByCandidateId.set(claim.candidateId, claim.id);
+  }
   const enrichment = buildReviewedEvidenceEnrichment({
     imported, items, results,
     isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),

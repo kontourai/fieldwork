@@ -46,5 +46,11 @@
     "reason": "Release bump 0.4.0 to 0.5.0: version fields in package.json/package-lock.json only, cutting the release that carries #93 (real acquisition coverage) and #94 (truncation surfaced in run results/inspect/CLI plus the max-chunks knob and the requestDigest receipt fix). Minor rather than patch because #94 adds public API surface (FieldworkRunResult.outcome, --max-chunks). No source change, nothing for a bundle to reconcile; both carried changes passed independent review and full verify:static on their own PRs. Verification in lieu of a bundle: this PR's CI runs the full verify matrix at the bumped version. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
     "approved_by": "brian.anderson1222 (delegated approval, 2026-07-28 session: owner accepted triage recommendations)",
     "declared_at": "2026-07-29T01:20:00Z"
+  },
+  {
+    "scope": "author:briananderson1222 branch-prefix:feat/reviewed-evidence-projection",
+    "reason": "Delivers #88: fieldwork becomes the first consumer of surface 2.13's reviewed-extraction-evidence contract. reviewedExport now projects reviewed evidence per claim and evaluates the grounding policy, writing a typed receipt — allowed, refused with typed gaps, or not-evaluated for recheck rounds whose two-candidate transition shape the contract cannot express (honest disclosure, never a fabricated pass). Contract friction found during adoption is filed upstream as surface#194-197. Agent-delivered outside builder.build in an owner-attended session, so no trust bundle exists. Verification in lieu of a bundle: full verify:static green including browser and package-smoke; independent report-only review returned MERGE_OK with its MEDIUM (undocumented policy scope) and one LOW (unguarded candidate-id collision) fixed in-branch, and the remaining LOWs recorded on the PR; conformance oracle diff confirmed purely additive. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
+    "approved_by": "brian.anderson1222 (delegated approval, 2026-07-28 session: owner accepted triage recommendations)",
+    "declared_at": "2026-07-29T03:20:00Z"
   }
 ]

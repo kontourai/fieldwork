@@ -131,6 +131,13 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
     additionalEvidence.push(projectReviewedExtractionEvidence(input).evidence);
   }
 
+  // requireCurrentSource is deliberately unset and no sourceStates are
+  // supplied: this receipt attests the reviewed extraction against the run's
+  // own attested artifacts, and fieldwork holds no independent observation of
+  // the live source at export time (that is Lookout's recheck job). Surface
+  // defaults unchecked source states to "unknown", so "allowed" here means
+  // locator/artifact/review/structure requirements passed — it says nothing
+  // about whether the source has drifted since extraction.
   const policy: ReviewedGroundingPolicy = {
     id: REVIEWED_GROUNDING_POLICY_ID,
     action: REVIEWED_GROUNDING_ACTION,
