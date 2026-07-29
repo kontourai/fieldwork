@@ -89,12 +89,25 @@ export interface RunOptions {
   readonly runtime?: FieldworkRuntimeBinding;
   readonly signal?: AbortSignal;
 }
+/**
+ * Structurally mirrors Traverse's own `PortableExtractionOutcome`
+ * (extraction-result-envelope.ts) field-for-field rather than importing it: a
+ * type-only import from `@kontourai/traverse`'s public barrel here would pull
+ * in modules that reference `linkedom`'s bundled (and `skipLibCheck`-unsafe)
+ * type declarations into every consumer's type-check, which broke
+ * `test:package`'s installed-package smoke check. `fieldworkRunOutcomeSchema`
+ * below is the single source of truth this mirrors against — a shape drift
+ * fails validation at runtime rather than silently diverging.
+ */
+export type FieldworkRunOutcome = z.infer<typeof fieldworkRunOutcomeSchema>;
 export interface FieldworkRunResult {
   readonly apiVersion: "fieldwork.kontourai.io/v1";
   readonly kind: "FieldworkRunResult";
   readonly runDirectory: string;
   readonly runResource: string;
   readonly proposalCount: number;
+  /** Traverse's own outcome for this extraction, carried verbatim so a truncated run cannot read as a complete one. */
+  readonly outcome: FieldworkRunOutcome;
 }
 export interface FieldworkAcquisitionOptions {
   readonly url: string;
@@ -307,12 +320,30 @@ export const fieldworkLifecycleEventSchema: z.ZodType<FieldworkLifecycleEventV1>
   revision: z.number().int().nonnegative(),
   eventCount: z.number().int().nonnegative().max(TRANSPORT_LIMITS.events),
 }).strict();
+/**
+ * Mirrors Traverse's PortableExtractionOutcome exactly (extraction-result-envelope.ts):
+ * a distinct discriminated shape per status so a partial or failed run cannot be
+ * mistaken for `success` by anything reading FieldworkRunResult alone.
+ */
+export const fieldworkRunOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("success") }).strict(),
+  z.object({
+    status: z.literal("partial"),
+    reason: z.enum(["cancelled", "max-provider-calls", "max-total-tokens", "max-chunks"]),
+  }).strict(),
+  z.object({
+    status: z.literal("failure"),
+    category: z.enum(["invalid-config", "invalid-task", "preparation", "provider", "unexpected"]),
+    code: z.string(),
+  }).strict(),
+]);
 export const fieldworkRunResultSchema: z.ZodType<FieldworkRunResult> = z.object({
   apiVersion: z.literal("fieldwork.kontourai.io/v1"),
   kind: z.literal("FieldworkRunResult"),
   runDirectory: z.string(),
   runResource: z.string(),
   proposalCount: z.number().int().nonnegative(),
+  outcome: fieldworkRunOutcomeSchema,
 }).strict();
 export const fieldworkAcquisitionResultSchema: z.ZodType<FieldworkAcquisitionResult> = z.object({
   apiVersion: z.literal("fieldwork.kontourai.io/v1"),

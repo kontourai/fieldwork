@@ -67,7 +67,8 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     }
     return {
       apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunResult",
-      runDirectory: existing.directory, runResource, proposalCount: existing.envelope.result.proposals.length
+      runDirectory: existing.directory, runResource, proposalCount: existing.envelope.result.proposals.length,
+      outcome: existing.envelope.result.outcome,
     };
   }
   const runtimeSession = options.runtime ? createFieldworkRuntimeSession(options.runtime, {
@@ -86,6 +87,7 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     ...(options.runtime?.concurrency === undefined ? {} : { concurrency: options.runtime.concurrency }),
     ...(options.runtime?.batchSize === undefined ? {} : { batchSize: options.runtime.batchSize }),
     ...(options.runtime?.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.runtime.maxProviderCalls }),
+    ...(options.runtime?.maxChunks === undefined ? {} : { maxChunks: options.runtime.maxChunks }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (result.error || !result.preparedArtifact) throw new Error(result.error ?? "Traverse did not produce a prepared artifact");
@@ -112,7 +114,8 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   const persistedDirectory = await writeRun(root, run, envelope, resolution.text);
   return {
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunResult",
-    runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length
+    runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length,
+    outcome: envelope.result.outcome,
   };
 }
 

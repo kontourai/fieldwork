@@ -60,8 +60,22 @@ test("Fieldwork response schemas validate the complete advertised JSON transport
     runDirectory: "run-local",
     runResource: "fieldwork-run:v1:generic:0123456789abcdef",
     proposalCount: 1,
+    outcome: { status: "success" },
   };
   assert.equal(fieldworkRunResultSchema.safeParse(run).success, true);
+  for (const malformedOutcome of [
+    { status: "partial" },
+    { status: "partial", reason: "not-a-real-reason" },
+    { status: "failure", category: "provider" },
+    { status: "failure", category: "not-a-real-category", code: "x" },
+    { status: "success", reason: "max-chunks" },
+  ]) {
+    assert.equal(
+      fieldworkRunResultSchema.safeParse({ ...run, outcome: malformedOutcome }).success,
+      false,
+      JSON.stringify(malformedOutcome),
+    );
+  }
   assert.equal(fieldworkAcquisitionResultSchema.safeParse({
     apiVersion: "fieldwork.kontourai.io/v1",
     kind: "FieldworkAcquisitionResult",

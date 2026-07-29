@@ -3,6 +3,7 @@ import {
   exportExtractionInspector,
   importExtractionEnvelope,
 } from "@kontourai/survey";
+import { canonicalJson } from "./contracts.js";
 import { FIELDWORK_SOURCE_KIND, importNameFor } from "./fieldwork.js";
 import { assertPortableOutput, readRun } from "./run-store.js";
 
@@ -43,10 +44,21 @@ export async function inspectionExport(
       actualDigest: stored.run.preparedArtifact.digest,
     },
   });
-  const artifact = exportExtractionInspector(
-    model,
-    options,
-  );
-  assertPortableOutput(JSON.parse(artifact));
-  return artifact;
+  const artifact = JSON.parse(exportExtractionInspector(model, options)) as { spec: Record<string, unknown> };
+  // Survey's inspector export is per-candidate/per-source; the run-level
+  // truncation outcome and its warning classifications are Traverse's, and
+  // Survey has no field for them (fieldwork#50) — merge them in here rather
+  // than let `fieldwork inspect` stay silent about a silently-truncated run.
+  const withExtractionOutcome = {
+    ...artifact,
+    spec: {
+      ...artifact.spec,
+      extraction: {
+        outcome: stored.envelope.result.outcome,
+        warningClassifications: stored.envelope.result.warningClassifications ?? [],
+      },
+    },
+  };
+  assertPortableOutput(withExtractionOutcome);
+  return canonicalJson(withExtractionOutcome);
 }

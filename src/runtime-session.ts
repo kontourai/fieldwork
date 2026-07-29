@@ -60,6 +60,9 @@ export function createFieldworkExecutionIdentity(binding: FieldworkRuntimeBindin
       ...(binding.maxProviderCalls === undefined ? {} : {
         maxProviderCalls: binding.maxProviderCalls,
       }),
+      ...(binding.maxChunks === undefined ? {} : {
+        maxChunks: binding.maxChunks,
+      }),
     },
     minimumStructuredToolsFidelity: minimumFidelity,
     maxOutputTokens,
