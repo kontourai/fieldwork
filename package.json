@@ -69,8 +69,8 @@
     "@kontourai/lookout": "0.3.4",
     "@kontourai/relay": "0.6.0",
     "@kontourai/surface": "2.13.0",
-    "@kontourai/survey": "2.4.0",
-    "@kontourai/traverse": "0.25.0",
+    "@kontourai/survey": "2.4.3",
+    "@kontourai/traverse": "0.25.1",
     "zod": "4.4.3"
   },
   "peerDependencies": {

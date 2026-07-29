@@ -11,6 +11,7 @@ import {
   type ModelRuntime,
 } from "@kontourai/relay";
 import { runFieldwork } from "../src/fieldwork.js";
+import { inspectionExport } from "../src/inspection.js";
 import type { FieldworkRuntimeBinding } from "../src/runtime-contracts.js";
 
 const markers = [
@@ -216,6 +217,92 @@ test("the Traverse provider-call ceiling stops later chunks without discarding e
   });
 });
 
+test("the Traverse maxChunks ceiling reports a distinct max-chunks partial outcome, not a silent success (fieldwork#50)", async () => {
+  const fixture = await providerFixture("max-chunks");
+  const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
+  const result = await runFieldwork({
+    ...fixture,
+    runtime: binding(runtime, { concurrency: 1, maxChunks: 2 }),
+  });
+  const stored = await storedArtifacts(result.runDirectory);
+
+  assert.equal(runtime.requests.length, 2, "the chunk beyond maxChunks must never be dispatched");
+  assert.deepEqual(
+    stored.envelope.result.proposals.map((proposal: { fieldPath: string }) => proposal.fieldPath),
+    ["record.first", "record.second"],
+    "the dropped chunk's marker (record.third) must be missing, not silently absent",
+  );
+  assert.deepEqual(stored.envelope.result.partial, {
+    reason: "max-chunks",
+    completedChunks: 2,
+    remainingChunks: 1,
+  });
+  assert.deepEqual(stored.envelope.result.outcome, { status: "partial", reason: "max-chunks" });
+  assert.deepEqual(result.outcome, { status: "partial", reason: "max-chunks" }, "FieldworkRunResult must carry the same outcome as the envelope");
+  // The beyond-maxChunks drop must classify distinctly from benign multi-chunk
+  // splitting (traverse@0.25.1) — otherwise a 600k-char truncated run is
+  // indistinguishable from a benign 25k run, which is exactly fieldwork#50.
+  assert.ok(
+    stored.envelope.result.warningClassifications.some(
+      (entry: { category: string; code: string }) => entry.category === "limit" && entry.code === "content-truncated",
+    ),
+    JSON.stringify(stored.envelope.result.warningClassifications),
+  );
+});
+
+test("a re-opened maxChunks-truncated run returns the same partial outcome on the idempotent path", async () => {
+  const fixture = await providerFixture("max-chunks-idempotent");
+  const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
+  const runtimeBinding = binding(runtime, { concurrency: 1, maxChunks: 2 });
+  const first = await runFieldwork({ ...fixture, runtime: runtimeBinding });
+  assert.deepEqual(first.outcome, { status: "partial", reason: "max-chunks" });
+
+  const second = await runFieldwork({ ...fixture, runtime: runtimeBinding });
+  assert.equal(second.runResource, first.runResource, "same identity must resolve to the same stored run");
+  assert.equal(runtime.requests.length, 2, "the idempotent path must not re-invoke the provider");
+  assert.deepEqual(second.outcome, { status: "partial", reason: "max-chunks" });
+  assert.deepEqual(second.outcome, first.outcome);
+});
+
+test("an untruncated run reports outcome success on both FieldworkRunResult and the envelope", async () => {
+  const fixture = await providerFixture("untruncated-success");
+  const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
+  const result = await runFieldwork({
+    ...fixture,
+    runtime: binding(runtime, { concurrency: 1 }),
+  });
+  const stored = await storedArtifacts(result.runDirectory);
+
+  assert.equal(runtime.requests.length, 3);
+  assert.deepEqual(result.outcome, { status: "success" });
+  assert.deepEqual(stored.envelope.result.outcome, { status: "success" });
+  assert.equal(stored.envelope.result.partial, undefined);
+
+  const reopened = await runFieldwork({ ...fixture, runtime: binding(runtime, { concurrency: 1 }) });
+  assert.equal(reopened.runResource, result.runResource);
+  assert.deepEqual(reopened.outcome, { status: "success" });
+});
+
+test("fieldwork inspect surfaces the truncation outcome and its distinct warning classification (fieldwork#50)", async () => {
+  const fixture = await providerFixture("max-chunks-inspection");
+  const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
+  const result = await runFieldwork({
+    ...fixture,
+    runtime: binding(runtime, { concurrency: 1, maxChunks: 2 }),
+  });
+
+  const artifact = JSON.parse(await inspectionExport(result.runDirectory)) as {
+    spec: { extraction: { outcome: unknown; warningClassifications: { category: string; code: string }[] } };
+  };
+  assert.deepEqual(artifact.spec.extraction.outcome, { status: "partial", reason: "max-chunks" });
+  assert.ok(
+    artifact.spec.extraction.warningClassifications.some(
+      (entry) => entry.category === "limit" && entry.code === "content-truncated",
+    ),
+    JSON.stringify(artifact.spec.extraction.warningClassifications),
+  );
+});
+
 test("run-level cancellation stops before provider launch and persists a typed partial result", async () => {
   const fixture = await providerFixture("cancelled");
   const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
@@ -239,7 +326,7 @@ test("run-level cancellation stops before provider launch and persists a typed p
 
 function binding(
   runtime: ModelRuntime & { requests: ModelInvocationRequest[] },
-  operations: { concurrency: number; maxProviderCalls?: number },
+  operations: { concurrency: number; maxProviderCalls?: number; maxChunks?: number },
 ): FieldworkRuntimeBinding {
   return {
     role: "fieldwork-extraction",
@@ -250,6 +337,9 @@ function binding(
     concurrency: operations.concurrency,
     ...(operations.maxProviderCalls === undefined ? {} : {
       maxProviderCalls: operations.maxProviderCalls,
+    }),
+    ...(operations.maxChunks === undefined ? {} : {
+      maxChunks: operations.maxChunks,
     }),
   };
 }

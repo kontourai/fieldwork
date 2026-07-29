@@ -41,6 +41,8 @@ export interface FieldworkRuntimeBinding {
   readonly batchSize?: number;
   /** Maximum Traverse provider operations; Dispatch separately caps model attempts. */
   readonly maxProviderCalls?: number;
+  /** Cap on Traverse chunks for this run; chunks beyond it are dropped with a typed partial outcome instead of a silent one. */
+  readonly maxChunks?: number;
   readonly minimumStructuredToolsFidelity?: "native" | "prompted";
   readonly maxOutputTokens?: number;
 }
@@ -64,6 +66,7 @@ export interface FieldworkExecutionIdentity {
     readonly concurrency: number;
     readonly batchSize: number;
     readonly maxProviderCalls?: number;
+    readonly maxChunks?: number;
   };
   readonly minimumStructuredToolsFidelity: "native" | "prompted";
   readonly maxOutputTokens: number;
@@ -84,6 +87,7 @@ export interface ProfileRuntimeBindingOptions {
   readonly concurrency?: number;
   readonly batchSize?: number;
   readonly maxProviderCalls?: number;
+  readonly maxChunks?: number;
   readonly cwd?: string;
   readonly allowPromptedStructuredOutput?: boolean;
   readonly estimatedUsdPer1kTokens?: number;
@@ -97,6 +101,7 @@ export interface DatumRuntimeBindingOptions {
   readonly concurrency?: number;
   readonly batchSize?: number;
   readonly maxProviderCalls?: number;
+  readonly maxChunks?: number;
   readonly estimatedUsdPer1kTokens?: number;
   readonly resolve?: ResolveOptions;
 }
@@ -144,6 +149,7 @@ export const fieldworkStoredExecutionSchema = z.object({
         concurrency: z.number().int().positive().max(32),
         batchSize: z.number().int().positive().max(128),
         maxProviderCalls: z.number().int().positive().optional(),
+        maxChunks: z.number().int().positive().optional(),
       }).strict(),
       minimumStructuredToolsFidelity: z.enum(["native", "prompted"]),
       maxOutputTokens: z.number().int().positive(),
@@ -152,7 +158,15 @@ export const fieldworkStoredExecutionSchema = z.object({
   receipts: z.array(z.object({
     schemaVersion: z.literal(1),
     planDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    // Dispatch's own requestDigest is `invocationDigest()`'s output verbatim
+    // (@kontourai/relay/canonical.js), which is `sha256:<hex>` — unlike
+    // planDigest (a bare hex digest Dispatch computes itself). A bare-hex-only
+    // pattern here rejected every real receipt on the very next read, so no
+    // run created with a live runtime binding could ever be reopened,
+    // exported, or inspected. Discovered while adding fieldwork#50's
+    // idempotent-reopen coverage; unrelated to that issue but was silently
+    // breaking every non-fixture run's second read.
+    requestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     role: boundedId,
     outcome: z.enum(["succeeded", "aborted", "exhausted", "budget-exceeded", "no-eligible-candidates"]),
     attempts: z.array(attemptSchema).max(MAX_RUNTIME_CANDIDATES),
@@ -201,6 +215,7 @@ export function createProfileRuntimeBinding(options: ProfileRuntimeBindingOption
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
     ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
     ...(options.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.maxProviderCalls }),
+    ...(options.maxChunks === undefined ? {} : { maxChunks: options.maxChunks }),
     ...(options.minimumStructuredToolsFidelity ? {
       minimumStructuredToolsFidelity: options.minimumStructuredToolsFidelity,
     } : {}),
@@ -250,6 +265,7 @@ export function createDatumRuntimeBinding(options: DatumRuntimeBindingOptions): 
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
     ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
     ...(options.maxProviderCalls === undefined ? {} : { maxProviderCalls: options.maxProviderCalls }),
+    ...(options.maxChunks === undefined ? {} : { maxChunks: options.maxChunks }),
     ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
   };
 }
@@ -268,6 +284,7 @@ export function validateRuntimeBinding(binding: FieldworkRuntimeBinding): void {
   if (binding.concurrency !== undefined) z.number().int().positive().max(32).parse(binding.concurrency);
   if (binding.batchSize !== undefined) z.number().int().positive().max(128).parse(binding.batchSize);
   if (binding.maxProviderCalls !== undefined) z.number().int().positive().parse(binding.maxProviderCalls);
+  if (binding.maxChunks !== undefined) z.number().int().positive().parse(binding.maxChunks);
   const candidateIds = new Set<string>();
   const runtimeIds = new Set<string>();
   for (const candidate of binding.candidates) {

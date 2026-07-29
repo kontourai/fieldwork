@@ -136,3 +136,31 @@ test("CLI requires explicit prompted structured-output opt-in for OpenCode", asy
     },
   );
 });
+
+test("CLI rejects a non-positive-integer --max-chunks before touching the runtime", async () => {
+  await assert.rejects(
+    () => exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--runtime", "opencode:zai/glm-5", "--max-chunks", "0", "--json"]),
+    (error: any) => {
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.error.code, "INVALID_ARGUMENT");
+      assert.match(result.error.message, /--max-chunks/);
+      return true;
+    },
+  );
+});
+
+test("CLI default (non --json) run output is still JSON and surfaces outcome, not only the --json path", async () => {
+  // fieldwork#50 background: every existing CLI assertion passed --json, so a
+  // shape that only leaked on the default pretty-printed path would have gone
+  // unnoticed. This exercises the CLI's default output path directly.
+  const { stdout } = await exec(process.execPath, [
+    "--import", "tsx", "src/cli.ts", "run",
+    "--task", "examples/generic/task.json",
+    "--source", "examples/generic/source.txt",
+    "--root", await tempRoot("cli-default-output"),
+  ]);
+  assert.match(stdout, /\n {2}"outcome": \{\n {4}"status": "success"\n {2}\}/, "default output must be the pretty-printed (non-compact) form, and outcome must be visible in it");
+  const result = JSON.parse(stdout);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.outcome, { status: "success" });
+});
