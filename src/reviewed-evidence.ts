@@ -5,11 +5,14 @@ import {
   type ReviewedExtractionEvidenceInput,
   type ReviewedGroundingPolicy,
   type ReviewedGroundingPolicyDecision,
-  type SurveyExtractionEnvelopeImport,
-  type SurveyExtractionReviewDecision,
-  type SurveyExtractionReviewItem,
 } from "@kontourai/surface";
-import type { ExtractionEnvelopeImportResult, ReviewItem } from "@kontourai/survey";
+import {
+  toSurfaceReviewedExtractionDecision,
+  toSurfaceReviewedExtractionImport,
+  toSurfaceReviewedExtractionItem,
+  type ExtractionEnvelopeImportResult,
+  type ReviewItem,
+} from "@kontourai/survey";
 import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
 
 /**
@@ -107,20 +110,17 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
     const claimId = claimIdForCandidate(candidate.id);
     if (!claimId) throw new Error(`Reviewed grounding projection cannot resolve the claim decided by ${item.metadata.name}`);
 
-    // Survey's ReviewItem/ReviewDecision and surface's SurveyExtractionReviewItem/
-    // SurveyExtractionReviewDecision are two packages' independent declarations of
-    // the same wire shape (survey#extraction-envelope, surface#reviewed-extraction-
-    // evidence); surface's own `validateInput` is the actual enforcement of the
-    // fields this cast assumes line up, and a first-round item's shape (one
-    // non-editable candidate) is exactly what surface's contract was built to
-    // consume as the first adopting consumer.
+    // Survey owns the shapes surface's contract redeclares, and since 2.5.0 it
+    // exports these adapters with a compile-time field-assignability guard —
+    // drift between the two declarations now fails survey's own build
+    // (surface#194) instead of surfacing here as a runtime validation error.
     const input: ReviewedExtractionEvidenceInput = {
       evidenceId: `${item.metadata.name}.reviewed-extraction-evidence`,
       claimId,
       proposalIndex,
-      importRecord: imported.record as unknown as SurveyExtractionEnvelopeImport,
-      reviewItem: item as unknown as SurveyExtractionReviewItem,
-      reviewDecision: result.reviewDecision as unknown as SurveyExtractionReviewDecision,
+      importRecord: toSurfaceReviewedExtractionImport(imported.record),
+      reviewItem: toSurfaceReviewedExtractionItem(item),
+      reviewDecision: toSurfaceReviewedExtractionDecision(result.reviewDecision),
       collectedBy: REVIEWED_EVIDENCE_COLLECTED_BY,
       // By the time a review round reaches export, `assertReviewedQueueIsAttested`
       // has already cross-checked the decided queue against the extraction

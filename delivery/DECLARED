@@ -58,5 +58,11 @@
     "reason": "Release bump 0.5.0 to 0.6.0: version fields only, cutting the release that carries #97 (first-consumer adoption of surface 2.13's reviewed-extraction-evidence contract: projected evidence and a typed grounding receipt in reviewed exports). Minor because it adds public wire surface. The carried change passed independent review (MERGE_OK, findings fixed in-branch) and full verify:static on its own PR. Verification in lieu of a bundle: this PR's CI runs the full verify matrix at the bumped version. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
     "approved_by": "brian.anderson1222 (delegated approval, 2026-07-28 session: owner accepted triage recommendations)",
     "declared_at": "2026-07-29T04:10:00Z"
+  },
+  {
+    "scope": "author:briananderson1222 branch-prefix:chore/survey-bridge-adapters",
+    "reason": "Closes the surface#194 loop from the consumer side: bumps the survey pin 2.4.3 to 2.5.0 and replaces the three as-unknown-as casts in reviewed-evidence.ts with survey's newly exported toSurfaceReviewedExtraction adapters, whose compile-time field-assignability guard makes cross-package shape drift fail survey's own build. Type-level change plus one exact pin bump; identical runtime behaviour (the adapters are identity functions). Verification in lieu of a bundle: typecheck green, full test suite green locally, this PR's CI runs the full verify matrix. No fieldwork release cut for this — it changes no wire output and rides the next release. Scope is paired with author: per the ADR 0022 2026-07-03 addendum, since branch-prefix alone resolves against a pusher-controlled ref.",
+    "approved_by": "brian.anderson1222 (delegated approval, 2026-07-29 session: owner said do-all on the surface/hachure recommendations)",
+    "declared_at": "2026-07-29T08:20:00Z"
   }
 ]
