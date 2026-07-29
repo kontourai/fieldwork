@@ -1,11 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { promisify } from "node:util";
 import { tempRoot } from "./helpers.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 const exec = promisify(execFile);
+
+// A loopback-only HTTP server for the CLI's "acquire" verb: real bytes over a
+// real socket, no external network. The default guarded egress policy denies
+// nonstandard-port loopback origins (see @kontourai/forage's README), and the
+// CLI's `acquire` command has no flag that opts a loopback origin in (unlike
+// acquireFieldworkWith's injectable `acquire` parameter used in
+// test/acquisition.test.ts) — so this exercises the real crawl path denying
+// the request, not a successful fetch.
+async function startFixtureServer(): Promise<{ origin: string; close: () => Promise<void> }> {
+  const server: Server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("<html><body><p>Status: Active</p></body></html>");
+  });
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0 }, () => resolveListen());
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+  };
+}
 
 test("CLI returns a typed JSON run contract", async () => {
   const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", await tempRoot("cli"), "--json"]);
@@ -62,6 +87,42 @@ test("CLI refuses unenforceable SDK cost ceilings before reading Datum configura
       return true;
     },
   );
+});
+
+test("CLI acquire requires --url", async () => {
+  await assert.rejects(
+    () => exec(process.execPath, ["--import", "tsx", "src/cli.ts", "acquire", "--json"]),
+    (error: any) => {
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.error.code, "INVALID_ARGUMENT");
+      assert.match(result.error.message, /acquire requires --url/);
+      return true;
+    },
+  );
+});
+
+test("CLI acquire runs a real forage crawl and returns a typed acquisition result", async () => {
+  const fixture = await startFixtureServer();
+  try {
+    const { stdout } = await exec(process.execPath, [
+      "--import", "tsx", "src/cli.ts", "acquire",
+      "--url", `${fixture.origin}/`,
+      "--snapshot-root", await tempRoot("cli-acquire-snapshots"),
+      "--max-pages", "1",
+      "--json",
+    ]);
+    const result = JSON.parse(stdout);
+    assert.equal(result.ok, true);
+    assert.equal(result.kind, "FieldworkAcquisitionResult");
+    // The CLI wires the real, non-injectable acquireFieldwork() (default
+    // guarded egress, no loopback allowlist available from the CLI surface),
+    // so the real crawl runs against our real fixture server and is denied by
+    // forage's SSRF guard rather than fetching a page.
+    assert.equal(result.pages.length, 0);
+    assert.ok(result.warningCount >= 1);
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("CLI requires explicit prompted structured-output opt-in for OpenCode", async () => {
