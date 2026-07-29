@@ -34,6 +34,7 @@ import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
 import { resolveFieldworkSource } from "./source-input.js";
+import { buildReviewedEvidenceEnrichment } from "./reviewed-evidence.js";
 
 /**
  * Source kind Fieldwork reports to Survey for every raw source it records. Both
@@ -230,8 +231,49 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
   assertOneDecisionPerClaimTarget(items, applied.results);
   const canonical = projectCanonicalReview(stored.run.runResource, items, applied.results);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(canonical.surveyInput, { projectionContextId: canonical.projectionContextId }));
-  assertPortableOutput(bundle);
-  return parseReviewedExport(bundle);
+  const output = withReviewedGroundingEvidence(bundle, imported, items, applied.results, canonical.surveyInput.claims);
+  assertPortableOutput(output);
+  return parseReviewedExport(output);
+}
+
+/**
+ * Enrich a validated trust bundle with surface's reviewed-extraction-evidence
+ * projection and reviewed-grounding-policy evaluation (kontourai/fieldwork#88,
+ * first consumer of the surface 2.13 contract). New evidence is prepended
+ * ahead of the bundle's own evidence so a caller reading "the" evidence per
+ * claim by last-write-wins (as Survey's own citation evidence has always been
+ * read) keeps seeing Survey's original entry; the new profile-tagged entry is
+ * additive and is found by its own `metadata.reviewedExtraction` marker.
+ * Re-running `validateTrustBundle` over the enriched bundle proves surface
+ * still accepts it as a well-formed TrustBundle.
+ */
+function withReviewedGroundingEvidence(
+  bundle: ReturnType<typeof validateTrustBundle>,
+  imported: ExtractionEnvelopeImportResult,
+  items: readonly ReviewItem[],
+  results: readonly ReviewWorkbenchResult[],
+  claims: ReadonlyArray<{ candidateId?: string; id: string }>,
+): Record<string, unknown> {
+  const claimIdByCandidateId = new Map<string, string>();
+  for (const claim of claims) {
+    if (claim.candidateId === undefined) continue;
+    // Survey's hash-based candidate ids make collisions impossible today; if
+    // that ever changes, guessing which claim an evidence entry grounds would
+    // misattribute provenance, so fail closed instead.
+    if (claimIdByCandidateId.has(claim.candidateId)) {
+      throw new Error(`Two claims reference candidate ${claim.candidateId}; cannot attribute reviewed evidence`);
+    }
+    claimIdByCandidateId.set(claim.candidateId, claim.id);
+  }
+  const enrichment = buildReviewedEvidenceEnrichment({
+    imported, items, results,
+    isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
+    claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
+  });
+  const enrichedBundle = enrichment.additionalEvidence.length === 0
+    ? bundle
+    : validateTrustBundle({ ...bundle, evidence: [...enrichment.additionalEvidence, ...bundle.evidence] });
+  return { ...enrichedBundle, reviewedGrounding: enrichment.grounding };
 }
 
 /**
