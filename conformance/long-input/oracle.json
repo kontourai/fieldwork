@@ -98,5 +98,29 @@
       "excerpt": "Late: final-value",
       "locator": "chars:25000-25017"
     }
+  ],
+  "reviewedGrounding": {
+    "outcome": "allowed",
+    "gapCount": 0
+  },
+  "projectedReviewedEvidence": [
+    {
+      "fieldPath": "document.early",
+      "supportStrength": "entails",
+      "passing": true,
+      "blocking": false
+    },
+    {
+      "fieldPath": "document.boundary",
+      "supportStrength": "entails",
+      "passing": true,
+      "blocking": false
+    },
+    {
+      "fieldPath": "document.late",
+      "supportStrength": "entails",
+      "passing": true,
+      "blocking": false
+    }
   ]
 }

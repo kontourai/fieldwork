@@ -129,11 +129,33 @@ test("replayable document formats preserve exact grounding, inspection, review, 
   assert.match(String(imageView.inspector.sources[0]?.message), /OCR-derived/);
 
   for (const run of successful.values()) {
-    const output = await acceptAndExport(run);
+    const output = await acceptAndExport(run) as unknown as {
+      claims: Array<{ id: string; fieldOrBehavior: string }>;
+      evidence: Array<{ claimId: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
+      reviewedGrounding: { outcome: string; gaps: unknown[] };
+    };
     assertPortableOutput(output);
     const serialized = JSON.stringify(output);
     assert.doesNotMatch(serialized, new RegExp(escapeRegExp(snapshotRoot)));
     assert.doesNotMatch(serialized, /source\.(?:html|vtt)|format-fixture-(?:pdf|ocr)/);
+
+    // kontourai/fieldwork#88: every accepted format's export carries surface's
+    // projected reviewed-extraction evidence and an allowed grounding evaluation
+    // — the enriched shape holds across every replayable document format, not
+    // just plain text.
+    assert.equal(output.reviewedGrounding.outcome, "allowed", `${run.runResource} must be an allowed grounding evaluation`);
+    assert.deepEqual(output.reviewedGrounding.gaps, []);
+    const reviewedEvidenceByClaim = new Map(
+      output.evidence.filter((entry) => entry.metadata?.reviewedExtraction !== undefined)
+        .map((entry) => [entry.claimId, entry])
+    );
+    for (const claim of output.claims) {
+      const entry = reviewedEvidenceByClaim.get(claim.id);
+      assert.ok(entry, `${run.runResource} ${claim.fieldOrBehavior} must carry projected reviewed-extraction evidence`);
+      assert.equal(entry!.supportStrength, "entails");
+      assert.equal(entry!.passing, true);
+      assert.equal(entry!.blocking, false);
+    }
   }
 });
 
