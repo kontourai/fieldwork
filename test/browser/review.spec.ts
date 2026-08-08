@@ -511,7 +511,7 @@ test("a host can brand the selected run and inject bounded navigation", async ({
   }
 });
 
-test("an explicitly allowed host origin can embed the protected review UI", async ({ page }) => {
+test("an explicitly allowed host origin can persist a non-editable proposed decision", async ({ page }) => {
   let fieldworkUrl = "";
   const host = createServer((_request, response) => {
     response.writeHead(200, {
@@ -532,6 +532,12 @@ test("an explicitly allowed host origin can embed the protected review UI", asyn
   });
   const fieldwork = await openRun(run.runDirectory, { embeddingOrigin: hostOrigin });
   fieldworkUrl = fieldwork.url;
+  const mutations: number[] = [];
+  page.on("response", (response) => {
+    if (response.url().startsWith(fieldwork.baseUrl) && new URL(response.url()).pathname === "/api/v1/review") {
+      mutations.push(response.status());
+    }
+  });
   const otherHost = createServer((_request, response) => {
     response.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
@@ -545,14 +551,23 @@ test("an explicitly allowed host origin can embed the protected review UI", asyn
   const otherAddress = otherHost.address() as AddressInfo;
   const otherHostOrigin = `http://127.0.0.1:${otherAddress.port}`;
   try {
+    const deniedFrameRequest = page.waitForRequest((request) => request.url().startsWith(fieldwork.baseUrl));
     await page.goto(otherHostOrigin);
-    await page.waitForTimeout(250);
+    await deniedFrameRequest;
     expect(page.frames().some((frame) => frame.url().startsWith(fieldwork.baseUrl))).toBe(false);
 
     await page.goto(hostOrigin);
     const frame = page.frameLocator('iframe[title="Hosted Fieldwork"]');
     await expect(frame.getByRole("heading", { name: "Grounded review" })).toBeVisible();
     await expect(frame.getByTestId("review-workbench-shell")).toBeVisible();
+    const reviewField = frame.locator('[data-field="record.status"]');
+    // Envelope-imported Fieldwork proposals are intentionally non-editable: the
+    // review action must persist the proposed value without an editor to read.
+    await expect(reviewField.getByTestId("edit-proposed-value")).toHaveCount(0);
+    await reviewField.getByTestId("use-proposed").click();
+    await expect(reviewField.getByTestId("decided-chip")).toHaveText("Accepted");
+    await expect(frame.getByLabel("Fieldwork status")).toContainText("Saved 1 server-owned review event");
+    expect(mutations).toEqual([200]);
   } finally {
     await fieldwork.close();
     await new Promise<void>((resolvePromise, reject) => {
