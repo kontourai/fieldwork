@@ -266,7 +266,12 @@ function linkDocumentAndQueue(
 
   const onFocusIn = (event: FocusEvent) => {
     const field = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('[data-testid="review-field"]');
-    select(field?.dataset.itemName, "source");
+    // Focusing a decision control is part of a pointer click. Scrolling the
+    // linked source here can move that control between mouse-down and mouse-up
+    // inside a constrained host iframe, leaving the click with no target. Keep
+    // the cross-surface selection, but reserve source scrolling for deliberate
+    // card and evidence navigation.
+    select(field?.dataset.itemName, "none");
   };
   workbenchHost.addEventListener("focusin", onFocusIn);
 
