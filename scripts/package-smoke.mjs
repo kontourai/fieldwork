@@ -44,8 +44,8 @@ writeFileSync(join(work, "consumer.mts"), `import {
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
 import {
-  parseReviewedWebSourceDescriptor,
-  type ReviewedWebSourceResult
+  parseReviewedWebSourceCurrentness, parseReviewedWebSourceDescriptor,
+  type ReviewedWebSourceCurrentness, type ReviewedWebSourceResult
 } from "@kontourai/fieldwork/reviewed-web-source-contract";
 import {
   createProfileRuntimeBinding, fieldworkStoredExecutionSchema,
@@ -59,6 +59,10 @@ const reviewedDescriptor: ReviewedWebSourceResult = parseReviewedWebSourceDescri
   apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted"
 });
 void reviewedDescriptor;
+const currentness: ReviewedWebSourceCurrentness = parseReviewedWebSourceCurrentness({
+  apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceCurrentness", status: "no-check"
+});
+void currentness;
 const runtime: FieldworkRuntimeBinding = createProfileRuntimeBinding({
   profiles: ["codex:gpt-5"], budget: { maxAttempts: 1 }
 });
