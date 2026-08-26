@@ -11,7 +11,10 @@ import {
   type StoredProposalObservationV1,
 } from "@kontourai/lookout";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
-import { FieldworkSourceCheckReceiptStore } from "./source-check-receipts.js";
+import {
+  FieldworkSourceCheckReceiptStore,
+  type Capture,
+} from "./source-check-receipts.js";
 import type { ExtractionProposal } from "@kontourai/traverse";
 import type { ReviewItem } from "@kontourai/survey";
 import { parseFieldworkTask, traverseTask } from "./contracts.js";
@@ -22,12 +25,13 @@ import type {
   JsonObject,
   RunOptions,
 } from "./api-contracts.js";
-import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, newReviewRound, runFieldwork } from "./fieldwork.js";
 import {
-  assertPortableOutput,
-  readRun,
-  saveReview,
-} from "./run-store.js";
+  canonicalSemanticReviewItems,
+  FIELDWORK_SOURCE_KIND,
+  newReviewRound,
+  runFieldwork,
+} from "./fieldwork.js";
+import { assertPortableOutput, readRun, saveReview } from "./run-store.js";
 import type { FieldworkRuntimeBinding } from "./runtime-contracts.js";
 
 export type FieldworkRecheckClassification =
@@ -66,7 +70,10 @@ interface FieldworkCheckCommon {
   readonly warnings: readonly string[];
 }
 export type FieldworkCheckResult =
-  | (FieldworkCheckCommon & { readonly kind: "unchanged-304"; readonly snapshotRef: string })
+  | (FieldworkCheckCommon & {
+      readonly kind: "unchanged-304";
+      readonly snapshotRef: string;
+    })
   | (FieldworkCheckCommon & {
       readonly kind: "unchanged-hash";
       readonly priorSnapshotRef: string;
@@ -130,29 +137,81 @@ export interface FieldworkRecheckResult {
  * history. Lookout owns source/proposal continuity and semantic diffing; a new
  * Fieldwork run owns any resulting Survey review round.
  */
-export async function recheckFieldwork(options: FieldworkRecheckOptions): Promise<FieldworkRecheckResult> {
+export async function recheckFieldwork(
+  options: FieldworkRecheckOptions,
+): Promise<FieldworkRecheckResult> {
   const prior = await readRun(options.priorRunDirectory);
-  const task = parseFieldworkTask(JSON.parse(await readFile(options.taskPath, "utf8")));
-  if ("targetSchema" in options.source
-    && canonicalJson(options.source.targetSchema) !== canonicalJson(traverseTask(task).targetSchema)) {
-    throw withCode("RECHECK_SCHEMA_MISMATCH", "Lookout source schema does not match the selected Fieldwork task");
+  const task = parseFieldworkTask(
+    JSON.parse(await readFile(options.taskPath, "utf8")),
+  );
+  if (
+    "targetSchema" in options.source &&
+    canonicalJson(options.source.targetSchema) !==
+      canonicalJson(traverseTask(task).targetSchema)
+  ) {
+    throw withCode(
+      "RECHECK_SCHEMA_MISMATCH",
+      "Lookout source schema does not match the selected Fieldwork task",
+    );
   }
   const store = createObservationStore({
-    root: resolve(options.observationRoot ?? join(options.root ?? ".fieldwork/runs", ".lookout-observations")),
+    root: resolve(
+      options.observationRoot ??
+        join(options.root ?? ".fieldwork/runs", ".lookout-observations"),
+    ),
   });
-  const snapshotStore = createFilesystemSnapshotStore({ root: options.snapshotRoot ?? ".fieldwork/snapshots" });
+  const snapshotStore = createFilesystemSnapshotStore({
+    root: options.snapshotRoot ?? ".fieldwork/snapshots",
+  });
   const priorObservation = observationFor(options.source.id, prior.envelope);
-  const priorStored = await establishPrior(store, snapshotStore, options.source, priorObservation, options.now?.() ?? prior.run.createdAt);
-  const receipts = new FieldworkSourceCheckReceiptStore(options.receiptRoot ?? join(options.root ?? ".fieldwork/runs", ".source-check-receipts"));
+  const priorStored = await establishPrior(
+    store,
+    snapshotStore,
+    options.source,
+    priorObservation,
+    options.now?.() ?? prior.run.createdAt,
+  );
+  const receipts = new FieldworkSourceCheckReceiptStore(
+    options.receiptRoot ??
+      join(options.root ?? ".fieldwork/runs", ".source-check-receipts"),
+  );
   // Publish pending before network I/O. A later started check therefore makes
   // an earlier completion non-current rather than silently reviving it.
-  const pending = await receipts.begin(options.source.id, priorStored.observationId, options.now?.() ?? new Date().toISOString());
+  // Receipt storage freezes its own baseline. This recheck integration remains
+  // intentionally narrow while the public currentness reader is completed.
+  const priorCapture = receiptCapture(
+    options.source,
+    priorStored.snapshotRef,
+    priorStored.observedAt,
+  );
+  const readHead = async (): Promise<string | null> => {
+    const latest = await store.loadLatest(options.source.id);
+    return latest.ok ? (latest.value?.observationId ?? null) : null;
+  };
+  const pending = await receipts.begin(
+    options.source.id,
+    {
+      pointerToken: await receipts.currentPointerToken(options.source.id),
+      proposalHeadId: priorStored.observationId,
+      admittedAcquisition: priorCapture,
+    },
+    readHead,
+  );
   const check = await options.acquisition.check(options.source);
   assertCheckIdentity(check, options.source);
   assertCheckContinuity(check, priorStored.snapshotRef);
 
   if (canonicalJson(task) !== canonicalJson(prior.run.task)) {
-    await receipts.finalize(pending, { outcome: "error", priorProposalHeadId: priorStored.observationId });
+    await receipts.finalize(
+      pending,
+      receiptCompletion(
+        "error",
+        priorStored.observationId,
+        priorCapture,
+        priorCapture,
+      ),
+      readHead,
+    );
     return portableResult({
       classification: "task-drift",
       check,
@@ -161,7 +220,16 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     });
   }
   if (check.kind === "error") {
-    await receipts.finalize(pending, { outcome: "error", priorProposalHeadId: priorStored.observationId });
+    await receipts.finalize(
+      pending,
+      receiptCompletion(
+        "error",
+        priorStored.observationId,
+        priorCapture,
+        priorCapture,
+      ),
+      readHead,
+    );
     return portableResult({
       classification: "source-unavailable",
       check,
@@ -170,10 +238,41 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     });
   }
   if (check.kind === "unchanged-304" || check.kind === "unchanged-hash") {
-    const captureRef = check.kind === "unchanged-304" ? check.snapshotRef : check.currentSnapshotRef;
-    const admitted = await admitProposalObservation({ source: lookoutSource(options.source), current: { ...priorObservation, snapshotRef: captureRef, observedAt: check.checkedAt }, check: { checkedAt: check.checkedAt, resultKind: "unchanged-hash", currentSnapshotRef: captureRef }, prior: priorStored, snapshotStore });
-    if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Unchanged source capture could not be admitted", admitted.error);
-    await receipts.finalize(pending, { outcome: check.kind, priorProposalHeadId: priorStored.observationId, resultProposalHeadId: priorStored.observationId, priorCaptureRef: priorStored.snapshotRef, currentCaptureRef: captureRef, capture: admitted.value.current });
+    const captureRef =
+      check.kind === "unchanged-304"
+        ? check.snapshotRef
+        : check.currentSnapshotRef;
+    const admitted = await admitProposalObservation({
+      source: lookoutSource(options.source),
+      current: {
+        ...priorObservation,
+        snapshotRef: captureRef,
+        observedAt: check.checkedAt,
+      },
+      check: {
+        checkedAt: check.checkedAt,
+        resultKind: "unchanged-hash",
+        currentSnapshotRef: captureRef,
+      },
+      prior: priorStored,
+      snapshotStore,
+    });
+    if (!admitted.ok)
+      throw withCode(
+        "RECHECK_OBSERVATION_FAILED",
+        "Unchanged source capture could not be admitted",
+        admitted.error,
+      );
+    await receipts.finalize(
+      pending,
+      receiptCompletion(
+        check.kind,
+        priorStored.observationId,
+        priorCapture,
+        admitted.value.current,
+      ),
+      readHead,
+    );
     return portableResult({
       classification: "unchanged-source",
       check,
@@ -184,18 +283,45 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
 
   let currentRun: FieldworkRunResult;
   try {
-    currentRun = await runFieldwork(runOptions(options, check.currentSnapshotRef));
+    currentRun = await runFieldwork(
+      runOptions(options, check.currentSnapshotRef),
+    );
   } catch (cause) {
-    await receipts.finalize(pending, { outcome: "extraction-failure", priorProposalHeadId: priorStored.observationId });
-    throw withCode("RECHECK_EXTRACTION_FAILED", "Changed source could not be extracted", cause);
+    await receipts.finalize(
+      pending,
+      receiptCompletion(
+        "extraction-failure",
+        priorStored.observationId,
+        priorCapture,
+        priorCapture,
+      ),
+      readHead,
+    );
+    throw withCode(
+      "RECHECK_EXTRACTION_FAILED",
+      "Changed source could not be extracted",
+      cause,
+    );
   }
   const current = await readRun(currentRun.runDirectory);
-  const currentObservation = observationFor(options.source.id, current.envelope);
+  const currentObservation = observationFor(
+    options.source.id,
+    current.envelope,
+  );
   if (current.run.runResource === prior.run.runResource) {
-    throw withCode("RECHECK_CONFLICT", "Changed source resolved to the selected prior run");
+    throw withCode(
+      "RECHECK_CONFLICT",
+      "Changed source resolved to the selected prior run",
+    );
   }
-  if (current.run.review.events.length !== 0 || current.run.review.revision !== 0) {
-    throw withCode("RECHECK_CONFLICT", "Existing current run already has review history");
+  if (
+    current.run.review.events.length !== 0 ||
+    current.run.review.revision !== 0
+  ) {
+    throw withCode(
+      "RECHECK_CONFLICT",
+      "Existing current run already has review history",
+    );
   }
 
   if (preparationChangedWithoutTaskChange(prior, current)) {
@@ -218,26 +344,64 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
   const admitted = await admitProposalObservation({
     source: lookoutSource(options.source),
     current: currentObservation,
-    check: { checkedAt: check.checkedAt, resultKind: "changed", currentSnapshotRef: check.currentSnapshotRef },
-    prior: priorStored,
-    snapshotStore,
-  });
-  if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Current source capture could not be admitted", admitted.error);
-  const committed = await store.commit({
-    observation: currentObservation,
-    recordedAt: options.now?.() ?? new Date().toISOString(),
     check: {
       checkedAt: check.checkedAt,
       resultKind: "changed",
       currentSnapshotRef: check.currentSnapshotRef,
     },
-  }, priorStored.observationId);
+    prior: priorStored,
+    snapshotStore,
+  });
+  if (!admitted.ok)
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Current source capture could not be admitted",
+      admitted.error,
+    );
+  const committed = await store.commit(
+    {
+      observation: currentObservation,
+      recordedAt: options.now?.() ?? new Date().toISOString(),
+      check: {
+        checkedAt: check.checkedAt,
+        resultKind: "changed",
+        currentSnapshotRef: check.currentSnapshotRef,
+      },
+    },
+    priorStored.observationId,
+  );
   if (!committed.ok) {
-    await receipts.finalize(pending, { outcome: "error", priorProposalHeadId: priorStored.observationId });
-    const code = committed.error.kind === "continuity-conflict" ? "RECHECK_CONFLICT" : "RECHECK_OBSERVATION_FAILED";
-    throw withCode(code, "Source observation could not be committed", committed.error);
+    await receipts.finalize(
+      pending,
+      receiptCompletion(
+        "error",
+        priorStored.observationId,
+        priorCapture,
+        priorCapture,
+      ),
+      readHead,
+    );
+    const code =
+      committed.error.kind === "continuity-conflict"
+        ? "RECHECK_CONFLICT"
+        : "RECHECK_OBSERVATION_FAILED";
+    throw withCode(
+      code,
+      "Source observation could not be committed",
+      committed.error,
+    );
   }
-  await receipts.finalize(pending, { outcome: "changed", priorProposalHeadId: priorStored.observationId, resultProposalHeadId: committed.value.observationId, priorCaptureRef: priorStored.snapshotRef, currentCaptureRef: currentObservation.snapshotRef, capture: admitted.value.current });
+  await receipts.finalize(
+    pending,
+    receiptCompletion(
+      "changed",
+      committed.value.observationId,
+      priorCapture,
+      admitted.value.current,
+      priorStored.observationId,
+    ),
+    readHead,
+  );
 
   const semantic = buildSemanticReviewWork({
     prior: priorObservation,
@@ -253,18 +417,31 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     claimTarget: (change) => claimTarget(task, change),
   });
   if (!semantic.ok) {
-    throw withCode("RECHECK_DIFF_FAILED", "Proposal observations could not be compared", semantic.error);
+    throw withCode(
+      "RECHECK_DIFF_FAILED",
+      "Proposal observations could not be compared",
+      semantic.error,
+    );
   }
 
   // The round is completed here, not at export: the snapshot the reviewer
   // decides against is the projected authority, so anything the trust bundle
   // needs has to be part of the item they saw (fieldwork#59).
-  const items = canonicalSemanticReviewItems(semantic.value.items as unknown as ReviewItem[], {
-    sourceKind: FIELDWORK_SOURCE_KIND,
-    transitionId: semantic.value.transitionId,
-    prior: { observationId: priorStored.observationId, extractor: extractorFor(prior.envelope) },
-    current: { observationId: committed.value.observationId, extractor: extractorFor(current.envelope) },
-  });
+  const items = canonicalSemanticReviewItems(
+    semantic.value.items as unknown as ReviewItem[],
+    {
+      sourceKind: FIELDWORK_SOURCE_KIND,
+      transitionId: semantic.value.transitionId,
+      prior: {
+        observationId: priorStored.observationId,
+        extractor: extractorFor(prior.envelope),
+      },
+      current: {
+        observationId: committed.value.observationId,
+        extractor: extractorFor(current.envelope),
+      },
+    },
+  );
   await saveReview(current.directory, current.run, newReviewRound(items));
   const result = portableResult({
     classification: items.length === 0 ? "stable-proposals" : "semantic-drift",
@@ -282,6 +459,43 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
 type ObservationStore = ReturnType<typeof createObservationStore>;
 type StoredObservation = StoredProposalObservationV1;
 
+function receiptCapture(
+  source: FieldworkLookoutSource,
+  snapshotRef: string,
+  fetchedAt: string,
+): Capture {
+  return {
+    sourceId: source.id,
+    snapshotRef,
+    url: source.url,
+    bodyHash: createHash("sha256").update(snapshotRef).digest("hex"),
+    fetchedAt,
+    integrity: "body-and-identity",
+  };
+}
+
+function receiptCompletion(
+  outcome:
+    | "unchanged-304"
+    | "unchanged-hash"
+    | "changed"
+    | "error"
+    | "extraction-failure",
+  resultProposalHeadId: string,
+  priorCapture: Capture,
+  currentCapture: Capture,
+  priorProposalHeadId = resultProposalHeadId,
+) {
+  return {
+    checkedAt: currentCapture.fetchedAt,
+    outcome,
+    priorProposalHeadId,
+    resultProposalHeadId,
+    priorCapture,
+    currentCapture,
+  } as const;
+}
+
 async function establishPrior(
   store: ObservationStore,
   snapshotStore: ReturnType<typeof createFilesystemSnapshotStore>,
@@ -290,30 +504,70 @@ async function establishPrior(
   recordedAt: string,
 ): Promise<StoredObservation> {
   const loaded = await store.loadLatest(observation.sourceId);
-  if (!loaded.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Prior observation could not be loaded", loaded.error);
+  if (!loaded.ok)
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Prior observation could not be loaded",
+      loaded.error,
+    );
   if (loaded.value) {
     if (sameObservation(loaded.value, observation)) {
-      const admitted = await admitProposalObservation({ source: lookoutSource(source), current: observation, check: loaded.value.check, prior: null, snapshotStore });
-      if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Prior source capture could not be admitted", admitted.error);
+      const admitted = await admitProposalObservation({
+        source: lookoutSource(source),
+        current: observation,
+        check: loaded.value.check,
+        prior: null,
+        snapshotStore,
+      });
+      if (!admitted.ok)
+        throw withCode(
+          "RECHECK_OBSERVATION_FAILED",
+          "Prior source capture could not be admitted",
+          admitted.error,
+        );
       return loaded.value;
     }
-    throw withCode("RECHECK_CONFLICT", "Stored source continuity does not match the selected prior run");
+    throw withCode(
+      "RECHECK_CONFLICT",
+      "Stored source continuity does not match the selected prior run",
+    );
   }
-  const anchor = { checkedAt: observation.observedAt, resultKind: "changed" as const, currentSnapshotRef: observation.snapshotRef };
-  const admitted = await admitProposalObservation({ source: lookoutSource(source), current: observation, check: anchor, prior: null, snapshotStore });
-  if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Prior source capture could not be admitted", admitted.error);
-  const committed = await store.commit({
-    observation,
-    recordedAt,
+  const anchor = {
+    checkedAt: observation.observedAt,
+    resultKind: "changed" as const,
+    currentSnapshotRef: observation.snapshotRef,
+  };
+  const admitted = await admitProposalObservation({
+    source: lookoutSource(source),
+    current: observation,
     check: anchor,
-  }, null);
+    prior: null,
+    snapshotStore,
+  });
+  if (!admitted.ok)
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Prior source capture could not be admitted",
+      admitted.error,
+    );
+  const committed = await store.commit(
+    {
+      observation,
+      recordedAt,
+      check: anchor,
+    },
+    null,
+  );
   if (committed.ok) return committed.value;
   if (committed.error.kind === "continuity-conflict") {
     const raced = await store.loadLatest(observation.sourceId);
-    if (raced.ok && raced.value && sameObservation(raced.value, observation)) return raced.value;
+    if (raced.ok && raced.value && sameObservation(raced.value, observation))
+      return raced.value;
   }
   throw withCode(
-    committed.error.kind === "continuity-conflict" ? "RECHECK_CONFLICT" : "RECHECK_OBSERVATION_FAILED",
+    committed.error.kind === "continuity-conflict"
+      ? "RECHECK_CONFLICT"
+      : "RECHECK_OBSERVATION_FAILED",
     "Prior observation could not be established",
     committed.error,
   );
@@ -324,7 +578,10 @@ function observationFor(
   envelope: Awaited<ReturnType<typeof readRun>>["envelope"],
 ): ProposalSetObservation {
   if (!envelope.source.snapshotRef) {
-    throw withCode("RECHECK_OBSERVATION_FAILED", "Stored extraction is missing snapshot identity");
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Stored extraction is missing snapshot identity",
+    );
   }
   return {
     sourceId,
@@ -355,28 +612,42 @@ function evidence(observation: {
  * that has no evidence: a removed proposal still needs to record which
  * extractor observed nothing at that target.
  */
-function extractorFor(envelope: Awaited<ReturnType<typeof readRun>>["envelope"]): string {
+function extractorFor(
+  envelope: Awaited<ReturnType<typeof readRun>>["envelope"],
+): string {
   const extractor = envelope.result.provider;
   if (typeof extractor !== "string" || extractor.length === 0) {
-    throw withCode("RECHECK_OBSERVATION_FAILED", "Stored extraction is missing its extractor identity");
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Stored extraction is missing its extractor identity",
+    );
   }
   return extractor;
 }
 
 function claimTarget(task: FieldworkTask, change: SemanticReviewChange) {
-  const projection = task.spec.projections.find((candidate) => candidate.fieldPath === change.fieldPath);
+  const projection = task.spec.projections.find(
+    (candidate) => candidate.fieldPath === change.fieldPath,
+  );
   if (!projection) throw new Error(`No claim target for ${change.fieldPath}`);
   return { ...projection.claim, fieldOrBehavior: change.fieldPath };
 }
 
-function runOptions(options: FieldworkRecheckOptions, snapshotRef: string): RunOptions {
+function runOptions(
+  options: FieldworkRecheckOptions,
+  snapshotRef: string,
+): RunOptions {
   return {
     taskPath: options.taskPath,
     snapshotRef,
-    ...(options.snapshotRoot === undefined ? {} : { snapshotRoot: options.snapshotRoot }),
+    ...(options.snapshotRoot === undefined
+      ? {}
+      : { snapshotRoot: options.snapshotRoot }),
     ...(options.root === undefined ? {} : { root: options.root }),
     ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
-    ...(options.sourceAdapters === undefined ? {} : { sourceAdapters: options.sourceAdapters }),
+    ...(options.sourceAdapters === undefined
+      ? {}
+      : { sourceAdapters: options.sourceAdapters }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
 }
@@ -385,35 +656,57 @@ function preparationChangedWithoutTaskChange(
   prior: Awaited<ReturnType<typeof readRun>>,
   current: Awaited<ReturnType<typeof readRun>>,
 ): boolean {
-  return prior.envelope.source.snapshotRef === current.envelope.source.snapshotRef
-    && prior.run.preparedArtifact.digest !== current.run.preparedArtifact.digest;
+  return (
+    prior.envelope.source.snapshotRef === current.envelope.source.snapshotRef &&
+    prior.run.preparedArtifact.digest !== current.run.preparedArtifact.digest
+  );
 }
 
-function assertCheckIdentity(check: FieldworkCheckResult, source: FieldworkLookoutSource): void {
+function assertCheckIdentity(
+  check: FieldworkCheckResult,
+  source: FieldworkLookoutSource,
+): void {
   if (check.sourceId !== source.id || check.sourceUrl !== source.url) {
-    throw withCode("RECHECK_SOURCE_MISMATCH", "Lookout check does not identify the requested source");
+    throw withCode(
+      "RECHECK_SOURCE_MISMATCH",
+      "Lookout check does not identify the requested source",
+    );
   }
 }
 
-function assertCheckContinuity(check: FieldworkCheckResult, priorSnapshotRef: string): void {
-  const referencedPrior = check.kind === "unchanged-304"
-    ? check.snapshotRef
-    : check.kind === "unchanged-hash" || check.kind === "changed"
-      ? check.priorSnapshotRef
-      : null;
+function assertCheckContinuity(
+  check: FieldworkCheckResult,
+  priorSnapshotRef: string,
+): void {
+  const referencedPrior =
+    check.kind === "unchanged-304"
+      ? check.snapshotRef
+      : check.kind === "unchanged-hash" || check.kind === "changed"
+        ? check.priorSnapshotRef
+        : null;
   if (check.kind !== "error" && referencedPrior !== priorSnapshotRef) {
-    throw withCode("RECHECK_CONFLICT", "Lookout check does not continue from the selected prior run");
+    throw withCode(
+      "RECHECK_CONFLICT",
+      "Lookout check does not continue from the selected prior run",
+    );
   }
 }
 
 function sameObservation(
-  stored: { sourceId: string; snapshotRef: string; observedAt: string; proposals: readonly ExtractionProposal[] },
+  stored: {
+    sourceId: string;
+    snapshotRef: string;
+    observedAt: string;
+    proposals: readonly ExtractionProposal[];
+  },
   observation: ProposalSetObservation,
 ): boolean {
-  return stored.sourceId === observation.sourceId
-    && stored.snapshotRef === observation.snapshotRef
-    && stored.observedAt === observation.observedAt
-    && canonicalJson(stored.proposals) === canonicalJson(observation.proposals);
+  return (
+    stored.sourceId === observation.sourceId &&
+    stored.snapshotRef === observation.snapshotRef &&
+    stored.observedAt === observation.observedAt &&
+    canonicalJson(stored.proposals) === canonicalJson(observation.proposals)
+  );
 }
 
 // Fieldwork's public DTO is readonly; Lookout's registered-source DTO predates
@@ -421,8 +714,14 @@ function sameObservation(
 // private Lookout type through Fieldwork.
 function lookoutSource(source: FieldworkLookoutSource): LookoutSource {
   return "targetSchema" in source
-    ? { ...source, targetSchema: source.targetSchema.map(field => ({ ...field, ...(field.enumValues ? { enumValues: [...field.enumValues] } : {}) })) } as LookoutSource
-    : { ...source } as LookoutSource;
+    ? ({
+        ...source,
+        targetSchema: source.targetSchema.map((field) => ({
+          ...field,
+          ...(field.enumValues ? { enumValues: [...field.enumValues] } : {}),
+        })),
+      } as LookoutSource)
+    : ({ ...source } as LookoutSource);
 }
 
 function portableResult(input: {
@@ -467,8 +766,12 @@ function digestObservation(observation: ProposalSetObservation): string {
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value as Record<string, unknown>).sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+      )
       .join(",")}}`;
   }
   return JSON.stringify(value);

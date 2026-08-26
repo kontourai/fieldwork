@@ -1,32 +1,110 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { FieldworkSourceCheckReceiptStore } from "../src/source-check-receipts.js";
+import {
+  FieldworkSourceCheckReceiptStore,
+  type Baseline,
+  type Capture,
+} from "../src/source-check-receipts.js";
 
-test("a later pending source-check generation prevents an older completion becoming current", async () => {
-  const store = new FieldworkSourceCheckReceiptStore(await mkdtemp(join(tmpdir(), "fieldwork-source-check-receipts-")));
-  const head = "a".repeat(64);
-  const first = await store.begin("source-a", head, "2026-08-26T10:00:00.000Z");
-  const second = await store.begin("source-a", head, "2026-08-26T10:01:00.000Z");
-  assert.equal(await store.finalize(first, { outcome: "changed", resultProposalHeadId: "old-head" }), false);
-  assert.equal(await store.readCurrent("source-a"), null, "pending never falls back to an old current receipt");
-  assert.equal(await store.finalize(second, { outcome: "unchanged-304", priorProposalHeadId: head, resultProposalHeadId: head, capture: { sourceId: "source-a", url: "https://example.invalid/a", fetchedAt: "2026-08-26T10:01:00.000Z", bodyHash: "a".repeat(64), integrity: "body-and-identity" } }), true);
-  const current = await store.readCurrent("source-a", head);
-  assert.equal(current?.generation, 2);
-  assert.equal(current?.resultProposalHeadId, head);
-  assert.doesNotMatch(JSON.stringify(current), /secret-body|headers|warning|credential|\/Users\//i);
+const headA = "a".repeat(64),
+  headB = "b".repeat(64);
+const capture = (
+  sourceId = "source-a",
+  snapshotRef = "snapshot-a",
+): Capture => ({
+  sourceId,
+  snapshotRef,
+  url: "https://example.invalid/a",
+  fetchedAt: "2026-08-26T10:00:00.000Z",
+  bodyHash: "c".repeat(64),
+  integrity: "body-and-identity",
+});
+async function begin(
+  store: FieldworkSourceCheckReceiptStore,
+  sourceId = "source-a",
+  head = headA,
+) {
+  const baseline: Baseline = {
+    pointerToken: await store.currentPointerToken(sourceId),
+    proposalHeadId: head,
+    admittedAcquisition: capture(sourceId),
+  };
+  return store.begin(sourceId, baseline, async () => head);
+}
+
+test("a newer pending generation fences an old completion and changed receipts bind the resulting head", async () => {
+  const store = new FieldworkSourceCheckReceiptStore(
+    await mkdtemp(join(tmpdir(), "fieldwork-source-check-receipts-")),
+  );
+  const first = await begin(store);
+  const second = await begin(store);
+  const old = await store.finalize(
+    first,
+    {
+      checkedAt: "2026-08-26T10:01:00.000Z",
+      outcome: "changed",
+      priorProposalHeadId: headA,
+      resultProposalHeadId: headB,
+      priorCapture: capture(),
+      currentCapture: capture(),
+    },
+    async () => headB,
+  );
+  assert.equal(old.kind, "superseded");
+  assert.equal(
+    (await store.readCurrent("source-a", async () => headA)).kind,
+    "pending",
+  );
+  const done = await store.finalize(
+    second,
+    {
+      checkedAt: "2026-08-26T10:01:00.000Z",
+      outcome: "changed",
+      priorProposalHeadId: headA,
+      resultProposalHeadId: headB,
+      priorCapture: capture(),
+      currentCapture: capture(),
+    },
+    async () => headB,
+  );
+  assert.equal(done.kind, "available");
+  const current = await store.readCurrent("source-a", async () => headB);
+  assert.equal(current.kind, "available");
+  if (current.kind === "available")
+    assert.equal(current.receipt.resultProposalHeadId, headB);
 });
 
-test("receipt reads fail closed on corrupt pointer state and never rewrite it", async () => {
+test("corrupt pointers and source-directory symlinks fail closed without private paths", async () => {
   const root = await mkdtemp(join(tmpdir(), "fieldwork-source-check-corrupt-"));
   const store = new FieldworkSourceCheckReceiptStore(root);
-  const head = "b".repeat(64);
-  await store.begin("source-b", head, "2026-08-26T10:00:00.000Z");
+  await begin(store);
   const [directory] = await readdir(root);
   const pointer = join(root, directory!, "pointer.json");
-  await writeFile(pointer, "{", "utf8");
-  await assert.rejects(() => store.begin("source-b", head, "2026-08-26T10:01:00.000Z"));
-  assert.equal(await (await import("node:fs/promises")).readFile(pointer, "utf8"), "{");
+  await writeFile(pointer, "{");
+  const result = await store.readCurrent("source-a", async () => headA);
+  assert.deepEqual(result, { kind: "corrupt" });
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /fieldwork-source-check-corrupt|\//i,
+  );
+  const outside = await mkdtemp(join(tmpdir(), "fieldwork-outside-"));
+  const linkRoot = await mkdtemp(join(tmpdir(), "fieldwork-link-root-"));
+  const sourceDir = createHash("sha256").update("source-a").digest("hex");
+  await symlink(outside, join(linkRoot, sourceDir));
+  const linked = new FieldworkSourceCheckReceiptStore(linkRoot);
+  await assert.rejects(() =>
+    linked.begin(
+      "source-a",
+      {
+        pointerToken: null,
+        proposalHeadId: headA,
+        admittedAcquisition: capture(),
+      },
+      async () => headA,
+    ),
+  );
 });
