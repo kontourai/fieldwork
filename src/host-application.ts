@@ -12,7 +12,7 @@ import {
 import { runFieldwork, reviewedExport } from "./fieldwork.js";
 import { fieldworkHostDescriptor } from "./host-descriptor.js";
 import { openRun, readRunView } from "./server.js";
-import { ReviewedWebSourceReader, type ReviewedWebSourceInspection, type ReviewedWebSourceOwner, type ReviewedWebSourceRefs, type ReviewedWebSourceResult } from "./reviewed-web-source.js";
+import { ReviewedWebSourceReader, type ReviewedWebSourceCurrentness, type ReviewedWebSourceInspection, type ReviewedWebSourceOwner, type ReviewedWebSourceRefs, type ReviewedWebSourceResult } from "./reviewed-web-source.js";
 
 export interface FieldworkApplicationOpenOptions {
   readonly runDirectory: string;
@@ -34,6 +34,7 @@ export interface FieldworkApplication {
   /** Owner-bound web source operations. They are unavailable until a host configures an owner. */
   describeReviewedWebSource(exactRef: string): Promise<ReviewedWebSourceResult>;
   inspectReviewedWebSource(exactRef: string, cursor?: string): Promise<ReviewedWebSourceInspection>;
+  readReviewedWebSourceCurrentness(exactRef: string): Promise<ReviewedWebSourceCurrentness>;
   close(): Promise<void>;
 }
 
@@ -112,6 +113,10 @@ export function createFieldworkApplication(options: FieldworkApplicationOptions 
     async inspectReviewedWebSource(exactRef, cursor) {
       if (!reviewedWebSource) return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "restricted" };
       return reviewedWebSource.inspectReviewedWebSource(exactRef, cursor);
+    },
+    async readReviewedWebSourceCurrentness(exactRef) {
+      if (!reviewedWebSource) return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceCurrentness", status: "unsupported" };
+      return reviewedWebSource.readReviewedWebSourceCurrentness(exactRef);
     },
     async close() {
       await Promise.all([...sessions].map((session) => session.close()));

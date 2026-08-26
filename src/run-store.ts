@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, readFileSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { link, lstat, mkdir, open, readFile, realpath, rename, rm, unlink, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { validatePortableExtractionResultEnvelope, type PortableExtractionResultEnvelope } from "@kontourai/traverse";
@@ -81,8 +81,22 @@ export interface StoredRunMetadataRead {
  */
 export function currentReviewFence(runDirectory: string, expected: Pick<StoredRun, "runResource" | "preparedArtifact" | "review">): boolean {
   try {
-    const text = readFileSync(join(resolve(runDirectory), "run.json"), "utf8");
-    if (Buffer.byteLength(text, "utf8") > FIELDWORK_LIMITS.artifactBytes) return false;
+    const directory = resolve(runDirectory);
+    const beforeDirectory = lstatSync(directory);
+    if (!beforeDirectory.isDirectory() || beforeDirectory.isSymbolicLink()) return false;
+    const descriptor = openSync(join(directory, "run.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+    let bytes: Buffer;
+    try {
+      const before = fstatSync(descriptor);
+      if (!before.isFile() || before.isSymbolicLink() || before.size > FIELDWORK_LIMITS.artifactBytes) return false;
+      bytes = Buffer.alloc(before.size);
+      if (readSync(descriptor, bytes, 0, bytes.length, 0) !== bytes.length) return false;
+      const after = fstatSync(descriptor);
+      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.ctimeMs !== after.ctimeMs) return false;
+    } finally { closeSync(descriptor); }
+    const afterDirectory = lstatSync(directory);
+    if (beforeDirectory.dev !== afterDirectory.dev || beforeDirectory.ino !== afterDirectory.ino || beforeDirectory.ctimeMs !== afterDirectory.ctimeMs) return false;
+    const text = bytes.toString("utf8");
     const current = storedRunSchema.parse(JSON.parse(text));
     return current.runResource === expected.runResource
       && canonicalJson(current.preparedArtifact) === canonicalJson(expected.preparedArtifact)

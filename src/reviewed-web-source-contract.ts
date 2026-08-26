@@ -66,3 +66,59 @@ export const reviewedWebSourceRefsSchema: z.ZodType<ReviewedWebSourceRefs> = z.u
   closed({ apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceRefs"), status: z.enum(["restricted", "corrupt", "unsupported"]) }),
 ]);
 export function parseReviewedWebSourceRefs(value: unknown): ReviewedWebSourceRefs { return reviewedWebSourceRefsSchema.parse(value); }
+
+/**
+ * A bounded, owner-authenticated as-of observation.  Its `sourceObservation`
+ * is deliberately the Surface input rather than a Fieldwork current/drift
+ * label: consumers derive that meaning with their own Surface policy.
+ */
+export type ReviewedWebSourceCurrentness =
+  | {
+    readonly apiVersion: "fieldwork.kontourai.io/v1";
+    readonly kind: "ReviewedWebSourceCurrentness";
+    readonly status: "available";
+    readonly exactRef: string;
+    readonly evidenceId: string;
+    readonly reviewRevision: number;
+    readonly checkedAt: string;
+    readonly observationRef: string;
+    readonly scope: "local-owner-heads-as-of";
+    readonly captureIntegrity: "not-rechecked";
+    readonly sourceObservation: JsonValue;
+  }
+  | {
+    readonly apiVersion: "fieldwork.kontourai.io/v1";
+    readonly kind: "ReviewedWebSourceCurrentness";
+    readonly status: "restricted" | "missing" | "unsupported" | "corrupt" | "unavailable" | "no-check" | "check-pending" | "check-failed" | "legacy-receipt" | "missing-digest" | "head-changed" | "receipt-superseded" | "incompatible-source" | "storage-unavailable" | "limits-exceeded";
+  };
+
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
+const currentnessStatus = z.enum([
+  "restricted", "missing", "unsupported", "corrupt", "unavailable", "no-check", "check-pending", "check-failed", "legacy-receipt", "missing-digest", "head-changed", "receipt-superseded", "incompatible-source", "storage-unavailable", "limits-exceeded",
+]);
+const boundedJson = z.unknown().superRefine((value, context) => {
+  let nodes = 0;
+  const visit = (entry: unknown, depth: number): boolean => {
+    if (++nodes > 256 || depth > 8) return false;
+    if (entry === null || typeof entry === "boolean") return true;
+    if (typeof entry === "string") return entry.length <= 8_192;
+    if (typeof entry === "number") return Number.isFinite(entry);
+    if (Array.isArray(entry)) return entry.every((item) => visit(item, depth + 1));
+    if (typeof entry !== "object" || Object.getPrototypeOf(entry) !== Object.prototype) return false;
+    return Object.entries(entry as Record<string, unknown>).every(([key, item]) => key.length <= 8_192 && visit(item, depth + 1));
+  };
+  if (!visit(value, 0)) context.addIssue({ code: "custom", message: "Expected bounded JSON" });
+}) as z.ZodType<JsonValue>;
+
+const availableCurrentness = closed({
+  apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceCurrentness"), status: z.literal("available"),
+  exactRef, evidenceId: z.string().min(1).max(8_192), reviewRevision: z.number().int().nonnegative(),
+  checkedAt: z.iso.datetime(), observationRef: z.string().min(1).max(8_192),
+  scope: z.literal("local-owner-heads-as-of"), captureIntegrity: z.literal("not-rechecked"), sourceObservation: boundedJson,
+});
+const closedCurrentness = closed({ apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceCurrentness"), status: currentnessStatus });
+export const reviewedWebSourceCurrentnessSchema: z.ZodType<ReviewedWebSourceCurrentness> = z.union([availableCurrentness, closedCurrentness]).superRefine((value, context) => {
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 64 * 1024) context.addIssue({ code: "custom", message: "Currentness DTO exceeds 64KiB" });
+});
+export function parseReviewedWebSourceCurrentness(value: unknown): ReviewedWebSourceCurrentness { return reviewedWebSourceCurrentnessSchema.parse(value); }
