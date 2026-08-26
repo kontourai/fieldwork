@@ -4,6 +4,7 @@ import { appendFile, lstat, mkdtemp, readFile, readdir, rename, rm, symlink, uti
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
+import { FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES } from "../src/fieldwork-limits.js";
 import { FieldworkSourceCheckReceiptStore, type SourceCheckStorageHooks } from "../src/source-check-receipts.js";
 
 const source = "source-a", head = "a".repeat(64), next = "b".repeat(64);
@@ -33,7 +34,7 @@ for (const kind of ["pointer", "receipt"] as const) {
       let injections = 0;
       const hooks: SourceCheckStorageHooks = {
         [phase]: async (actual: "pointer" | "receipt" | "lock") => {
-          if (actual === kind && injections++ === 0) await appendFile(path, Buffer.alloc(16_385, 32));
+          if (actual === kind && injections++ === 0) await appendFile(path, Buffer.alloc(FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES + 1, 32));
         },
       };
       const result = await new FieldworkSourceCheckReceiptStore(f.root, hooks).readCurrent(source, async () => next);
@@ -46,8 +47,8 @@ for (const kind of ["pointer", "receipt"] as const) {
     await f.store.finalize(f.pending, completion(), async () => next);
     const path = kind === "pointer" ? f.pointer : await receiptPath(f.directory);
     const bytes = await readFile(path);
-    await appendFile(path, Buffer.alloc(16_385 - bytes.length, 32));
-    assert.equal((await lstat(path)).size, 16_385);
+    await appendFile(path, Buffer.alloc(FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES + 1 - bytes.length, 32));
+    assert.equal((await lstat(path)).size, FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES + 1);
     let opened = 0;
     const store = new FieldworkSourceCheckReceiptStore(f.root, { afterReadOpen: async (actual) => { if (actual === kind) opened++; } });
     assert.equal((await store.readCurrent(source, async () => next)).kind, "corrupt");
@@ -137,12 +138,12 @@ for (const phase of ["afterReadOpen", "afterReadStat"] as const) {
     let injections = 0;
     const hooks: SourceCheckStorageHooks = {
       [phase]: async (kind: "pointer" | "receipt" | "lock") => {
-        if (kind === "lock" && injections++ === 0) await appendFile(lock, Buffer.alloc(16_385, 32));
+        if (kind === "lock" && injections++ === 0) await appendFile(lock, Buffer.alloc(FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES + 1, 32));
       },
     };
     assert.equal((await new FieldworkSourceCheckReceiptStore(f.root, hooks).finalize(f.pending, completion(), async () => next)).kind, "busy");
     assert.equal(injections, 1);
-    assert.equal((await lstat(lock)).size, 16_386);
+    assert.equal((await lstat(lock)).size, FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES + 2);
   });
 }
 
@@ -180,7 +181,7 @@ test("pending pointer write is bounded even for an oversized allowed URL field",
   await assert.rejects(() => f.store.begin(source, {
     pointerToken: f.pending.pointerToken,
     proposalHeadId: head,
-    admittedAcquisition: { ...capture(), url: `https://example.invalid/${"x".repeat(20_000)}` },
+    admittedAcquisition: { ...capture(), url: `https://example.invalid/${"x".repeat(FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES)}` },
   }, async () => head));
   assert.ok((await readFile(f.pointer)).equals(before), "a rejected oversize pending write cannot poison existing state");
 });

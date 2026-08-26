@@ -2,9 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { FIELDWORK_CAPTURE_REF_MAX_CHARS, FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES } from "./fieldwork-limits.js";
 import { assertPortableOutput } from "./run-store.js";
 
-const MAX = 16_384;
+const MAX = FIELDWORK_SOURCE_CHECK_RECORD_MAX_BYTES;
 const HASH = /^[a-f0-9]{64}$/;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -466,7 +467,8 @@ function validCapture(value: unknown, sourceId: string) {
   }
   if (
     c.sourceId !== sourceId || typeof c.snapshotRef !== "string" ||
-    c.snapshotRef.length > 512 ||
+    c.snapshotRef.length === 0 ||
+    c.snapshotRef.length > FIELDWORK_CAPTURE_REF_MAX_CHARS ||
     !["http:", "https:"].includes(url.protocol) || url.username ||
     url.password || !HASH.test(c.bodyHash) || typeof c.fetchedAt !== "string" ||
     Number.isNaN(Date.parse(c.fetchedAt)) ||

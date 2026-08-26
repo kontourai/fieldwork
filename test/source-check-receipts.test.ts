@@ -4,6 +4,7 @@ import { mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { buildSnapshotSourceRef, parseSnapshotSourceRef } from "@kontourai/forage/fetch";
 import {
   FieldworkSourceCheckReceiptStore,
   type Baseline,
@@ -35,6 +36,53 @@ async function begin(
   };
   return store.begin(sourceId, baseline, async () => head);
 }
+
+test("a real public Forage exact reference beyond the former internal cap starts a receipt generation", async () => {
+  const sourceId = "source-a";
+  const body = "fixture";
+  const snapshot = {
+    sourceId,
+    url: `https://example.test/${"a".repeat(7_943)}`,
+    status: 200,
+    fetchedAt: "2026-08-26T10:00:00.000Z",
+    body,
+    bodyHash: createHash("sha256").update(body).digest("hex"),
+    headers: { "content-type": "text/plain" },
+  };
+  const snapshotRef = buildSnapshotSourceRef(snapshot);
+  const parsed = parseSnapshotSourceRef(snapshotRef);
+  assert.ok(parsed);
+  assert.equal(snapshotRef.length, 8_192);
+  const store = new FieldworkSourceCheckReceiptStore(
+    await mkdtemp(join(tmpdir(), "fieldwork-source-check-long-ref-")),
+  );
+
+  const admittedAcquisition: Capture = {
+    sourceId,
+    snapshotRef,
+    url: parsed.url,
+    bodyHash: parsed.bodyHash,
+    fetchedAt: parsed.fetchedAt,
+    snapshotDigest: parsed.snapshotDigest,
+    integrity: "snapshot-envelope",
+  };
+  const pending = await store.begin(sourceId, {
+    pointerToken: null,
+    proposalHeadId: headA,
+    admittedAcquisition,
+  }, async () => headA);
+
+  assert.equal(pending.generation, 1);
+  const finalized = await store.finalize(pending, {
+    checkedAt: "2026-08-26T10:01:00.000Z",
+    outcome: "unchanged-hash",
+    priorProposalHeadId: headA,
+    resultProposalHeadId: headA,
+    priorCapture: admittedAcquisition,
+    currentCapture: admittedAcquisition,
+  }, async () => headA);
+  assert.equal(finalized.kind, "available");
+});
 
 test("a newer pending generation fences an old completion and changed receipts bind the resulting head", async () => {
   const store = new FieldworkSourceCheckReceiptStore(

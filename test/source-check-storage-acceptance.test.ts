@@ -103,6 +103,7 @@ test("finalize freezes nested captures before the first head-read await", async 
 const invalidCompletions: Array<[string, () => Omit<Receipt, "version" | "sourceId" | "generation">]> = [
   ["unknown body field", () => ({ ...completion(), body: "arbitrary source text" })],
   ["credential URL userinfo", () => ({ ...completion(), currentCapture: { ...capture(), url: "https://user:password@example.invalid/a" } })],
+  ["empty snapshot reference", () => ({ ...completion(), currentCapture: { ...capture(), snapshotRef: "" } })],
   ["snapshot-envelope without digest", () => ({ ...completion(), currentCapture: { ...capture(), integrity: "snapshot-envelope" } })],
   ["legacy integrity with invented envelope digest", () => ({ ...completion(), currentCapture: { ...capture(), snapshotDigest: "e".repeat(64) } })],
   ["cross-source capture", () => ({ ...completion(), currentCapture: { ...capture(), sourceId: "another-source" } })],
