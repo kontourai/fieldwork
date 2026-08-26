@@ -1,12 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { assertPortableOutput } from "./run-store.js";
 
 const MAX = 16_384;
 const HASH = /^[a-f0-9]{64}$/;
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NAME = /^receipt-([1-9][0-9]*)-([a-f0-9]{64})\.json$/;
+type Failure =
+  | "missing"
+  | "pending"
+  | "superseded"
+  | "busy"
+  | "corrupt"
+  | "unavailable";
 export type Outcome =
   | "unchanged-304"
   | "unchanged-hash"
@@ -44,124 +53,139 @@ export interface Pending {
   readonly pointerToken: string;
   readonly baseline: Baseline;
 }
-export type Result =
-  | {
-      readonly kind:
-        | "missing"
-        | "pending"
-        | "superseded"
-        | "busy"
-        | "corrupt"
-        | "unavailable";
-    }
-  | { readonly kind: "available"; readonly receipt: Receipt };
+export type Result = { readonly kind: Failure } | {
+  readonly kind: "available";
+  readonly receipt: Receipt;
+};
 export type ReadHead = () => Promise<string | null>;
+export interface SourceCheckStorageHooks {
+  afterReadOpen?(kind: "pointer" | "receipt" | "lock"): Promise<void>;
+  afterReadStat?(kind: "pointer" | "receipt" | "lock"): Promise<void>;
+  beforeImmutableLink?(): Promise<void>;
+  beforeLockLink?(): Promise<void>;
+}
 interface Pointer {
   version: 1;
   sourceId: string;
   generation: number;
   state: "pending" | "current" | "failed";
   token: string;
-  baselineHeadId: string;
+  baseline: Baseline;
   receipt?: string;
   receiptDigest?: string;
 }
 
-/** Private Fieldwork persistence; it deliberately has no root-package export. */
 export class FieldworkSourceCheckReceiptStore {
-  public constructor(private readonly root: string) {}
+  public constructor(
+    private readonly root: string,
+    private readonly hooks: SourceCheckStorageHooks = {},
+  ) {}
+  public async currentPointerToken(sourceId: string): Promise<string | null> {
+    try {
+      validId(sourceId);
+      return (await this.pointer(sourceId, true))?.token ?? null;
+    } catch (e) {
+      throw typed(e);
+    }
+  }
   public async begin(
     sourceId: string,
-    baseline: Baseline,
+    value: Baseline,
     readHead: ReadHead,
   ): Promise<Pending> {
+    const baseline = copy(value);
     validBaseline(sourceId, baseline);
-    return this.lock(sourceId, async () => {
-      const old = await this.pointer(sourceId, true);
-      if (
-        (old?.token ?? null) !== baseline.pointerToken ||
-        (await readHead()) !== baseline.proposalHeadId
-      )
-        throw new StoreError("superseded");
-      const pointer: Pointer = {
-        version: 1,
-        sourceId,
-        generation: (old?.generation ?? 0) + 1,
-        state: "pending",
-        token: randomUUID(),
-        baselineHeadId: baseline.proposalHeadId,
-      };
-      await this.replace(this.pointerPath(sourceId), pointer);
-      if ((await readHead()) !== baseline.proposalHeadId)
-        throw new StoreError("superseded");
-      return {
-        sourceId,
-        generation: pointer.generation,
-        pointerToken: pointer.token,
-        baseline,
-      };
-    });
-  }
-  /** Obtained immediately before begin so the caller can freeze the pointer CAS witness. */
-  public async currentPointerToken(sourceId: string): Promise<string | null> {
-    return (await this.pointer(sourceId, true))?.token ?? null;
+    try {
+      return await this.lock(sourceId, async () => {
+        const old = await this.pointer(sourceId, true);
+        if (
+          (old?.token ?? null) !== baseline.pointerToken ||
+          await checkedHead(readHead) !== baseline.proposalHeadId
+        ) throw new StoreError("superseded");
+        const generation = (old?.generation ?? 0) + 1;
+        if (!Number.isSafeInteger(generation)) throw new StoreError("corrupt");
+        const pointer: Pointer = {
+          version: 1,
+          sourceId,
+          generation,
+          state: "pending",
+          token: randomUUID(),
+          baseline,
+        };
+        await this.replace(this.pointerPath(sourceId), pointer);
+        if (
+          await checkedHead(readHead) !== baseline.proposalHeadId ||
+          !samePointer(await this.pointer(sourceId, false), pointer)
+        ) throw new StoreError("superseded");
+        return copy({
+          sourceId,
+          generation,
+          pointerToken: pointer.token,
+          baseline,
+        });
+      });
+    } catch (e) {
+      throw typed(e);
+    }
   }
   public async finalize(
-    pending: Pending,
-    completed: Omit<Receipt, "version" | "sourceId" | "generation">,
+    inputPending: Pending,
+    input: Omit<Receipt, "version" | "sourceId" | "generation">,
     readHead: ReadHead,
   ): Promise<Result> {
+    const pending = copy(inputPending);
+    const complete = copy(input);
     try {
+      validPending(pending);
       const receipt: Receipt = {
         version: 1,
         sourceId: pending.sourceId,
         generation: pending.generation,
-        ...completed,
+        ...complete,
       };
-      validPending(pending);
       validReceipt(receipt);
       return await this.lock(pending.sourceId, async () => {
         const pointer = await this.pointer(pending.sourceId, false);
         if (
-          !pointer ||
-          pointer.state !== "pending" ||
+          !pointer || pointer.state !== "pending" ||
           pointer.generation !== pending.generation ||
           pointer.token !== pending.pointerToken ||
-          pointer.baselineHeadId !== pending.baseline.proposalHeadId
-        )
-          return { kind: "superseded" };
+          !same(pointer.baseline, pending.baseline)
+        ) return { kind: "superseded" };
         if (
-          receipt.priorProposalHeadId !== pending.baseline.proposalHeadId ||
-          !same(receipt.priorCapture, pending.baseline.admittedAcquisition)
-        )
-          return { kind: "superseded" };
-        if ((await readHead()) !== receipt.resultProposalHeadId)
+          receipt.priorProposalHeadId !== pointer.baseline.proposalHeadId ||
+          !same(receipt.priorCapture, pointer.baseline.admittedAcquisition)
+        ) return { kind: "superseded" };
+        if (await checkedHead(readHead) !== receipt.resultProposalHeadId) {
           return { kind: "unavailable" };
+        }
         const bytes = Buffer.from(JSON.stringify(receipt));
-        const digest = sha(bytes);
-        const name = `receipt-${receipt.generation}-${digest}.json`;
+        if (bytes.length > MAX) throw new StoreError("corrupt");
+        const digest = sha(bytes),
+          name = `receipt-${receipt.generation}-${digest}.json`;
         await this.immutable(join(this.dir(pending.sourceId), name), bytes);
         if (
-          (await readHead()) !== receipt.resultProposalHeadId ||
+          await checkedHead(readHead) !== receipt.resultProposalHeadId ||
           !samePointer(await this.pointer(pending.sourceId, false), pointer)
-        )
-          return { kind: "unavailable" };
-        await this.replace(this.pointerPath(pending.sourceId), {
+        ) return { kind: "unavailable" };
+        const published: Pointer = {
           ...pointer,
-          state:
-            receipt.outcome === "error" ||
-            receipt.outcome === "extraction-failure"
-              ? "failed"
-              : "current",
+          state: receipt.outcome === "error" ||
+              receipt.outcome === "extraction-failure"
+            ? "failed"
+            : "current",
           receipt: name,
           receiptDigest: digest,
-        });
-        if ((await readHead()) !== receipt.resultProposalHeadId)
-          return { kind: "unavailable" };
+        };
+        await this.replace(this.pointerPath(pending.sourceId), published);
+        if (
+          await checkedHead(readHead) !== receipt.resultProposalHeadId ||
+          !samePointer(await this.pointer(pending.sourceId, false), published)
+        ) return { kind: "unavailable" };
         return { kind: "available", receipt };
       });
-    } catch (error) {
-      return failure(error);
+    } catch (e) {
+      return failed(e);
     }
   }
   public async readCurrent(
@@ -169,26 +193,24 @@ export class FieldworkSourceCheckReceiptStore {
     readHead: ReadHead,
   ): Promise<Result> {
     try {
+      validId(sourceId);
       const pointer = await this.pointer(sourceId, true);
       if (!pointer) return { kind: "missing" };
       if (pointer.state === "pending") return { kind: "pending" };
       if (
-        pointer.state !== "current" ||
-        !pointer.receipt ||
+        pointer.state !== "current" || !pointer.receipt ||
         !pointer.receiptDigest
-      )
-        return { kind: "unavailable" };
-      const head = await readHead();
+      ) return { kind: "unavailable" };
+      const observed = await checkedHead(readHead);
       const receipt = await this.receipt(sourceId, pointer);
-      if (head !== receipt.resultProposalHeadId) return { kind: "unavailable" };
       if (
-        (await readHead()) !== head ||
+        observed !== receipt.resultProposalHeadId ||
+        await checkedHead(readHead) !== observed ||
         !samePointer(await this.pointer(sourceId, false), pointer)
-      )
-        return { kind: "unavailable" };
+      ) return { kind: "unavailable" };
       return { kind: "available", receipt };
-    } catch (error) {
-      return failure(error);
+    } catch (e) {
+      return failed(e);
     }
   }
   private dir(sourceId: string) {
@@ -200,14 +222,10 @@ export class FieldworkSourceCheckReceiptStore {
   private async ensure(sourceId: string) {
     const root = resolve(this.root);
     await mkdir(root, { recursive: true, mode: 0o700 });
-    const rootStat = await lstat(root);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink())
-      throw new StoreError("corrupt");
+    await assertDirectory(root);
     const dir = this.dir(sourceId);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    const stat = await lstat(dir);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new StoreError("corrupt");
+    await assertDirectory(dir);
     return dir;
   }
   private async pointer(
@@ -215,61 +233,70 @@ export class FieldworkSourceCheckReceiptStore {
     absent: boolean,
   ): Promise<Pointer | null> {
     try {
-      const value = JSON.parse(
-        (await this.read(this.pointerPath(sourceId))).toString(),
-      ) as Pointer;
-      validPointer(value, sourceId);
-      return value;
-    } catch (error) {
-      if (absent && code(error) === "ENOENT") return null;
-      throw error;
+      await this.readDirectories(sourceId);
+      const pointer = JSON.parse(
+        (await this.read(this.pointerPath(sourceId), "pointer")).toString(),
+      );
+      validPointer(pointer, sourceId);
+      return pointer;
+    } catch (e) {
+      if (absent && code(e) === "ENOENT") return null;
+      throw e;
     }
+  }
+  private async readDirectories(sourceId: string) {
+    await assertDirectory(resolve(this.root));
+    await assertDirectory(this.dir(sourceId));
   }
   private async receipt(sourceId: string, pointer: Pointer): Promise<Receipt> {
     if (
-      !pointer.receipt ||
-      !pointer.receiptDigest ||
-      !NAME.test(pointer.receipt)
-    )
-      throw new StoreError("corrupt");
-    const bytes = await this.read(join(this.dir(sourceId), pointer.receipt));
+      !pointer.receipt || !pointer.receiptDigest || !NAME.test(pointer.receipt)
+    ) throw new StoreError("corrupt");
+    const bytes = await this.read(
+      join(this.dir(sourceId), pointer.receipt),
+      "receipt",
+    );
     if (sha(bytes) !== pointer.receiptDigest) throw new StoreError("corrupt");
-    let value: Receipt;
+    let receipt: unknown;
     try {
-      value = JSON.parse(bytes.toString());
+      receipt = JSON.parse(bytes.toString());
     } catch {
       throw new StoreError("corrupt");
     }
-    validReceipt(value);
-    const m = NAME.exec(pointer.receipt);
+    validReceipt(receipt);
+    const match = NAME.exec(pointer.receipt);
     if (
-      !m ||
-      Number(m[1]) !== value.generation ||
-      m[2] !== pointer.receiptDigest ||
-      value.generation !== pointer.generation ||
-      value.sourceId !== sourceId
-    )
-      throw new StoreError("corrupt");
-    return value;
+      !match || Number(match[1]) !== pointer.generation ||
+      match[2] !== pointer.receiptDigest ||
+      (receipt as Receipt).generation !== pointer.generation ||
+      (receipt as Receipt).sourceId !== sourceId
+    ) throw new StoreError("corrupt");
+    return receipt as Receipt;
   }
-  private async read(path: string): Promise<Buffer> {
+  private async read(
+    path: string,
+    kind: "pointer" | "receipt" | "lock",
+  ): Promise<Buffer> {
     const handle = await open(
       path,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
     );
     try {
+      await this.hooks.afterReadOpen?.(kind);
       const before = await handle.stat();
-      if (!before.isFile() || before.size > MAX)
+      await this.hooks.afterReadStat?.(kind);
+      if (!before.isFile() || before.size > MAX) {
         throw new StoreError("corrupt");
+      }
       const out = Buffer.alloc(Number(before.size) + 1);
       const { bytesRead } = await handle.read(out, 0, out.length, 0);
       const after = await handle.stat();
+      const named = await lstat(path);
       if (
-        bytesRead > MAX ||
-        after.size !== before.size ||
-        !sameFile(before, after)
-      )
-        throw new StoreError("corrupt");
+        bytesRead > MAX || bytesRead > before.size ||
+        after.size !== before.size || named.isSymbolicLink() ||
+        !sameFile(before, after) || !sameFile(before, named)
+      ) throw new StoreError("corrupt");
       return out.subarray(0, bytesRead);
     } finally {
       await handle.close();
@@ -278,75 +305,77 @@ export class FieldworkSourceCheckReceiptStore {
   private async replace(path: string, value: Pointer) {
     await this.ensure(value.sourceId);
     const temp = `${path}.${randomUUID()}.pending`;
-    const h = await open(
+    const handle = await open(
       temp,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
       0o600,
     );
     try {
-      await h.writeFile(JSON.stringify(value));
-      await h.sync();
+      await handle.writeFile(JSON.stringify(value));
+      await handle.sync();
     } finally {
-      await h.close();
+      await handle.close();
     }
     await rename(temp, path);
   }
   private async immutable(path: string, bytes: Buffer) {
-    const dir = path.slice(0, path.lastIndexOf("/"));
-    const stat = await lstat(dir);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new StoreError("corrupt");
+    await assertDirectory(path.slice(0, path.lastIndexOf("/")));
     const temp = `${path}.${randomUUID()}.pending`;
-    const h = await open(
+    const handle = await open(
       temp,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
       0o600,
     );
     try {
-      await h.writeFile(bytes);
-      await h.sync();
+      await handle.writeFile(bytes);
+      await handle.sync();
     } finally {
-      await h.close();
+      await handle.close();
     }
     try {
+      await this.hooks.beforeImmutableLink?.();
       await link(temp, path);
-    } catch (error) {
-      if (code(error) !== "EEXIST") throw error;
-      const old = await this.read(path);
+    } catch (e) {
+      if (code(e) !== "EEXIST") throw e;
+      const old = await this.read(path, "receipt");
       if (!old.equals(bytes)) throw new StoreError("corrupt");
     } finally {
       await unlink(temp).catch(() => undefined);
     }
   }
   private async lock<T>(sourceId: string, body: () => Promise<T>): Promise<T> {
-    const dir = await this.ensure(sourceId),
-      path = join(dir, ".lock");
+    const path = join(await this.ensure(sourceId), ".lock");
     for (let attempt = 0; attempt < 5; attempt++) {
       const temp = `${path}.${randomUUID()}.pending`;
-      let h;
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        h = await open(
+        handle = await open(
           temp,
           constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
           0o600,
         );
-        await h.writeFile(
+        await handle.writeFile(
           JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
         );
-        await h.sync();
-        await link(temp, path);
-        const owner = await h.stat();
+        await handle.sync();
+        await this.hooks.beforeLockLink?.();
+        try {
+          await link(temp, path);
+        } catch (e) {
+          if (code(e) !== "EEXIST") throw e;
+          await recover(path, this);
+          continue;
+        }
+        const owner = await handle.stat();
         try {
           return await body();
         } finally {
-          await h.close();
+          await handle.close();
+          handle = undefined;
           await unlinkOwned(path, owner);
         }
-      } catch (error) {
-        await h?.close().catch(() => undefined);
-        if (code(error) !== "EEXIST") throw error;
-        await recover(path);
       } finally {
+        await handle?.close().catch(() => undefined);
         await unlink(temp).catch(() => undefined);
       }
     }
@@ -354,167 +383,211 @@ export class FieldworkSourceCheckReceiptStore {
   }
 }
 class StoreError extends Error {
-  public constructor(readonly kind: Exclude<Result["kind"], "available">) {
+  public constructor(readonly kind: Failure) {
     super(kind);
   }
 }
-function failure(error: unknown): Result {
-  return {
-    kind:
-      error instanceof StoreError
-        ? error.kind
-        : code(error) === "EEXIST"
-          ? "busy"
-          : "corrupt",
-  };
+function code(e: unknown) {
+  return e && typeof e === "object" && "code" in e
+    ? (e as NodeJS.ErrnoException).code
+    : undefined;
 }
-function code(error: unknown) {
-  return (error as NodeJS.ErrnoException).code;
+function typed(e: unknown) {
+  return e instanceof StoreError ? e : new StoreError(
+    code(e) === "EACCES" || code(e) === "EPERM" ? "unavailable" : "corrupt",
+  );
+}
+function failed(e: unknown): Result {
+  return { kind: typed(e).kind };
+}
+function checkedHead(read: ReadHead) {
+  return read().catch(() => {
+    throw new StoreError("unavailable");
+  });
+}
+function copy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 function sha(value: Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
-function same(left: unknown, right: unknown) {
-  return JSON.stringify(left) === JSON.stringify(right);
+function same(a: unknown, b: unknown) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
-function samePointer(left: Pointer | null, right: Pointer) {
-  return left !== null && same(left, right);
+function samePointer(a: Pointer | null, b: Pointer) {
+  return a !== null && same(a, b);
 }
 function sameFile(
-  left: { dev: number | bigint; ino: number | bigint },
-  right: { dev: number | bigint; ino: number | bigint },
+  a: Pick<Stats, "dev" | "ino">,
+  b: Pick<Stats, "dev" | "ino">,
 ) {
-  return left.dev === right.dev && left.ino === right.ino;
+  return a.dev === b.dev && a.ino === b.ino;
 }
-function validId(value: string) {
+async function assertDirectory(path: string) {
+  const stat = await lstat(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new StoreError("corrupt");
+  }
+}
+function exact(value: unknown, allowed: string[]) {
+  return !!value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).every((key) => allowed.includes(key));
+}
+function validId(value: unknown) {
   if (
     typeof value !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(value)
-  )
-    throw new StoreError("corrupt");
+  ) throw new StoreError("corrupt");
 }
-function validCapture(value: Capture, sourceId: string) {
+function validCapture(value: unknown, sourceId: string) {
   if (
-    !value ||
-    value.sourceId !== sourceId ||
-    typeof value.snapshotRef !== "string" ||
-    value.snapshotRef.length > 512 ||
-    !/^https:\/\//.test(value.url) ||
-    /@/.test(new URL(value.url).host) ||
-    !HASH.test(value.bodyHash) ||
-    typeof value.fetchedAt !== "string" ||
-    Number.isNaN(Date.parse(value.fetchedAt)) ||
-    !["snapshot-envelope", "body-and-identity"].includes(value.integrity) ||
-    (value.snapshotDigest !== undefined && !HASH.test(value.snapshotDigest))
-  )
+    !exact(value, [
+      "sourceId",
+      "snapshotRef",
+      "url",
+      "bodyHash",
+      "fetchedAt",
+      "snapshotDigest",
+      "integrity",
+    ])
+  ) throw new StoreError("corrupt");
+  const c = value as Capture;
+  let url: URL;
+  try {
+    url = new URL(c.url);
+  } catch {
     throw new StoreError("corrupt");
-}
-function validBaseline(sourceId: string, value: Baseline) {
-  validId(sourceId);
+  }
   if (
-    (value.pointerToken !== null &&
-      !/^[0-9a-f-]{36}$/i.test(value.pointerToken)) ||
-    !HASH.test(value.proposalHeadId)
-  )
+    c.sourceId !== sourceId || typeof c.snapshotRef !== "string" ||
+    c.snapshotRef.length > 512 || url.protocol !== "https:" || url.username ||
+    url.password || !HASH.test(c.bodyHash) || typeof c.fetchedAt !== "string" ||
+    Number.isNaN(Date.parse(c.fetchedAt)) ||
+    !["snapshot-envelope", "body-and-identity"].includes(c.integrity) ||
+    (c.integrity === "snapshot-envelope"
+      ? !HASH.test(c.snapshotDigest ?? "")
+      : c.snapshotDigest !== undefined)
+  ) throw new StoreError("corrupt");
+}
+function validBaseline(source: string, value: unknown) {
+  if (
+    !exact(value, ["pointerToken", "proposalHeadId", "admittedAcquisition"])
+  ) throw new StoreError("corrupt");
+  const b = value as Baseline;
+  validId(source);
+  if (
+    (b.pointerToken !== null &&
+      (typeof b.pointerToken !== "string" || !UUID.test(b.pointerToken))) ||
+    !HASH.test(b.proposalHeadId)
+  ) throw new StoreError("corrupt");
+  validCapture(b.admittedAcquisition, source);
+}
+function validPending(value: unknown) {
+  if (!exact(value, ["sourceId", "generation", "pointerToken", "baseline"])) {
     throw new StoreError("corrupt");
-  validCapture(value.admittedAcquisition, sourceId);
-}
-function validPending(value: Pending) {
-  validBaseline(value.sourceId, value.baseline);
+  }
+  const p = value as Pending;
+  validBaseline(p.sourceId, p.baseline);
   if (
-    !Number.isSafeInteger(value.generation) ||
-    value.generation < 1 ||
-    !/^[0-9a-f-]{36}$/i.test(value.pointerToken)
-  )
-    throw new StoreError("corrupt");
+    !Number.isSafeInteger(p.generation) || p.generation < 1 ||
+    !UUID.test(p.pointerToken)
+  ) throw new StoreError("corrupt");
 }
-function validPointer(value: Pointer, sourceId: string) {
+function validPointer(value: unknown, source: string) {
   if (
-    !value ||
-    value.version !== 1 ||
-    value.sourceId !== sourceId ||
-    !Number.isSafeInteger(value.generation) ||
-    value.generation < 1 ||
-    !["pending", "current", "failed"].includes(value.state) ||
-    !/^[0-9a-f-]{36}$/i.test(value.token) ||
-    !HASH.test(value.baselineHeadId) ||
-    (value.state === "current" &&
-      (!value.receipt ||
-        !value.receiptDigest ||
-        !HASH.test(value.receiptDigest)))
-  )
-    throw new StoreError("corrupt");
+    !exact(value, [
+      "version",
+      "sourceId",
+      "generation",
+      "state",
+      "token",
+      "baseline",
+      "receipt",
+      "receiptDigest",
+    ])
+  ) throw new StoreError("corrupt");
+  const p = value as Pointer;
+  if (
+    p.version !== 1 || p.sourceId !== source ||
+    !Number.isSafeInteger(p.generation) || p.generation < 1 ||
+    !["pending", "current", "failed"].includes(p.state) || !UUID.test(p.token)
+  ) throw new StoreError("corrupt");
+  validBaseline(source, p.baseline);
+  if (
+    (p.state === "current" &&
+      (!p.receipt || !p.receiptDigest || !HASH.test(p.receiptDigest))) ||
+    (p.receipt !== undefined && typeof p.receipt !== "string")
+  ) throw new StoreError("corrupt");
 }
-function validReceipt(value: Receipt) {
+function validReceipt(value: unknown) {
   if (
-    !value ||
-    value.version !== 1 ||
-    !Number.isSafeInteger(value.generation) ||
-    value.generation < 1 ||
+    !exact(value, [
+      "version",
+      "sourceId",
+      "generation",
+      "checkedAt",
+      "outcome",
+      "priorProposalHeadId",
+      "resultProposalHeadId",
+      "priorCapture",
+      "currentCapture",
+    ])
+  ) throw new StoreError("corrupt");
+  const r = value as Receipt;
+  if (
+    r.version !== 1 || !Number.isSafeInteger(r.generation) ||
+    r.generation < 1 ||
     ![
       "unchanged-304",
       "unchanged-hash",
       "changed",
       "error",
       "extraction-failure",
-    ].includes(value.outcome) ||
-    typeof value.checkedAt !== "string" ||
-    Number.isNaN(Date.parse(value.checkedAt)) ||
-    !HASH.test(value.priorProposalHeadId) ||
-    !HASH.test(value.resultProposalHeadId)
-  )
-    throw new StoreError("corrupt");
-  validId(value.sourceId);
-  validCapture(value.priorCapture, value.sourceId);
-  validCapture(value.currentCapture, value.sourceId);
-  assertPortableOutput(value);
+    ].includes(r.outcome) || typeof r.checkedAt !== "string" ||
+    Number.isNaN(Date.parse(r.checkedAt)) ||
+    !HASH.test(r.priorProposalHeadId) || !HASH.test(r.resultProposalHeadId)
+  ) throw new StoreError("corrupt");
+  validId(r.sourceId);
+  validCapture(r.priorCapture, r.sourceId);
+  validCapture(r.currentCapture, r.sourceId);
+  if (
+    (r.outcome === "changed" &&
+      r.resultProposalHeadId === r.priorProposalHeadId) ||
+    ((r.outcome === "unchanged-304" || r.outcome === "unchanged-hash") &&
+      (r.resultProposalHeadId !== r.priorProposalHeadId ||
+        !same(r.priorCapture, r.currentCapture)))
+  ) throw new StoreError("corrupt");
+  assertPortableOutput(r);
 }
-async function unlinkOwned(
-  path: string,
-  owner: { dev: number | bigint; ino: number | bigint },
-) {
+async function unlinkOwned(path: string, owner: Pick<Stats, "dev" | "ino">) {
   try {
     const current = await lstat(path);
     if (
-      current.isFile() &&
-      !current.isSymbolicLink() &&
-      sameFile(current, owner)
-    )
-      await unlink(path);
-  } catch (error) {
-    if (code(error) !== "ENOENT") throw error;
+      current.isFile() && !current.isSymbolicLink() && sameFile(current, owner)
+    ) await unlink(path);
+  } catch (e) {
+    if (code(e) !== "ENOENT") throw e;
   }
 }
-async function recover(path: string) {
+async function recover(path: string, store: FieldworkSourceCheckReceiptStore) {
   try {
     const stat = await lstat(path);
     if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.size > 512 ||
+      !stat.isFile() || stat.isSymbolicLink() || stat.size > 512 ||
       Date.now() - stat.mtimeMs < 60_000
-    )
+    ) return;
+    let raw: Buffer;
+    try {
+      raw = await (store as any).read(path, "lock");
+    } catch {
       return;
-    const h = await open(
-      path,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-    );
-    let raw;
-    try {
-      const opened = await h.stat();
-      if (!opened.isFile() || !sameFile(stat, opened)) return;
-      raw = (await h.readFile({ encoding: "utf8" })).slice(0, 512);
-    } finally {
-      await h.close();
     }
     try {
-      const owner = JSON.parse(raw) as { pid?: number };
-      process.kill(owner.pid ?? -1, 0);
-    } catch (error) {
-      if (code(error) === "ESRCH" || error instanceof SyntaxError)
+      process.kill(JSON.parse(raw.toString()).pid, 0);
+    } catch (e) {
+      if (code(e) === "ESRCH" || e instanceof SyntaxError) {
         await unlinkOwned(path, stat);
+      }
     }
-  } catch {
-    /* ambiguous owners remain busy */
-  }
+  } catch { /* ambiguous locks remain busy */ }
 }
