@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { parseSnapshotSourceRef, resolveSnapshotSourceRef } from "@kontourai/forage/fetch";
+import { createObservationStore } from "@kontourai/lookout";
 import { enumerateExactOccurrences, resolvePreparedArtifact } from "@kontourai/traverse";
 import { canonicalJson } from "./contracts.js";
 import { projectAttestedReviewedProjection } from "./fieldwork.js";
 import { currentReviewFence, readRun, readRunMetadata } from "./run-store.js";
-import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
-import type { ReviewedWebSourceInspection, ReviewedWebSourceRefs, ReviewedWebSourceResult } from "./reviewed-web-source-contract.js";
+import { buildReviewedExtractionSourceState, restoreReviewedExtractionEvidence } from "@kontourai/surface";
+import { FieldworkSourceCheckReceiptStore, type ReceiptV2 } from "./source-check-receipts.js";
+import { parseReviewedWebSourceCurrentness, type ReviewedWebSourceCurrentness, type ReviewedWebSourceInspection, type ReviewedWebSourceRefs, type ReviewedWebSourceResult } from "./reviewed-web-source-contract.js";
 import { REVIEWED_WEB_SOURCE_MAX_PAGES, REVIEWED_WEB_SOURCE_PAGE_CHARS } from "./fieldwork-limits.js";
 
 const PAGE_CHARS = REVIEWED_WEB_SOURCE_PAGE_CHARS;
@@ -17,13 +20,43 @@ export interface ReviewedWebSourceOwner {
   readonly runDirectory: string;
   readonly snapshotRoot: string;
   authorize(request: { readonly operation: "list" | "describe" | "inspect"; readonly exactRef?: string }): boolean | Promise<boolean>;
+  /** Optional native-only currentness capability. Existing owner operations do not use it. */
+  readonly sourceChecks?: {
+    readonly receiptRoot: string;
+    readonly observationRoot: string;
+    authorizeCurrentness(request: { readonly operation: "currentness"; readonly exactRef: string }): CurrentnessLease | Promise<CurrentnessLease>;
+  };
 }
 
-export type { ReviewedWebSourceInspection, ReviewedWebSourceRefs, ReviewedWebSourceResult } from "./reviewed-web-source-contract.js";
+export interface CurrentnessLease { isCurrent(): boolean; }
+
+export type { ReviewedWebSourceCurrentness, ReviewedWebSourceInspection, ReviewedWebSourceRefs, ReviewedWebSourceResult } from "./reviewed-web-source-contract.js";
 
 /** A configured owner is the only authority that can resolve opaque source refs. */
 export class ReviewedWebSourceReader {
-  constructor(private readonly owner: ReviewedWebSourceOwner) {}
+  private readonly sourceChecks: CapturedSourceChecks | undefined;
+  private readonly currentnessOwner: CapturedCurrentnessOwner | undefined;
+
+  constructor(private readonly owner: ReviewedWebSourceOwner) {
+    // Do not invoke an inherited/configured accessor to discover this optional
+    // authority.  Currentness is unavailable unless its whole capability is a
+    // plain own-data configuration captured at construction.
+    const runDirectory = Object.getOwnPropertyDescriptor(owner, "runDirectory");
+    const snapshotRoot = Object.getOwnPropertyDescriptor(owner, "snapshotRoot");
+    if (!runDirectory || !("value" in runDirectory) || typeof runDirectory.value !== "string"
+      || !snapshotRoot || !("value" in snapshotRoot) || typeof snapshotRoot.value !== "string") return;
+    this.currentnessOwner = { runDirectory: resolveRoot(runDirectory.value), snapshotRoot: resolveRoot(snapshotRoot.value) };
+    const descriptor = Object.getOwnPropertyDescriptor(owner, "sourceChecks");
+    if (!descriptor || !("value" in descriptor) || !isPlainRecord(descriptor.value)) return;
+    const checks = descriptor.value;
+    const receipt = Object.getOwnPropertyDescriptor(checks, "receiptRoot");
+    const observation = Object.getOwnPropertyDescriptor(checks, "observationRoot");
+    const authorize = Object.getOwnPropertyDescriptor(checks, "authorizeCurrentness");
+    if (!receipt || !("value" in receipt) || typeof receipt.value !== "string"
+      || !observation || !("value" in observation) || typeof observation.value !== "string"
+      || !authorize || !("value" in authorize) || typeof authorize.value !== "function") return;
+    this.sourceChecks = { receiptRoot: resolveRoot(receipt.value), observationRoot: resolveRoot(observation.value), authorize: authorize.value, receiver: checks };
+  }
 
   async listReviewedWebSourceRefs(cursor?: string): Promise<ReviewedWebSourceRefs> {
     if (!validCursor(cursor)) return refs("unsupported");
@@ -111,6 +144,63 @@ export class ReviewedWebSourceReader {
     } catch { return inspection("storage-unavailable"); }
   }
 
+  /**
+   * Read one completed v2 receipt as an owner-head as-of fact. This performs
+   * no fetch, body replay, proposal-body read, write, recovery, or repair.
+   */
+  async readReviewedWebSourceCurrentness(exactRef: string): Promise<ReviewedWebSourceCurrentness> {
+    if (!isExactRef(exactRef)) return currentness("unsupported");
+    const checks = this.sourceChecks, currentnessOwner = this.currentnessOwner;
+    if (!checks || !currentnessOwner) return currentness("unsupported");
+    const initial = await this.currentnessLease(checks, exactRef);
+    if (!initial || !leaseCurrent(initial)) return currentness("restricted");
+    let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
+    try { found = await this.metadata(exactRef); }
+    catch (error) { return currentness(metadataFailure(error)); }
+    if (!found) return currentness("missing");
+
+    const original = oldReviewedCapture(found.surfaceEvidence);
+    if (!original) return currentness("missing-digest");
+    const receipts = new FieldworkSourceCheckReceiptStore(checks.receiptRoot);
+    let stored: Awaited<ReturnType<FieldworkSourceCheckReceiptStore["readCurrentWithWitness"]>>;
+    try { stored = await receipts.readCurrentWithWitness(original.sourceId); }
+    catch { return currentness("storage-unavailable"); }
+    if (stored.kind !== "available") return currentness(receiptFailure(stored.kind));
+    if (!sameSource(original.sourceId, original.resourceRef, stored.receipt.currentCapture.sourceId, stored.receipt.currentCapture.url)) return currentness("incompatible-source");
+    if (!stored.receipt.acquisitionHead.headSnapshotRef.snapshotDigest) return currentness("missing-digest");
+
+    const snapshots = createFilesystemSnapshotStore({ root: currentnessOwner.snapshotRoot });
+    const observations = createObservationStore({ root: checks.observationRoot });
+    const firstHeads = await compareHeads(snapshots, observations, stored.receipt);
+    if (firstHeads !== "matches") return currentness(firstHeads);
+
+    const observation = reviewedSourceObservation(original, stored.receipt);
+    try { buildReviewedExtractionSourceState(found.surfaceEvidence, observation, stored.receipt.checkedAt); }
+    catch { return currentness("incompatible-source"); }
+
+    const final = await this.currentnessLease(checks, exactRef);
+    if (!final || !leaseCurrent(final)) return currentness("restricted");
+    const finalHeads = await compareHeads(snapshots, observations, stored.receipt);
+    if (finalHeads !== "matches") return currentness(finalHeads);
+    let receiptFence: Awaited<ReturnType<FieldworkSourceCheckReceiptStore["compareCurrentWitness"]>>;
+    try { receiptFence = await receipts.compareCurrentWitness(stored.witness); }
+    catch { return currentness("storage-unavailable"); }
+    if (receiptFence.kind !== "matches") return currentness(receiptFence.kind === "superseded" ? "receipt-superseded" : receiptFailure(receiptFence.kind));
+
+    // This is deliberately synchronous: no await may reopen the original
+    // review or borrowed leases after the final as-of fences.
+    if (!currentReviewFence(currentnessOwner.runDirectory, found.run)) return currentness("missing");
+    if (!leaseCurrent(initial) || !leaseCurrent(final)) return currentness("restricted");
+    const result: ReviewedWebSourceCurrentness = {
+      apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceCurrentness", status: "available",
+      exactRef, evidenceId: found.surfaceEvidence.id, reviewRevision: found.run.review.revision,
+      checkedAt: stored.receipt.checkedAt, observationRef: observationRef(observation),
+      scope: "local-owner-heads-as-of", captureIntegrity: "not-rechecked", sourceObservation: observation,
+    };
+    try { return parseReviewedWebSourceCurrentness(result); }
+    catch { return currentness("limits-exceeded"); }
+  }
+
   private async metadata(exactRef: string) {
     const stored = await readRunMetadata(this.owner.runDirectory);
     const captureRef = stored.envelope.source.snapshotRef;
@@ -123,7 +213,9 @@ export class ReviewedWebSourceReader {
       if (ref !== exactRef) continue;
       const evidence = attested.enrichment.additionalEvidence.map((entry) => closedEvidence(entry, index)).find((entry): entry is NonNullable<ReturnType<typeof closedEvidence>> => entry !== undefined);
       if (!evidence) return undefined;
-      return { run: stored.run, captureRef, proposal, proposalIndex: index, candidateId: evidence.candidate.id, evidence };
+      const surfaceEvidence = attested.enrichment.additionalEvidence.find((entry) => entry.id === evidence.id);
+      if (!surfaceEvidence) return undefined;
+      return { run: stored.run, captureRef, proposal, proposalIndex: index, candidateId: evidence.candidate.id, evidence, surfaceEvidence };
     }
     return undefined;
   }
@@ -146,12 +238,22 @@ export class ReviewedWebSourceReader {
     try { return await this.owner.authorize(request); }
     catch { return false; }
   }
+
+  private async currentnessLease(checks: CapturedSourceChecks, exactRef: string): Promise<CapturedLease | undefined> {
+    try {
+      const lease = await Reflect.apply(checks.authorize, checks.receiver, [{ operation: "currentness", exactRef }]);
+      return captureLease(lease);
+    } catch { return undefined; }
+  }
 }
+
+interface CapturedSourceChecks { readonly receiptRoot: string; readonly observationRoot: string; readonly authorize: Function; readonly receiver: object; }
+interface CapturedCurrentnessOwner { readonly runDirectory: string; readonly snapshotRoot: string; }
 
 function opaqueRef(runResource: string, captureRef: string, preparedRef: string, digest: string, proposalIndex: number, occurrence: unknown): string {
   return `fieldwork-reviewed-source:v1:${createHash("sha256").update(canonicalJson({ runResource, captureRef, preparedRef, digest, proposalIndex, occurrence })).digest("hex")}`;
 }
-function isExactRef(value: string): boolean { return /^fieldwork-reviewed-source:v1:[a-f0-9]{64}$/.test(value); }
+function isExactRef(value: unknown): value is string { return typeof value === "string" && /^fieldwork-reviewed-source:v1:[a-f0-9]{64}$/.test(value); }
 function validCursor(value: string | undefined): boolean { return value === undefined || /^(?:0|[1-9][0-9]{0,5})$/.test(value); }
 function descriptor(status: Exclude<ReviewedWebSourceResult["status"], "available">): ReviewedWebSourceResult { return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status }; }
 function inspection(status: Exclude<ReviewedWebSourceInspection["status"], "available">): ReviewedWebSourceInspection { return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status }; }
@@ -187,3 +289,90 @@ function closedEvidence(entry: Parameters<typeof restoreReviewedExtractionEviden
 function unsupportedReviewedShape(): Error {
   return Object.assign(new Error("Reviewed source metadata is unsupported for this review shape"), { code: "UNSUPPORTED" });
 }
+
+type ClosedCurrentness = Exclude<ReviewedWebSourceCurrentness, { readonly status: "available" }> ["status"];
+function currentness(status: ClosedCurrentness): ReviewedWebSourceCurrentness { return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceCurrentness", status }; }
+function resolveRoot(value: string): string { return resolve(value); }
+function isPlainRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype; }
+interface CapturedLease { readonly isCurrent: Function; readonly receiver: object; }
+function captureLease(value: unknown): CapturedLease | undefined {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined;
+  const receiver = value as object;
+  let candidate: object | null = receiver;
+  while (candidate !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(candidate, "isCurrent");
+    if (descriptor) return "value" in descriptor && typeof descriptor.value === "function"
+      ? { isCurrent: descriptor.value, receiver } : undefined;
+    candidate = Object.getPrototypeOf(candidate);
+  }
+  return undefined;
+}
+function leaseCurrent(lease: CapturedLease): boolean {
+  try {
+    // A borrowed lease is never disposed or renewed here. A promise is not a
+    // synchronous lease assertion and must fail closed rather than be truthy.
+    return Reflect.apply(lease.isCurrent, lease.receiver, []) === true;
+  } catch { return false; }
+}
+function metadataFailure(error: unknown): ClosedCurrentness {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" ? "missing" : code === "UNSUPPORTED" ? "unsupported" : code === "EFBIG" ? "limits-exceeded" : "corrupt";
+}
+function receiptFailure(kind: string): ClosedCurrentness {
+  return kind === "missing" ? "no-check"
+    : kind === "pending" ? "check-pending"
+      : kind === "legacy" ? "legacy-receipt"
+        : kind === "superseded" ? "receipt-superseded"
+          : kind === "unavailable" ? "check-failed"
+            : kind === "unsupported" ? "unsupported"
+              : kind === "corrupt" ? "corrupt" : "unavailable";
+}
+
+function oldReviewedCapture(evidence: Parameters<typeof buildReviewedExtractionSourceState>[0]) {
+  try {
+    const restored = restoreReviewedExtractionEvidence(evidence);
+    const snapshotRef = restored.importRecord.spec.envelope.source.snapshotRef;
+    if (!snapshotRef) return undefined;
+    const parsed = parseSnapshotSourceRef(snapshotRef);
+    if (!parsed?.snapshotDigest) return undefined;
+    return {
+      snapshotRef, sourceId: parsed.sourceId, resourceRef: parsed.url, capturedAt: parsed.fetchedAt,
+      envelopeDigest: { algorithm: "sha256" as const, value: parsed.snapshotDigest },
+      contentDigest: { algorithm: "sha256" as const, value: parsed.bodyHash },
+    };
+  } catch { return undefined; }
+}
+function sameSource(expectedSource: string, expectedResource: string, observedSource: string, observedResource: string): boolean {
+  return expectedSource === observedSource && expectedResource === observedResource;
+}
+async function compareHeads(
+  snapshots: ReturnType<typeof createFilesystemSnapshotStore>,
+  observations: ReturnType<typeof createObservationStore>,
+  receipt: ReceiptV2,
+): Promise<ClosedCurrentness | "matches"> {
+  try {
+    const forage = await snapshots.compareHeadWitness(receipt.acquisitionHead);
+    if (forage.kind !== "matches") return headFailure(forage.kind);
+    const lookout = await observations.compareHeadWitness(receipt.proposalHead);
+    if (lookout.kind !== "matches") return headFailure(lookout.kind);
+    return "matches";
+  } catch { return "storage-unavailable"; }
+}
+function headFailure(kind: string): ClosedCurrentness {
+  return kind === "changed" ? "head-changed"
+    : kind === "missing" ? "no-check"
+      : kind === "unsupported" ? "unsupported"
+        : kind === "corrupt" ? "corrupt"
+          : kind === "unavailable" ? "unavailable" : "unavailable";
+}
+function reviewedSourceObservation(expected: NonNullable<ReturnType<typeof oldReviewedCapture>>, receipt: ReceiptV2) {
+  const observed = {
+    snapshotRef: receipt.currentCapture.snapshotRef, sourceId: receipt.currentCapture.sourceId,
+    resourceRef: receipt.currentCapture.url, capturedAt: receipt.currentCapture.fetchedAt,
+    envelopeDigest: { algorithm: "sha256" as const, value: receipt.acquisitionHead.headSnapshotRef.snapshotDigest },
+    contentDigest: { algorithm: "sha256" as const, value: receipt.currentCapture.bodyHash },
+  };
+  const ref = `fieldwork-reviewed-source-observation:v1:${createHash("sha256").update(canonicalJson({ expected, observed, checkedAt: receipt.checkedAt, generation: receipt.generation })).digest("hex")}`;
+  return { version: "surface.reviewed-source-observation/v1" as const, owner: { authority: "fieldwork-source-check-receipt/v2", observationRef: ref }, expected, observed };
+}
+function observationRef(observation: ReturnType<typeof reviewedSourceObservation>): string { return observation.owner.observationRef; }
