@@ -34,7 +34,7 @@ import {
   newReviewRound,
   runFieldwork,
 } from "./fieldwork.js";
-import { assertPortableOutput, readRun, saveReview } from "./run-store.js";
+import { assertPortableOutput, readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import type { FieldworkRuntimeBinding } from "./runtime-contracts.js";
 
 export type FieldworkRecheckClassification =
@@ -261,7 +261,9 @@ export async function recheckFieldwork(
   );
   let check: FieldworkCheckResult;
   try {
-    check = await invocation.check(invocation.source);
+    // The owner result is data, not a live mutable capability. Freeze its
+    // exact identity before Lookout's asynchronous admission starts.
+    check = snapshotCheck(await invocation.check(invocation.source));
   } catch {
     return portableResult({
       classification: "source-unavailable",
@@ -306,7 +308,15 @@ export async function recheckFieldwork(
         });
       }
     }
-    throw withCode("RECHECK_CONFLICT", "Source check could not be admitted", checkAdmission.error);
+    throw withCode(
+      checkAdmission.error.kind === "invalid-input"
+        ? "RECHECK_OBSERVATION_FAILED"
+        : "RECHECK_CONFLICT",
+      checkAdmission.error.kind === "invalid-input"
+        ? "Source check could not be admitted"
+        : "Source check conflicts with the selected baseline",
+      checkAdmission.error,
+    );
   }
   const admittedCheck = checkAdmission.value;
   // The actual Forage acquisition head is independent of Lookout's proposal
@@ -464,8 +474,29 @@ export async function recheckFieldwork(
     },
   );
   try {
-    await saveReview(current.directory, current.run, newReviewRound(items));
+    await withRunReviewLock(current.directory, async (stored) => {
+      // A recheck may only replace the untouched initial queue. A public
+      // Survey append that wins the proposal-commit race is durable review
+      // authority, not stale state to overwrite.
+      if (
+        stored.run.review.revision !== current.run.review.revision ||
+        canonicalJson(stored.run.review.events) !==
+          canonicalJson(current.run.review.events) ||
+        stored.run.review.snapshotHash !== current.run.review.snapshotHash ||
+        canonicalJson(stored.run.review.snapshot) !==
+          canonicalJson(current.run.review.snapshot)
+      ) {
+        throw withCode(
+          "RECHECK_CONFLICT",
+          "Changed source run already has review history",
+        );
+      }
+      await saveReview(stored.directory, stored.run, newReviewRound(items));
+    });
   } catch (cause) {
+    if ((cause as { code?: string } | undefined)?.code === "RECHECK_CONFLICT") {
+      throw cause;
+    }
     throw withCode(
       "RECHECK_OBSERVATION_FAILED",
       "Source recheck requires recovery",
@@ -548,7 +579,12 @@ async function establishPrior(
         prior: null,
         snapshotStore,
       });
-      if (!admitted.ok)
+      if (!admitted.ok && !await historicalPriorUrlMove(
+        admitted.error,
+        source,
+        observation.snapshotRef,
+        snapshotStore,
+      ))
         throw withCode(
           "RECHECK_OBSERVATION_FAILED",
           "Prior source capture could not be admitted",
@@ -573,7 +609,12 @@ async function establishPrior(
     prior: null,
     snapshotStore,
   });
-  if (!admitted.ok)
+  if (!admitted.ok && !await historicalPriorUrlMove(
+    admitted.error,
+    source,
+    observation.snapshotRef,
+    snapshotStore,
+  ))
     throw withCode(
       "RECHECK_OBSERVATION_FAILED",
       "Prior source capture could not be admitted",
@@ -600,6 +641,22 @@ async function establishPrior(
     "Prior observation could not be established",
     committed.error,
   );
+}
+
+/**
+ * A selected reviewed run can predate a registry URL move. Its exact Forage
+ * reference remains a real historical fact; the later shared Check admission
+ * authenticates it as the check's prior side, never as today’s capture.
+ */
+async function historicalPriorUrlMove(
+  error: { readonly classification: string },
+  source: FieldworkLookoutSource,
+  snapshotRef: string,
+  snapshotStore: ReturnType<typeof createFilesystemSnapshotStore>,
+): Promise<boolean> {
+  if (error.classification !== "url-binding") return false;
+  const resolved = await resolveSnapshotSourceRef(snapshotStore, snapshotRef);
+  return resolved.ok && resolved.snapshot.sourceId === source.id;
 }
 
 function observationFor(
@@ -820,11 +877,70 @@ function captureInvocation(options: FieldworkRecheckOptions): Invocation {
     ...(options.observationRoot === undefined ? {} : { observationRoot: options.observationRoot }),
     ...(options.receiptRoot === undefined ? {} : { receiptRoot: options.receiptRoot }),
     ...(options.snapshotRoot === undefined ? {} : { snapshotRoot: options.snapshotRoot }),
-    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+    ...(options.runtime === undefined
+      ? {}
+      : { runtime: snapshotRuntimeBinding(options.runtime) }),
     ...(options.sourceAdapters === undefined ? {} : { sourceAdapters: options.sourceAdapters }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.now === undefined ? {} : { now: options.now }),
   };
+}
+
+function snapshotRuntimeBinding(
+  binding: FieldworkRuntimeBinding,
+): FieldworkRuntimeBinding {
+  // Keep ModelRuntime instances opaque and live: they are capabilities, not
+  // serializable configuration. Clone every plain routing/budget field that
+  // becomes durable run identity before any asynchronous work begins.
+  return {
+    role: binding.role,
+    candidates: binding.candidates.map((candidate) => ({
+      id: candidate.id,
+      runtime: candidate.runtime,
+      ...(candidate.estimatedUsdPer1kTokens === undefined
+        ? {}
+        : { estimatedUsdPer1kTokens: candidate.estimatedUsdPer1kTokens }),
+    })),
+    budget: {
+      maxAttempts: binding.budget.maxAttempts,
+      ...(binding.budget.maxElapsedMs === undefined
+        ? {}
+        : { maxElapsedMs: binding.budget.maxElapsedMs }),
+      ...(binding.budget.maxTotalTokens === undefined
+        ? {}
+        : { maxTotalTokens: binding.budget.maxTotalTokens }),
+      ...(binding.budget.maxCostUsd === undefined
+        ? {}
+        : { maxCostUsd: binding.budget.maxCostUsd }),
+    },
+    ...(binding.maxTokensPerAttempt === undefined
+      ? {}
+      : { maxTokensPerAttempt: binding.maxTokensPerAttempt }),
+    ...(binding.concurrency === undefined ? {} : { concurrency: binding.concurrency }),
+    ...(binding.batchSize === undefined ? {} : { batchSize: binding.batchSize }),
+    ...(binding.maxProviderCalls === undefined
+      ? {}
+      : { maxProviderCalls: binding.maxProviderCalls }),
+    ...(binding.maxChunks === undefined ? {} : { maxChunks: binding.maxChunks }),
+    ...(binding.minimumStructuredToolsFidelity === undefined
+      ? {}
+      : { minimumStructuredToolsFidelity: binding.minimumStructuredToolsFidelity }),
+    ...(binding.maxOutputTokens === undefined
+      ? {}
+      : { maxOutputTokens: binding.maxOutputTokens }),
+  };
+}
+
+function snapshotCheck(value: FieldworkCheckResult): FieldworkCheckResult {
+  try {
+    return structuredClone(value);
+  } catch (cause) {
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Source check could not be captured",
+      cause,
+    );
+  }
 }
 
 async function exactReceiptCapture(
