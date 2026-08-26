@@ -35,13 +35,18 @@ export const reviewedWebSourceDescriptorSchema: z.ZodType<ReviewedWebSourceResul
 export function parseReviewedWebSourceDescriptor(value: unknown): ReviewedWebSourceResult { return reviewedWebSourceDescriptorSchema.parse(value); }
 
 const availableInspection = closed({ apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceInspection"), status: z.literal("available"), exactRef, integrity: z.literal("verified"), pages: z.array(closed({ index: z.number().int().nonnegative(), start: z.number().int().nonnegative(), end: z.number().int().nonnegative(), text: z.string().max(16_384) })).max(8), totalPages: z.number().int().nonnegative(), nextCursor: z.string().regex(/^(?:0|[1-9][0-9]{0,5})$/).optional(), truncated: z.boolean() }).superRefine((value, context) => {
-  if (value.pages.length === 0 && value.totalPages !== 0) context.addIssue({ code: "custom", message: "A nonempty inspection has no page" });
+  if (value.pages.length === 0 && (value.totalPages !== 0 || value.truncated || value.nextCursor !== undefined)) context.addIssue({ code: "custom", message: "Only an empty source may have no pages" });
   if (value.truncated !== (value.nextCursor !== undefined)) context.addIssue({ code: "custom", message: "Cursor and truncation disagree" });
   for (const [offset, page] of value.pages.entries()) {
     if (page.end !== page.start + page.text.length || page.start !== page.index * 16_384 || page.end < page.start) context.addIssue({ code: "custom", message: "Page span disagrees with its text" });
     if (page.index >= value.totalPages || (offset > 0 && page.index !== value.pages[offset - 1]!.index + 1)) context.addIssue({ code: "custom", message: "Page indices are not contiguous" });
+    if (page.index < value.totalPages - 1 && page.text.length !== 16_384) context.addIssue({ code: "custom", message: "A non-final page must be complete" });
+    if (page.index === value.totalPages - 1 && page.text.length === 0) context.addIssue({ code: "custom", message: "The final page of a nonempty source is empty" });
   }
-  if (value.pages.length > 0 && value.truncated !== (value.pages.at(-1)!.index + 1 < value.totalPages)) context.addIssue({ code: "custom", message: "Truncation disagrees with page range" });
+  if (value.pages.length > 0) {
+    const next = value.pages.at(-1)!.index + 1;
+    if (value.truncated !== (next < value.totalPages) || (value.truncated && value.nextCursor !== String(next))) context.addIssue({ code: "custom", message: "Truncation disagrees with page range" });
+  }
 });
 export const reviewedWebSourceInspectionSchema: z.ZodType<ReviewedWebSourceInspection> = z.union([
   availableInspection,
@@ -52,6 +57,7 @@ export function parseReviewedWebSourceInspection(value: unknown): ReviewedWebSou
 const availableRefs = closed({ apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceRefs"), status: z.literal("available"), refs: z.array(exactRef).max(128), truncated: z.boolean(), nextCursor: z.string().regex(/^(?:0|[1-9][0-9]{0,5})$/).optional() }).superRefine((value, context) => {
   if (new Set(value.refs).size !== value.refs.length) context.addIssue({ code: "custom", message: "Opaque refs must be unique" });
   if (value.truncated !== (value.nextCursor !== undefined)) context.addIssue({ code: "custom", message: "Cursor and truncation disagree" });
+  if (value.truncated && (value.refs.length === 0 || value.nextCursor === "0")) context.addIssue({ code: "custom", message: "A continuation must make positive progress" });
 });
 export const reviewedWebSourceRefsSchema: z.ZodType<ReviewedWebSourceRefs> = z.union([
   availableRefs,
