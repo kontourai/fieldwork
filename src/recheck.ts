@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
+  admitProposalObservation,
   buildSemanticReviewWork,
   createObservationStore,
   type ProposalSetObservation,
+  type LookoutSource,
   type SemanticReviewChange,
   type StoredProposalObservationV1,
 } from "@kontourai/lookout";
+import { createFilesystemSnapshotStore } from "@kontourai/forage";
+import { FieldworkSourceCheckReceiptStore } from "./source-check-receipts.js";
 import type { ExtractionProposal } from "@kontourai/traverse";
 import type { ReviewItem } from "@kontourai/survey";
 import { parseFieldworkTask, traverseTask } from "./contracts.js";
@@ -87,6 +91,8 @@ export interface FieldworkRecheckOptions {
   readonly acquisition: FieldworkRecheckAcquisition;
   readonly root?: string;
   readonly observationRoot?: string;
+  /** Fieldwork-owned receipt root; never shared with Lookout or Survey. */
+  readonly receiptRoot?: string;
   readonly snapshotRoot?: string;
   readonly runtime?: FieldworkRuntimeBinding;
   readonly sourceAdapters?: FieldworkSourceAdapters;
@@ -131,17 +137,22 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     && canonicalJson(options.source.targetSchema) !== canonicalJson(traverseTask(task).targetSchema)) {
     throw withCode("RECHECK_SCHEMA_MISMATCH", "Lookout source schema does not match the selected Fieldwork task");
   }
-  const check = await options.acquisition.check(options.source);
-  assertCheckIdentity(check, options.source);
-
   const store = createObservationStore({
     root: resolve(options.observationRoot ?? join(options.root ?? ".fieldwork/runs", ".lookout-observations")),
   });
+  const snapshotStore = createFilesystemSnapshotStore({ root: options.snapshotRoot ?? ".fieldwork/snapshots" });
   const priorObservation = observationFor(options.source.id, prior.envelope);
-  const priorStored = await establishPrior(store, priorObservation, options.now?.() ?? prior.run.createdAt);
+  const priorStored = await establishPrior(store, snapshotStore, options.source, priorObservation, options.now?.() ?? prior.run.createdAt);
+  const receipts = new FieldworkSourceCheckReceiptStore(options.receiptRoot ?? join(options.root ?? ".fieldwork/runs", ".source-check-receipts"));
+  // Publish pending before network I/O. A later started check therefore makes
+  // an earlier completion non-current rather than silently reviving it.
+  const pending = await receipts.begin(options.source.id, options.now?.() ?? new Date().toISOString());
+  const check = await options.acquisition.check(options.source);
+  assertCheckIdentity(check, options.source);
   assertCheckContinuity(check, priorStored.snapshotRef);
 
   if (canonicalJson(task) !== canonicalJson(prior.run.task)) {
+    await receipts.finalize(pending, { outcome: "error", priorProposalHeadId: priorStored.observationId });
     return portableResult({
       classification: "task-drift",
       check,
@@ -150,6 +161,7 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     });
   }
   if (check.kind === "error") {
+    await receipts.finalize(pending, { outcome: "error", priorProposalHeadId: priorStored.observationId });
     return portableResult({
       classification: "source-unavailable",
       check,
@@ -158,6 +170,10 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     });
   }
   if (check.kind === "unchanged-304" || check.kind === "unchanged-hash") {
+    const captureRef = check.kind === "unchanged-304" ? check.snapshotRef : check.currentSnapshotRef;
+    const admitted = await admitProposalObservation({ source: lookoutSource(options.source), current: { ...priorObservation, snapshotRef: captureRef, observedAt: check.checkedAt }, check: { checkedAt: check.checkedAt, resultKind: "unchanged-hash", currentSnapshotRef: captureRef }, prior: priorStored, snapshotStore });
+    if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Unchanged source capture could not be admitted", admitted.error);
+    await receipts.finalize(pending, { outcome: check.kind, priorProposalHeadId: priorStored.observationId, resultProposalHeadId: priorStored.observationId, priorCaptureRef: priorStored.snapshotRef, currentCaptureRef: captureRef, capture: admitted.value.current });
     return portableResult({
       classification: "unchanged-source",
       check,
@@ -170,6 +186,7 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
   try {
     currentRun = await runFieldwork(runOptions(options, check.currentSnapshotRef));
   } catch (cause) {
+    await receipts.finalize(pending, { outcome: "extraction-failure", priorProposalHeadId: priorStored.observationId });
     throw withCode("RECHECK_EXTRACTION_FAILED", "Changed source could not be extracted", cause);
   }
   const current = await readRun(currentRun.runDirectory);
@@ -196,6 +213,16 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     });
   }
 
+  // Admission is deliberately before the Lookout mutation: a dependency bump
+  // alone cannot protect a direct Fieldwork commit from unauthenticated refs.
+  const admitted = await admitProposalObservation({
+    source: lookoutSource(options.source),
+    current: currentObservation,
+    check: { checkedAt: check.checkedAt, resultKind: "changed", currentSnapshotRef: check.currentSnapshotRef },
+    prior: priorStored,
+    snapshotStore,
+  });
+  if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Current source capture could not be admitted", admitted.error);
   const committed = await store.commit({
     observation: currentObservation,
     recordedAt: options.now?.() ?? new Date().toISOString(),
@@ -206,9 +233,11 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
     },
   }, priorStored.observationId);
   if (!committed.ok) {
+    await receipts.finalize(pending, { outcome: "error", priorProposalHeadId: priorStored.observationId });
     const code = committed.error.kind === "continuity-conflict" ? "RECHECK_CONFLICT" : "RECHECK_OBSERVATION_FAILED";
     throw withCode(code, "Source observation could not be committed", committed.error);
   }
+  await receipts.finalize(pending, { outcome: "changed", priorProposalHeadId: priorStored.observationId, resultProposalHeadId: committed.value.observationId, priorCaptureRef: priorStored.snapshotRef, currentCaptureRef: currentObservation.snapshotRef, capture: admitted.value.current });
 
   const semantic = buildSemanticReviewWork({
     prior: priorObservation,
@@ -255,23 +284,28 @@ type StoredObservation = StoredProposalObservationV1;
 
 async function establishPrior(
   store: ObservationStore,
+  snapshotStore: ReturnType<typeof createFilesystemSnapshotStore>,
+  source: FieldworkLookoutSource,
   observation: ProposalSetObservation,
   recordedAt: string,
 ): Promise<StoredObservation> {
   const loaded = await store.loadLatest(observation.sourceId);
   if (!loaded.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Prior observation could not be loaded", loaded.error);
   if (loaded.value) {
-    if (sameObservation(loaded.value, observation)) return loaded.value;
+    if (sameObservation(loaded.value, observation)) {
+      const admitted = await admitProposalObservation({ source: lookoutSource(source), current: observation, check: loaded.value.check, prior: null, snapshotStore });
+      if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Prior source capture could not be admitted", admitted.error);
+      return loaded.value;
+    }
     throw withCode("RECHECK_CONFLICT", "Stored source continuity does not match the selected prior run");
   }
+  const anchor = { checkedAt: observation.observedAt, resultKind: "changed" as const, currentSnapshotRef: observation.snapshotRef };
+  const admitted = await admitProposalObservation({ source: lookoutSource(source), current: observation, check: anchor, prior: null, snapshotStore });
+  if (!admitted.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Prior source capture could not be admitted", admitted.error);
   const committed = await store.commit({
     observation,
     recordedAt,
-    check: {
-      checkedAt: observation.observedAt,
-      resultKind: "changed",
-      currentSnapshotRef: observation.snapshotRef,
-    },
+    check: anchor,
   }, null);
   if (committed.ok) return committed.value;
   if (committed.error.kind === "continuity-conflict") {
@@ -380,6 +414,15 @@ function sameObservation(
     && stored.snapshotRef === observation.snapshotRef
     && stored.observedAt === observation.observedAt
     && canonicalJson(stored.proposals) === canonicalJson(observation.proposals);
+}
+
+// Fieldwork's public DTO is readonly; Lookout's registered-source DTO predates
+// that readonly contract. Clone at the cross-owner seam instead of exposing a
+// private Lookout type through Fieldwork.
+function lookoutSource(source: FieldworkLookoutSource): LookoutSource {
+  return "targetSchema" in source
+    ? { ...source, targetSchema: source.targetSchema.map(field => ({ ...field, ...(field.enumValues ? { enumValues: [...field.enumValues] } : {}) })) } as LookoutSource
+    : { ...source } as LookoutSource;
 }
 
 function portableResult(input: {

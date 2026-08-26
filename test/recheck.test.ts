@@ -630,7 +630,9 @@ function check(
 
 function snapshot(sourceId: string, body: string, fetchedAt: string, contentType = "text/plain; charset=utf-8"): Snapshot {
   return {
-    sourceId,
+    // Recheck admission binds captures to the registered source, rather than
+    // treating the fixture label as a source authority.
+    sourceId: source.id,
     url: source.url,
     status: 200,
     fetchedAt,
