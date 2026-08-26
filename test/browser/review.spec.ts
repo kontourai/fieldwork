@@ -753,7 +753,7 @@ async function recheckedRun(label: string): Promise<{ runDirectory: string; item
   });
   const prior = snapshot(await readFile("examples/vendor-obligations/source.txt", "utf8"), "2026-07-25T08:00:00.000Z");
   const current = snapshot(await readFile("examples/vendor-obligations/source-revised.txt", "utf8"), "2026-07-25T09:00:00.000Z");
-  await Promise.all([store.put(prior), store.put(current)]);
+  await store.put(prior);
   const priorRef = buildSnapshotSourceRef(prior), currentRef = buildSnapshotSourceRef(current);
   const first = await runFieldwork({
     taskPath: "examples/vendor-obligations/task.json",
@@ -776,7 +776,9 @@ async function recheckedRun(label: string): Promise<{ runDirectory: string; item
     observationRoot: join(root, "observations"),
     snapshotRoot,
     acquisition: {
-      check: async () => ({
+      check: async () => {
+        await store.put(current);
+        return {
         sourceId: "northstar-renewal-brief",
         sourceUrl: "https://example.invalid/vendor-renewal",
         checkedAt: "2026-07-25T09:00:30.000Z",
@@ -785,7 +787,8 @@ async function recheckedRun(label: string): Promise<{ runDirectory: string; item
         priorSnapshotRef: priorRef,
         currentSnapshotRef: currentRef,
         changeBasis: "hash",
-      }),
+        };
+      },
     },
   });
   if (!recheck.run) throw new Error(`recheck produced no run (${recheck.classification})`);

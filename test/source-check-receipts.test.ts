@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -37,7 +37,7 @@ async function begin(
   return store.begin(sourceId, baseline, async () => head);
 }
 
-test("a real public Forage exact reference beyond the former internal cap starts a receipt generation", async () => {
+test("a real public Forage exact reference beyond the former internal cap starts a receipt generation and v1 reader rejects mismatched records", async () => {
   const sourceId = "source-a";
   const body = "fixture";
   const snapshot = {
@@ -82,9 +82,13 @@ test("a real public Forage exact reference beyond the former internal cap starts
     currentCapture: admittedAcquisition,
   }, async () => headA);
   assert.equal(finalized.kind, "available");
+  // Existing v1 bytes remain readable through the compatibility API, but lack
+  // owner witnesses and cannot be promoted into the v2 currentness path.
+  assert.deepEqual(await store.readCurrentWithWitness(sourceId), { kind: "legacy" });
+  await assertReaderMismatches(1);
 });
 
-test("a newer pending generation fences an old completion and changed receipts bind the resulting head", async () => {
+test("a newer pending generation fences an old completion, changed receipts bind the resulting head, and v2 reader rejects mismatched records", async () => {
   const store = new FieldworkSourceCheckReceiptStore(
     await mkdtemp(join(tmpdir(), "fieldwork-source-check-receipts-")),
   );
@@ -124,9 +128,10 @@ test("a newer pending generation fences an old completion and changed receipts b
   assert.equal(current.kind, "available");
   if (current.kind === "available")
     assert.equal(current.receipt.resultProposalHeadId, headB);
+  await assertReaderMismatches(2);
 });
 
-test("corrupt pointers and source-directory symlinks fail closed without private paths", async () => {
+test("corrupt pointers, dangling current receipts, and source-directory symlinks fail closed without private paths", async () => {
   const root = await mkdtemp(join(tmpdir(), "fieldwork-source-check-corrupt-"));
   const store = new FieldworkSourceCheckReceiptStore(root);
   await begin(store);
@@ -155,4 +160,96 @@ test("corrupt pointers and source-directory symlinks fail closed without private
       async () => headA,
     ),
   );
+  await assertDanglingCurrentReceipt();
+  await assertMalformedReceiptNamesNeverOpen();
 });
+
+async function readerFixture(version: 1 | 2) {
+  const root = await mkdtemp(join(tmpdir(), "fieldwork-source-check-reader-"));
+  const store = new FieldworkSourceCheckReceiptStore(root);
+  const prior: Capture = {
+    ...capture(), snapshotRef: "capture-a", snapshotDigest: "d".repeat(64), integrity: "snapshot-envelope",
+  };
+  const current: Capture = {
+    ...prior, snapshotRef: "capture-b", bodyHash: "e".repeat(64), fetchedAt: "2026-08-26T10:01:00.000Z", snapshotDigest: "f".repeat(64),
+  };
+  const pending = await store.begin("source-a", {
+    pointerToken: null, proposalHeadId: headA, admittedAcquisition: prior,
+  }, async () => headA);
+  const common = {
+    checkedAt: "2026-08-26T10:02:00.000Z", outcome: "changed" as const,
+    priorProposalHeadId: headA, resultProposalHeadId: headB, priorCapture: prior, currentCapture: current,
+  };
+  const completed = await store.finalize(pending, version === 1 ? common : {
+    ...common,
+    acquisitionHead: {
+      format: "forage.source-head-witness/v1" as const, sourceId: "source-a",
+      headSnapshotRef: { sourceId: "source-a", url: current.url, bodyHash: current.bodyHash, fetchedAt: current.fetchedAt, snapshotDigest: current.snapshotDigest! },
+      token: "1".repeat(64),
+    },
+    proposalHead: { kind: "lookout.proposal-head-witness/v1" as const, version: 1 as const, sourceId: "source-a", observationId: headB, token: "2".repeat(64) },
+    proposalHeadSnapshotRef: current.snapshotRef,
+  }, async () => headB);
+  assert.equal(completed.kind, "available");
+  const directory = join(root, createHash("sha256").update("source-a").digest("hex"));
+  const [receipt] = (await readdir(directory)).filter((name) => name.startsWith("receipt-"));
+  return { root, store, directory, pointer: join(directory, "pointer.json"), receipt: join(directory, receipt!) };
+}
+
+async function assertDanglingCurrentReceipt() {
+  const f = await readerFixture(2);
+  const current = await f.store.readCurrentWithWitness("source-a");
+  assert.equal(current.kind, "available");
+  assert.ok(current.kind === "available");
+  await unlink(f.receipt);
+  const read = await f.store.readCurrentWithWitness("source-a");
+  assert.deepEqual(read, { kind: "corrupt" });
+  const compared = await f.store.compareCurrentWitness(current.witness);
+  assert.deepEqual(compared, { kind: "corrupt" });
+  assert.doesNotMatch(JSON.stringify({ read, compared }), /fieldwork-source-check-reader|\//i);
+}
+
+async function assertMalformedReceiptNamesNeverOpen() {
+  for (const receipt of [
+    "../outside.json",
+    "/tmp/fieldwork-outside.json",
+    "./receipt.json",
+    "receipt-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json/../special",
+  ]) {
+    const f = await readerFixture(1);
+    const pointer = JSON.parse(await readFile(f.pointer, "utf8"));
+    pointer.receipt = receipt;
+    await writeFile(f.pointer, JSON.stringify(pointer));
+    let opens = 0;
+    const reader = new FieldworkSourceCheckReceiptStore(f.root, {
+      afterReadOpen: async (kind) => { if (kind === "receipt") opens++; },
+    });
+    assert.deepEqual(await reader.readCurrentWithWitness("source-a"), { kind: "corrupt" });
+    assert.deepEqual(await reader.readCurrent("source-a", async () => headB), { kind: "corrupt" });
+    assert.equal(opens, 0, `${receipt} must be rejected before any receipt open`);
+  }
+}
+
+async function assertReaderMismatches(version: 1 | 2) {
+  for (const mutate of [
+    (receipt: Record<string, unknown>) => { receipt.sourceId = "source-b"; },
+    (receipt: Record<string, unknown>) => { receipt.generation = 2; },
+    (receipt: Record<string, unknown>) => { receipt.priorProposalHeadId = headB; },
+  ]) {
+    const f = await readerFixture(version);
+    const pointer = JSON.parse(await readFile(f.pointer, "utf8"));
+    const receipt = JSON.parse(await readFile(f.receipt, "utf8"));
+    mutate(receipt);
+    const bytes = Buffer.from(JSON.stringify(receipt));
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const replacement = join(f.directory, `receipt-${pointer.generation}-${digest}.json`);
+    await writeFile(replacement, bytes);
+    await unlink(f.receipt);
+    pointer.receipt = replacement.slice(f.directory.length + 1);
+    pointer.receiptDigest = digest;
+    await writeFile(f.pointer, JSON.stringify(pointer));
+    const result = await f.store.readCurrentWithWitness("source-a");
+    assert.deepEqual(result, { kind: "corrupt" });
+    assert.doesNotMatch(JSON.stringify(result), /fieldwork-source-check-reader|\//i);
+  }
+}
