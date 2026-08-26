@@ -146,7 +146,7 @@ export async function recheckFieldwork(options: FieldworkRecheckOptions): Promis
   const receipts = new FieldworkSourceCheckReceiptStore(options.receiptRoot ?? join(options.root ?? ".fieldwork/runs", ".source-check-receipts"));
   // Publish pending before network I/O. A later started check therefore makes
   // an earlier completion non-current rather than silently reviving it.
-  const pending = await receipts.begin(options.source.id, options.now?.() ?? new Date().toISOString());
+  const pending = await receipts.begin(options.source.id, priorStored.observationId, options.now?.() ?? new Date().toISOString());
   const check = await options.acquisition.check(options.source);
   assertCheckIdentity(check, options.source);
   assertCheckContinuity(check, priorStored.snapshotRef);

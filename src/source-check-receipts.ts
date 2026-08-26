@@ -1,66 +1,21 @@
-/**
- * Fieldwork-owned, content-free acquisition check receipts.  This is not a
- * Lookout store: Lookout owns proposal continuity; this small store records
- * which authenticated acquisition attempt is the source's current witness.
- */
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-
-export type SourceCheckOutcome = "unchanged-304" | "unchanged-hash" | "changed" | "error" | "extraction-failure";
-export interface SourceCheckReceiptV1 {
-  readonly version: 1;
-  readonly sourceId: string;
-  readonly generation: number;
-  readonly status: "pending" | "current" | "failed";
-  readonly checkedAt: string;
-  readonly outcome?: SourceCheckOutcome;
-  readonly priorProposalHeadId?: string;
-  readonly resultProposalHeadId?: string;
-  readonly priorCaptureRef?: string;
-  readonly currentCaptureRef?: string;
-  readonly capture?: { readonly sourceId: string; readonly url: string; readonly fetchedAt: string; readonly bodyHash: string; readonly snapshotDigest?: string; readonly integrity: "snapshot-envelope" | "body-and-identity" };
-}
-interface Pointer { version: 1; sourceId: string; generation: number; receipt: string; status: SourceCheckReceiptV1["status"]; boundLookoutHeadId?: string }
-
+const MAX=16384, NAME=/^receipt-([1-9][0-9]*)-([a-f0-9]{64})\.json$/;
+type Outcome="unchanged-304"|"unchanged-hash"|"changed"|"error"|"extraction-failure";
+interface Receipt { version:1; sourceId:string; generation:number; checkedAt:string; outcome:Outcome; priorProposalHeadId?:string; resultProposalHeadId?:string; priorCaptureRef?:string; currentCaptureRef?:string; capture?:{sourceId:string;url:string;fetchedAt:string;bodyHash:string;snapshotDigest?:string;integrity:"snapshot-envelope"|"body-and-identity"} }
+interface Pointer { version:1;sourceId:string;generation:number;state:"pending"|"current"|"failed";expectedLookoutHeadId:string;receipt?:string;receiptDigest?:string }
+/** Internal persistence; the public application reader is intentionally separate. */
 export class FieldworkSourceCheckReceiptStore {
-  constructor(private readonly root: string) {}
-  async begin(sourceId: string, checkedAt: string): Promise<SourceCheckReceiptV1> {
-    return this.lock(sourceId, async () => {
-      const dir = this.dir(sourceId); await mkdir(dir, { recursive: true });
-      const previous = await this.pointer(sourceId);
-      const receipt: SourceCheckReceiptV1 = { version: 1, sourceId, generation: (previous?.generation ?? 0) + 1, status: "pending", checkedAt };
-      const name = `${receipt.generation}-${randomUUID()}.json`;
-      await this.write(join(dir, name), receipt);
-      await this.write(join(dir, "pointer.json"), { version: 1, sourceId, generation: receipt.generation, receipt: name, status: "pending" } satisfies Pointer);
-      return receipt;
-    });
-  }
-  async finalize(receipt: SourceCheckReceiptV1, input: Omit<SourceCheckReceiptV1, "version" | "sourceId" | "generation" | "status" | "checkedAt">): Promise<boolean> {
-    return this.lock(receipt.sourceId, async () => {
-      const pointer = await this.pointer(receipt.sourceId);
-      if (!pointer || pointer.generation !== receipt.generation || pointer.status !== "pending") return false;
-      const completed: SourceCheckReceiptV1 = { ...receipt, ...input, status: input.outcome === "error" || input.outcome === "extraction-failure" ? "failed" : "current" };
-      await this.write(join(this.dir(receipt.sourceId), pointer.receipt), completed);
-      await this.write(join(this.dir(receipt.sourceId), "pointer.json"), { ...pointer, status: completed.status, ...(completed.resultProposalHeadId ? { boundLookoutHeadId: completed.resultProposalHeadId } : {}) });
-      return true;
-    });
-  }
-  async readCurrent(sourceId: string): Promise<SourceCheckReceiptV1 | null> {
-    const pointer = await this.pointer(sourceId); if (!pointer || pointer.status !== "current") return null;
-    try { const receipt = JSON.parse(await readFile(join(this.dir(sourceId), pointer.receipt), "utf8")) as SourceCheckReceiptV1;
-      return receipt.version === 1 && receipt.sourceId === sourceId && receipt.generation === pointer.generation && receipt.status === "current" ? receipt : null;
-    } catch { return null; }
-  }
-  private dir(sourceId: string) { return join(resolve(this.root), createHash("sha256").update(sourceId).digest("hex")); }
-  private async pointer(sourceId: string): Promise<Pointer | null> { try { return JSON.parse(await readFile(join(this.dir(sourceId), "pointer.json"), "utf8")) as Pointer; } catch { return null; } }
-  private async write(path: string, value: unknown): Promise<void> { const temp = `${path}.${randomUUID()}.pending`; await writeFile(temp, `${JSON.stringify(value)}\n`, { mode: 0o600 }); await rename(temp, path); }
-  private async lock<T>(sourceId: string, operation: () => Promise<T>): Promise<T> {
-    const dir = this.dir(sourceId); await mkdir(dir, { recursive: true }); const lock = join(dir, ".lock");
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      try { await mkdir(lock, { mode: 0o700 }); try { return await operation(); } finally { await rm(lock, { recursive: true, force: true }); } }
-      catch (error: unknown) { if ((error as { code?: string }).code !== "EEXIST") throw error; await new Promise(resolve => setTimeout(resolve, 5)); }
-    }
-    throw new Error("Source check receipt lock is unavailable");
-  }
+ constructor(private readonly root:string){}
+ async begin(sourceId:string, expectedLookoutHeadId:string, checkedAt:string){return this.lock(sourceId,async()=>{const prior=await this.pointer(sourceId,true);const p:Pointer={version:1,sourceId,generation:(prior?.generation??0)+1,state:"pending",expectedLookoutHeadId};await this.write(this.pointerPath(sourceId),p);return {sourceId,generation:p.generation,expectedLookoutHeadId,checkedAt};});}
+ async finalize(pending:{sourceId:string;generation:number;expectedLookoutHeadId:string;checkedAt:string}, result:Omit<Receipt,"version"|"sourceId"|"generation"|"checkedAt">){return this.lock(pending.sourceId,async()=>{const p=await this.pointer(pending.sourceId,false);if(!p||p.state!=="pending"||p.generation!==pending.generation||p.expectedLookoutHeadId!==pending.expectedLookoutHeadId)return false;const receipt:Receipt={version:1,sourceId:pending.sourceId,generation:pending.generation,checkedAt:pending.checkedAt,...result};const text=JSON.stringify(receipt),digest=hash(text),name=`receipt-${receipt.generation}-${digest}.json`;await this.write(join(this.dir(pending.sourceId),name),receipt,true);await this.write(this.pointerPath(pending.sourceId),{...p,state:result.outcome==="error"||result.outcome==="extraction-failure"?"failed":"current",receipt:name,receiptDigest:digest});return true;});}
+ async readCurrent(sourceId:string, actualLookoutHeadId:string):Promise<Receipt|null>{const p=await this.pointer(sourceId,false);if(!p||p.state!=="current"||!p.receipt||!p.receiptDigest||p.expectedLookoutHeadId!==actualLookoutHeadId)return null;if(!NAME.test(p.receipt))throw new Error("Source-check pointer is corrupt");const r=await this.read<Receipt>(join(this.dir(sourceId),p.receipt));if(hash(JSON.stringify(r))!==p.receiptDigest||r.version!==1||r.sourceId!==sourceId||r.generation!==p.generation||r.resultProposalHeadId!==actualLookoutHeadId)throw new Error("Source-check receipt is corrupt");const fence=await this.pointer(sourceId,false);return fence&&JSON.stringify(fence)===JSON.stringify(p)?r:null;}
+ private dir(sourceId:string){return join(resolve(this.root),hash(sourceId));} private pointerPath(id:string){return join(this.dir(id),"pointer.json");}
+ private async pointer(id:string, absent:boolean):Promise<Pointer|null>{try{const p=await this.read<Pointer>(this.pointerPath(id));if(p.version!==1||p.sourceId!==id||!Number.isSafeInteger(p.generation)||p.generation<1||!["pending","current","failed"].includes(p.state)||!/^[a-f0-9]{64}$/.test(p.expectedLookoutHeadId))throw new Error("Source-check pointer is corrupt");return p;}catch(e){if(absent&&(e as NodeJS.ErrnoException).code==="ENOENT")return null;throw e;}}
+ private async read<T>(path:string):Promise<T>{const m=await lstat(path);if(!m.isFile()||m.isSymbolicLink()||m.size>MAX)throw new Error("Source-check storage is corrupt");return JSON.parse(await readFile(path,"utf8")) as T;}
+ private async write(path:string,value:unknown,exclusive=false){await mkdir(path.slice(0,path.lastIndexOf("/")),{recursive:true,mode:0o700});const tmp=`${path}.${randomUUID()}.tmp`,h=await open(tmp,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY,0o600);try{await h.writeFile(JSON.stringify(value));await h.sync();}finally{await h.close();}if(exclusive){try{const target=await open(path,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY,0o600);await target.close();}catch(e){await unlink(tmp);throw e;}}await rename(tmp,path);}
+ private async lock<T>(id:string,fn:()=>Promise<T>):Promise<T>{const dir=this.dir(id),path=join(dir,".lock");await mkdir(dir,{recursive:true,mode:0o700});for(let i=0;i<40;i++){try{const h=await open(path,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY,0o600);try{await h.writeFile(JSON.stringify({pid:process.pid,createdAt:Date.now()}));return await fn();}finally{await h.close();await unlink(path).catch(()=>{});}}catch(e){if((e as NodeJS.ErrnoException).code!=="EEXIST")throw e;await new Promise(r=>setTimeout(r,20));}}throw new Error("Source-check storage is busy");}
 }
+function hash(s:string){return createHash("sha256").update(s).digest("hex");}

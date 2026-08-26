@@ -114,8 +114,6 @@ export type {
   FieldworkStoredExecution, ProfileRuntimeBindingOptions
 } from "./runtime-contracts.js";
 export type { FieldworkInspectionExportOptions } from "./inspection.js";
-export { FieldworkSourceCheckReceiptStore } from "./source-check-receipts.js";
-export type { SourceCheckReceiptV1, SourceCheckOutcome } from "./source-check-receipts.js";
 export type {
   FieldworkEvidenceObservation,
   FieldworkCheckResult,
