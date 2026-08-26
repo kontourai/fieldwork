@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { createFilesystemSnapshotStore } from "@kontourai/forage";
+import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import {
   buildReviewSessionEvents,
   type ReviewQueueSessionState,
@@ -84,6 +90,39 @@ test("host presentation accepts bounded HTTP navigation and rejects executable U
     ...base,
     navigation: [{ label: "Unsafe", href: "javascript:alert(1)" }],
   }).success, false);
+});
+
+test("an authorized host lists, describes, and inspects only a reviewed exact web source", async () => {
+  const snapshotRoot = await mkdtemp(join(tmpdir(), "fieldwork-reviewed-source-snapshots-"));
+  const runRoot = await tempRoot("reviewed-source-run");
+  const body = "<main><p>Status: Active</p></main>";
+  const snapshot = { sourceId: "reviewed-source", url: "https://example.test/status", status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/html" } };
+  await createFilesystemSnapshotStore({ root: snapshotRoot }).put(snapshot);
+  const ref = buildSnapshotSourceRef(snapshot);
+  const initial = createFieldworkApplication();
+  const run = await initial.run({ taskPath: "examples/generic/task.json", snapshotRef: ref, snapshotRoot, root: runRoot });
+  const server = await initial.open({ runDirectory: run.runDirectory });
+  try {
+    const view = await server.view();
+    const state = view.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({ ...state, decisionsByItemName: { [state.items[0]!.metadata.name]: "accept-proposed" }, reviewedAt: "2026-08-26T00:00:00.000Z", actorId: "reviewed-source-test" });
+    assert.equal((await apiFetch(server, "/api/v1/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }) })).status, 200);
+  } finally { await server.close(); await initial.close(); }
+  const calls: string[] = [];
+  const application = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: run.runDirectory, snapshotRoot, authorize: ({ operation }) => { calls.push(operation); return true; } } });
+  const listed = await application.listReviewedWebSourceRefs();
+  assert.equal(listed.status, "available");
+  assert.equal(listed.refs.length, 1);
+  const exactRef = listed.refs[0]!;
+  const described = await application.describeReviewedWebSource(exactRef);
+  assert.equal(described.status, "available");
+  if (described.status === "available") assert.equal(described.integrity.state, "unchecked");
+  const inspected = await application.inspectReviewedWebSource(exactRef);
+  assert.equal(inspected.status, "available");
+  if (inspected.status === "available") assert.match(inspected.pages[0]!.text, /Status: Active/);
+  assert.ok(calls.filter((operation) => operation === "list").length >= 2);
+  assert.ok(calls.filter((operation) => operation === "inspect").length >= 2);
+  await application.close();
 });
 
 test("host embedding is exact-origin opt-in and deny-by-default", async () => {

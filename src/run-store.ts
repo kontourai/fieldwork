@@ -62,6 +62,16 @@ export interface StoredRunRead {
   envelope: PortableExtractionResultEnvelope;
   preparedText: string;
 }
+/**
+ * The metadata half of a run.  This intentionally does not touch prepared.txt:
+ * callers which are only describing review authority must not hydrate source
+ * material as an accidental side effect.
+ */
+export interface StoredRunMetadataRead {
+  directory: string;
+  run: StoredRun;
+  envelope: PortableExtractionResultEnvelope;
+}
 
 export const defaultRunRoot = ".fieldwork/runs";
 const REVIEW_LOCK_MAX_BYTES = 256;
@@ -101,6 +111,14 @@ export async function writeRun(root: string, run: StoredRun, envelope: PortableE
 }
 
 export async function readRun(runDirectory: string): Promise<StoredRunRead> {
+  const metadata = await readRunMetadata(runDirectory);
+  const preparedPath = await containedRegularFile(metadata.directory, metadata.run.preparedArtifact.file);
+  const preparedText = await readBounded(preparedPath, FIELDWORK_LIMITS.sourceBytes);
+  assertPreparedIdentity(metadata.run, metadata.envelope, preparedText);
+  return { ...metadata, preparedText };
+}
+
+export async function readRunMetadata(runDirectory: string): Promise<StoredRunMetadataRead> {
   const requested = resolve(runDirectory);
   await rejectSymlink(requested, "run directory");
   const directory = await realpath(requested);
@@ -118,11 +136,8 @@ export async function readRun(runDirectory: string): Promise<StoredRunRead> {
   const envelopeText = await readBounded(envelopePath, FIELDWORK_LIMITS.artifactBytes);
   const validated = validatePortableExtractionResultEnvelope(JSON.parse(envelopeText));
   if (validated.status !== "valid") throw new Error("Stored extraction envelope is invalid");
-  const preparedPath = await containedRegularFile(directory, run.preparedArtifact.file);
-  const preparedText = await readBounded(preparedPath, FIELDWORK_LIMITS.sourceBytes);
-  assertPreparedIdentity(run, validated.envelope, preparedText);
   assertBoundedJson(run);
-  return { directory, run, envelope: validated.envelope, preparedText };
+  return { directory, run, envelope: validated.envelope };
 }
 
 export async function withRunReviewLock<T>(
