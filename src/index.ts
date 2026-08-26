@@ -108,6 +108,7 @@ export type {
   FieldworkApplication, FieldworkApplicationOpenOptions, FieldworkApplicationOptions,
 } from "./host-application.js";
 export type { ReviewedWebSourceOwner, ReviewedWebSourceResult, ReviewedWebSourceInspection, ReviewedWebSourceRefs } from "./reviewed-web-source.js";
+export { parseReviewedWebSourceDescriptor, parseReviewedWebSourceInspection, parseReviewedWebSourceRefs, reviewedWebSourceDescriptorSchema, reviewedWebSourceInspectionSchema, reviewedWebSourceRefsSchema } from "./reviewed-web-source-contract.js";
 export type {
   DatumRuntimeBindingOptions, FieldworkExecutionIdentity, FieldworkRuntimeBinding,
   FieldworkRuntimeBudget, FieldworkRuntimeCandidate,

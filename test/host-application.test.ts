@@ -6,6 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
+import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
+import { parseReviewedWebSourceDescriptor } from "../src/reviewed-web-source-contract.js";
 import {
   buildReviewSessionEvent,
   buildReviewSessionEvents,
@@ -18,6 +20,15 @@ import {
   type FieldworkLifecycleEventV1,
 } from "../src/index.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+
+test("the browser-safe reviewed-source contract rejects untrusted versions and opaque extras", () => {
+  assert.throws(() => parseReviewedWebSourceDescriptor({
+    apiVersion: "fieldwork.kontourai.io/v2", kind: "ReviewedWebSourceDescriptor", status: "missing",
+  }));
+  assert.throws(() => parseReviewedWebSourceDescriptor({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted", rawBundle: "private",
+  }));
+});
 
 test("the application contract launches, presents, observes, and returns one reviewed run", async () => {
   const application = createFieldworkApplication();
@@ -122,6 +133,19 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
     assert.equal(described.integrity.state, "unchecked");
     assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
     assert.equal("file" in described.preparedArtifact, false, "storage filenames are never part of the public DTO");
+    const exported = await initial.reviewedOutput(run.runDirectory) as { evidence: Parameters<typeof restoreReviewedExtractionEvidence>[0][] };
+    const ownerEvidence = exported.evidence
+      .filter((entry) => (entry as { metadata?: { reviewedExtraction?: unknown } }).metadata?.reviewedExtraction)
+      .map((entry) => ({ entry, restored: restoreReviewedExtractionEvidence(entry) }))
+      .find(({ restored }) => restored.proposalIndex === described.evidence.proposalIndex);
+    assert.ok(ownerEvidence, "the descriptor must carry an actual owner-exported evidence/claim join");
+    assert.equal(described.evidence.id, ownerEvidence.entry.id);
+    assert.equal(described.evidence.claimId, ownerEvidence.restored.claimId);
+    assert.equal(described.evidence.candidate.id, ownerEvidence.restored.reviewItem?.spec.candidates[0]?.id);
+    assert.equal(described.evidence.reviewItem.name, ownerEvidence.restored.reviewItem?.metadata.name);
+    assert.equal(described.evidence.reviewDecision.name, ownerEvidence.restored.reviewDecision?.metadata.name);
+    assert.equal("excerpt" in described.evidence, false);
+    assert.equal("value" in described.evidence, false);
   }
   const inspected = await application.inspectReviewedWebSource(exactRef);
   assert.equal(inspected.status, "available");
@@ -198,7 +222,11 @@ test("reviewed source metadata stays closed and authorization failures never esc
     await unlink(join(fixture.snapshotRoot, snapshotRecord!));
     const described = await publicReader.describeReviewedWebSource(refs.refs[0]!);
     assert.equal(described.status, "available", "metadata-only listing and description read neither prepared nor snapshot body bytes");
-    if (described.status === "available") assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
+    if (described.status === "available") {
+      assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
+      assert.equal("excerpt" in described.evidence, false, "metadata projection never reads or returns source excerpts");
+      assert.equal("value" in described.evidence, false, "metadata projection never returns candidate values");
+    }
     await writeFile(preparedPath, prepared);
     await publicReader.close();
   } finally { await fixture.close(); }
