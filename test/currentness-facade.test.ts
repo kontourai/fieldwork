@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { buildReviewedExtractionSourceState } from "@kontourai/surface";
 import { createFieldworkApplication, recheckFieldwork } from "../src/index.js";
@@ -59,4 +62,38 @@ test("owner-head currentness projects old reviewed evidence through Surface with
   const revoked = await app.readReviewedWebSourceCurrentness(refs.refs[0]!);
   assert.deepEqual(revoked, { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceCurrentness", status: "restricted" });
   initialCurrent = false;
+});
+
+test("currentness keeps its construction-time owner roots across authorization awaits", async (t) => {
+  const f = await ownerFixture(t);
+  await recheckFieldwork({ ...f.options, acquisition: { check: f.check } });
+  const redirected = await mkdtemp(join(tmpdir(), "fieldwork-currentness-redirected-"));
+  t.after(() => rm(redirected, { recursive: true, force: true }));
+  let authorizations = 0;
+  const owner = {
+    runDirectory: f.prior.runDirectory,
+    snapshotRoot: f.snapshotRoot,
+    authorize: () => true,
+    sourceChecks: {
+      receiptRoot: f.receiptRoot,
+      observationRoot: f.observationRoot,
+      authorizeCurrentness: () => {
+        const phase = ++authorizations === 1 ? "before" : "after";
+        owner.runDirectory = join(redirected, `${phase}-runs`);
+        owner.snapshotRoot = join(redirected, `${phase}-snapshots`);
+        owner.sourceChecks.receiptRoot = join(redirected, `${phase}-receipts`);
+        owner.sourceChecks.observationRoot = join(redirected, `${phase}-observations`);
+        return { isCurrent: () => true };
+      },
+    },
+  };
+  const app = createFieldworkApplication({ reviewedWebSourceOwner: owner });
+  const refs = await app.listReviewedWebSourceRefs();
+  assert.equal(refs.status, "available");
+  assert.ok(refs.status === "available");
+
+  const result = await app.readReviewedWebSourceCurrentness(refs.refs[0]!);
+  assert.equal(result.status, "available");
+  assert.equal(authorizations, 2, "both authorization awaits mutate owner configuration");
+  assert.deepEqual(await readdir(redirected), [], "no currentness I/O may follow mutated owner roots");
 });

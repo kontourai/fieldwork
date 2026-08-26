@@ -78,7 +78,7 @@ export class ReviewedWebSourceReader {
     if (!isExactRef(exactRef)) return descriptor("unsupported");
     if (!await this.authorized({ operation: "describe", exactRef })) return descriptor("restricted");
     let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
-    try { found = await this.metadata(exactRef); }
+    try { found = await this.metadata(exactRef, this.owner.runDirectory); }
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       return descriptor(code === "ENOENT" ? "missing" : code === "UNSUPPORTED" ? "unsupported" : "corrupt");
@@ -101,7 +101,7 @@ export class ReviewedWebSourceReader {
     if (!isExactRef(exactRef) || !validCursor(cursor)) return inspection("unsupported");
     if (!await this.authorized({ operation: "inspect", exactRef })) return inspection("restricted");
     let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
-    try { found = await this.metadata(exactRef); }
+    try { found = await this.metadata(exactRef, this.owner.runDirectory); }
     catch (error) { return inspection((error as NodeJS.ErrnoException).code === "UNSUPPORTED" ? "unsupported" : "corrupt"); }
     if (!found) return inspection("missing");
     try {
@@ -155,7 +155,7 @@ export class ReviewedWebSourceReader {
     const initial = await this.currentnessLease(checks, exactRef);
     if (!initial || !leaseCurrent(initial)) return currentness("restricted");
     let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
-    try { found = await this.metadata(exactRef); }
+    try { found = await this.metadata(exactRef, currentnessOwner.runDirectory); }
     catch (error) { return currentness(metadataFailure(error)); }
     if (!found) return currentness("missing");
 
@@ -201,8 +201,8 @@ export class ReviewedWebSourceReader {
     catch { return currentness("limits-exceeded"); }
   }
 
-  private async metadata(exactRef: string) {
-    const stored = await readRunMetadata(this.owner.runDirectory);
+  private async metadata(exactRef: string, runDirectory: string) {
+    const stored = await readRunMetadata(runDirectory);
     const captureRef = stored.envelope.source.snapshotRef;
     if (!captureRef || !parseSnapshotSourceRef(captureRef)) return undefined;
     const attested = projectAttestedReviewedProjection(stored);
