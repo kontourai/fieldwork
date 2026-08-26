@@ -173,7 +173,7 @@ test("a recheck round's grounding is reported not-evaluated, never fabricated as
   const observationRoot = join(root, "observations");
   const store = createFilesystemSnapshotStore({ root: snapshotRoot });
   const snap = (sourceId: string, body: string, fetchedAt: string): Snapshot => ({
-    sourceId, url: source.url, status: 200, fetchedAt, body,
+    sourceId: source.id, url: source.url, status: 200, fetchedAt, body,
     bodyHash: createHash("sha256").update(body).digest("hex"),
     headers: { "content-type": "text/plain; charset=utf-8" },
   });

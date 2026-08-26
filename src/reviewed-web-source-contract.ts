@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { FIELDWORK_SOURCE_BYTES, REVIEWED_WEB_SOURCE_MAX_PAGES, REVIEWED_WEB_SOURCE_MAX_TOTAL_PAGES, REVIEWED_WEB_SOURCE_PAGE_CHARS } from "./fieldwork-limits.js";
+import { FIELDWORK_CAPTURE_REF_MAX_CHARS, FIELDWORK_SOURCE_BYTES, REVIEWED_WEB_SOURCE_MAX_PAGES, REVIEWED_WEB_SOURCE_MAX_TOTAL_PAGES, REVIEWED_WEB_SOURCE_PAGE_CHARS } from "./fieldwork-limits.js";
 
 const apiVersion = "fieldwork.kontourai.io/v1";
 const exactRef = z.string().regex(/^fieldwork-reviewed-source:v1:[a-f0-9]{64}$/);
 const identity = z.string().min(1).max(512);
-const captureRef = z.string().min(1).max(8_192);
+const captureRef = z.string().min(1).max(FIELDWORK_CAPTURE_REF_MAX_CHARS);
 const exactLocator = z.string().regex(/^chars:(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$/);
 const closed = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict();
 

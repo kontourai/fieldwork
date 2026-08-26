@@ -75,6 +75,29 @@ Lookout owns conditional source checks, proposal-observation continuity, concurr
 
 The prior run is immutable. A new round carries exact old and new snapshot references, observation identities, locators, excerpts, values, and extraction times. Replaying the same observation pair yields the same transition and item identities. Fieldwork persists proposal observations under the selected observation root and rejects a stale concurrent writer with `RECHECK_CONFLICT`.
 
+`FieldworkRecheckResult` uses `apiVersion: "fieldwork.kontourai.io/v2"`; other
+facade result kinds retain their own versions. Its `acquisition.kind` separates
+`not-run` (task-drift preflight), `completed`, and `failed`. A preflight refusal
+does not fetch or create an observation. `check` is `null` for that refusal or a
+thrown acquisition; otherwise it contains the actual owner check. A missing
+prior observation remains `null`, not an invented receipt.
+
+Acquisition and proposal heads are distinct. A fresh same-byte capture can
+advance Forage's head without extraction or a new Lookout proposal observation;
+a conditional 304 retains the capture's original time while recording the new
+check time. Capture hashes and times come from authenticated owner records.
+Legacy references retain their lower assurance without a synthesized envelope
+digest. None of these checks renews a Survey review or proves a claim true.
+
+Fieldwork publishes a successful check receipt only after the required review
+round is usable. Replacing an initial queue takes the existing review lock and
+rechecks persisted decisions, so a concurrent accepted review is preserved.
+Conflicts or incomplete round/receipt publication refuse with typed errors
+instead of returning semantic success; `RECHECK_OBSERVATION_FAILED` can require
+recovery after partial completion. Head checks are conservative as-of fences,
+not a transaction across Forage, Lookout, and Survey stores. Consumers must not
+treat the command result alone as a continuously current source assessment.
+
 `fieldwork export` exports one run's own review authority. A first round's queue is the whole extraction, so its reviewed output covers every field. A recheck round's queue is the transition, so its reviewed output covers the fields that moved — decisions from the earlier round stay in the earlier run's export rather than being copied forward under a second run identity. Each claim in a recheck export carries its round: the transition and observation identities, the change kind, and whether the reviewed value was carried forward from the prior observation or affirmed against the new one. Two things are refused rather than exported: a round that decides one field two ways, and a decision resolved onto a proposal that is absent from its observation, which has no source span to cite.
 
 ## Runtime choice
