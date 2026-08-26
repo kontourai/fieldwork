@@ -98,6 +98,9 @@ export class ReviewedWebSourceReader {
       if (!currentReviewFence(this.owner.runDirectory, stored.run)) return inspection("missing");
       const page = Number(cursor ?? "0");
       const totalPages = Math.ceil(stored.preparedText.length / PAGE_CHARS);
+      // An empty source has one explicit, empty page range. For every other
+      // source a cursor at/after the end is not an attested page response.
+      if ((totalPages === 0 && page !== 0) || (totalPages > 0 && page >= totalPages)) return inspection("unsupported");
       const pages = Array.from({ length: Math.min(MAX_PAGES, Math.max(0, totalPages - page)) }, (_, offset) => {
         const index = page + offset; const start = index * PAGE_CHARS; const end = Math.min(stored.preparedText.length, start + PAGE_CHARS);
         return { index, start, end, text: stored.preparedText.slice(start, end) };

@@ -7,7 +7,7 @@ import test from "node:test";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
-import { parseReviewedWebSourceDescriptor } from "../src/reviewed-web-source-contract.js";
+import { parseReviewedWebSourceDescriptor, parseReviewedWebSourceInspection, parseReviewedWebSourceRefs } from "../src/reviewed-web-source-contract.js";
 import {
   buildReviewSessionEvent,
   buildReviewSessionEvents,
@@ -28,6 +28,11 @@ test("the browser-safe reviewed-source contract rejects untrusted versions and o
   assert.throws(() => parseReviewedWebSourceDescriptor({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted", rawBundle: "private",
   }));
+  assert.throws(() => parseReviewedWebSourceDescriptor({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), runResource: "run", captureRef: "capture", preparedArtifact: { ref: "prepared", digest: "0".repeat(64), contentLength: 1 }, review: { revision: 0, state: "reviewed" }, evidence: { id: "e", claimId: "c", proposalIndex: 0, import: { name: "i" }, candidate: { id: "candidate" }, reviewItem: { name: "item" }, reviewDecision: { name: "decision" }, locator: { scheme: "forged", locator: "chars:100-200", occurrence: { index: 0, count: 1, start: 0, end: 1 } } }, integrity: { state: "unchecked" }, inspection: { pageChars: 16_384, maxPages: 8 },
+  }));
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 99, start: 100, end: 1, text: "unrelated" }], totalPages: 0, truncated: false, nextCursor: "0" }));
+  assert.throws(() => parseReviewedWebSourceRefs({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "available", refs: ["fieldwork-reviewed-source:v1:" + "0".repeat(64), "fieldwork-reviewed-source:v1:" + "0".repeat(64)], truncated: false, nextCursor: "0" }));
 });
 
 test("the application contract launches, presents, observes, and returns one reviewed run", async () => {
@@ -109,7 +114,7 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
   const snapshotRoot = await mkdtemp(join(tmpdir(), "fieldwork-reviewed-source-snapshots-"));
   const runRoot = await tempRoot("reviewed-source-run");
   const body = "<main><p>Status: Active</p></main>";
-  const snapshot = { sourceId: "reviewed-source", url: "https://example.test/status", status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/html" } };
+  const snapshot = { sourceId: "reviewed-source", url: `https://example.test/${"a".repeat(500)}`, status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/html" } };
   await createFilesystemSnapshotStore({ root: snapshotRoot }).put(snapshot);
   const ref = buildSnapshotSourceRef(snapshot);
   const initial = createFieldworkApplication();
@@ -125,12 +130,14 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
   const application = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: run.runDirectory, snapshotRoot, authorize: ({ operation }) => { calls.push(operation); return true; } } });
   const listed = await application.listReviewedWebSourceRefs();
   assert.equal(listed.status, "available");
+  assert.deepEqual(parseReviewedWebSourceRefs(listed), listed);
   assert.equal(listed.refs.length, 1);
   const exactRef = listed.refs[0]!;
   const described = await application.describeReviewedWebSource(exactRef);
   assert.equal(described.status, "available");
   if (described.status === "available") {
     assert.equal(described.integrity.state, "unchecked");
+    assert.ok(described.captureRef.length > 512, "an owner-supported exact capture ref is not constrained like an internal ID");
     assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
     assert.equal("file" in described.preparedArtifact, false, "storage filenames are never part of the public DTO");
     const exported = await initial.reviewedOutput(run.runDirectory) as { evidence: Parameters<typeof restoreReviewedExtractionEvidence>[0][] };
@@ -146,10 +153,12 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
     assert.equal(described.evidence.reviewDecision.name, ownerEvidence.restored.reviewDecision?.metadata.name);
     assert.equal("excerpt" in described.evidence, false);
     assert.equal("value" in described.evidence, false);
+    assert.deepEqual(parseReviewedWebSourceDescriptor(described), described, "the owner never emits a descriptor its published parser rejects");
   }
   const inspected = await application.inspectReviewedWebSource(exactRef);
   assert.equal(inspected.status, "available");
   if (inspected.status === "available") assert.match(inspected.pages[0]!.text, /Status: Active/);
+  assert.deepEqual(parseReviewedWebSourceInspection(inspected), inspected);
   assert.ok(calls.filter((operation) => operation === "list").length >= 2);
   assert.ok(calls.filter((operation) => operation === "inspect").length >= 2);
   await application.close();
