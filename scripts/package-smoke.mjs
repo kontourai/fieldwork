@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-const work = mkdtempSync(join(tmpdir(), "fieldwork-package-"));
+import { withPackageSmokeWorkspace } from "./package-smoke-workspace.mjs";
+
+withPackageSmokeWorkspace((work) => {
 execFileSync("npm", ["pack", "--pack-destination", work], { stdio: "inherit" });
 const tarball = join(work, readdirSync(work).find((name) => name.endsWith(".tgz")));
 execFileSync("npm", ["install", "--prefix", work, tarball], { stdio: "inherit" });
@@ -110,3 +111,4 @@ writeFileSync(join(work, "tsconfig.json"), JSON.stringify({
 }, null, 2));
 execFileSync(join(process.cwd(), "node_modules/.bin/tsc"), ["-p", join(work, "tsconfig.json")], { cwd: work, stdio: "inherit" });
 console.log("pack/install/bin smoke passed");
+});
