@@ -29,7 +29,7 @@ import {
   type RunOptions,
 } from "./api-contracts.js";
 import { createDeterministicProvider } from "./deterministic-provider.js";
-import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun } from "./run-store.js";
+import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun, type StoredRunMetadataRead } from "./run-store.js";
 import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
@@ -210,6 +210,27 @@ function fixtureExecution(): FieldworkStoredExecution {
  */
 export async function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   const stored = await readRun(runDirectory);
+  const projection = projectAttestedReviewedProjection(stored);
+  const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
+  const output = withReviewedGroundingEvidence(bundle, projection.enrichment);
+  assertPortableOutput(output);
+  return parseReviewedExport(output);
+}
+
+/**
+ * Rebuild the one attested Survey-to-Surface projection shared by reviewed
+ * export and owner-authorized metadata reads. It accepts the metadata half of
+ * a run, so no caller hydrates prepared source bytes just to prove the
+ * persisted queue, envelope, candidate, decision, and canonical claim IDs
+ * agree. This remains an internal Fieldwork composition seam.
+ */
+export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead): {
+  readonly imported: ExtractionEnvelopeImportResult;
+  readonly items: readonly ReviewItem[];
+  readonly results: readonly ReviewWorkbenchResult[];
+  readonly canonical: ReturnType<typeof buildCanonicalReviewedTrustInput>;
+  readonly enrichment: ReturnType<typeof buildReviewedEvidenceEnrichment>;
+} {
   assertPortableOutput(stored.envelope);
   const imported = importExtractionEnvelope(stored.envelope, {
     importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
@@ -230,10 +251,18 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
   assertGroundedSelection(items, applied.results);
   assertOneDecisionPerClaimTarget(items, applied.results);
   const canonical = projectCanonicalReview(stored.run.runResource, items, applied.results);
-  const bundle = validateTrustBundle(buildSurveyTrustBundle(canonical.surveyInput, { projectionContextId: canonical.projectionContextId }));
-  const output = withReviewedGroundingEvidence(bundle, imported, items, applied.results, canonical.surveyInput.claims);
-  assertPortableOutput(output);
-  return parseReviewedExport(output);
+  const claimIdByCandidateId = new Map<string, string>();
+  for (const claim of canonical.surveyInput.claims) {
+    if (claim.candidateId === undefined) continue;
+    if (claimIdByCandidateId.has(claim.candidateId)) throw new Error(`Two claims reference candidate ${claim.candidateId}; cannot attribute reviewed evidence`);
+    claimIdByCandidateId.set(claim.candidateId, claim.id);
+  }
+  const enrichment = buildReviewedEvidenceEnrichment({
+    imported, items, results: applied.results,
+    isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
+    claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
+  });
+  return { imported, items, results: applied.results, canonical, enrichment };
 }
 
 /**
@@ -249,27 +278,8 @@ export async function reviewedExport(runDirectory: string): Promise<ReviewedExpo
  */
 function withReviewedGroundingEvidence(
   bundle: ReturnType<typeof validateTrustBundle>,
-  imported: ExtractionEnvelopeImportResult,
-  items: readonly ReviewItem[],
-  results: readonly ReviewWorkbenchResult[],
-  claims: ReadonlyArray<{ candidateId?: string; id: string }>,
+  enrichment: ReturnType<typeof buildReviewedEvidenceEnrichment>,
 ): Record<string, unknown> {
-  const claimIdByCandidateId = new Map<string, string>();
-  for (const claim of claims) {
-    if (claim.candidateId === undefined) continue;
-    // Survey's hash-based candidate ids make collisions impossible today; if
-    // that ever changes, guessing which claim an evidence entry grounds would
-    // misattribute provenance, so fail closed instead.
-    if (claimIdByCandidateId.has(claim.candidateId)) {
-      throw new Error(`Two claims reference candidate ${claim.candidateId}; cannot attribute reviewed evidence`);
-    }
-    claimIdByCandidateId.set(claim.candidateId, claim.id);
-  }
-  const enrichment = buildReviewedEvidenceEnrichment({
-    imported, items, results,
-    isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
-    claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
-  });
   const enrichedBundle = enrichment.additionalEvidence.length === 0
     ? bundle
     : validateTrustBundle({ ...bundle, evidence: [...enrichment.additionalEvidence, ...bundle.evidence] });

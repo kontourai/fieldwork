@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-const work = mkdtempSync(join(tmpdir(), "fieldwork-package-"));
+import { withPackageSmokeWorkspace } from "./package-smoke-workspace.mjs";
+
+withPackageSmokeWorkspace((work) => {
 execFileSync("npm", ["pack", "--pack-destination", work], { stdio: "inherit" });
 const tarball = join(work, readdirSync(work).find((name) => name.endsWith(".tgz")));
 execFileSync("npm", ["install", "--prefix", work, tarball], { stdio: "inherit" });
@@ -43,6 +44,10 @@ writeFileSync(join(work, "consumer.mts"), `import {
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
 import {
+  parseReviewedWebSourceDescriptor,
+  type ReviewedWebSourceResult
+} from "@kontourai/fieldwork/reviewed-web-source-contract";
+import {
   createProfileRuntimeBinding, fieldworkStoredExecutionSchema,
   type FieldworkRuntimeBinding
 } from "@kontourai/fieldwork/runtime";
@@ -50,6 +55,10 @@ const task: FieldworkTask = parseFieldworkTask({});
 const view: FieldworkRunViewV1 = fieldworkRunViewSchema.parse({});
 const reviewed: ReviewedExportV1 = reviewedExportSchema.parse({});
 void [FIELDWORK_LIMITS, fieldworkTaskSchema, preparedArtifactViewSchema, reviewMutationResponseSchema, fieldworkHostDescriptor, task, view, reviewed];
+const reviewedDescriptor: ReviewedWebSourceResult = parseReviewedWebSourceDescriptor({
+  apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted"
+});
+void reviewedDescriptor;
 const runtime: FieldworkRuntimeBinding = createProfileRuntimeBinding({
   profiles: ["codex:gpt-5"], budget: { maxAttempts: 1 }
 });
@@ -102,3 +111,4 @@ writeFileSync(join(work, "tsconfig.json"), JSON.stringify({
 }, null, 2));
 execFileSync(join(process.cwd(), "node_modules/.bin/tsc"), ["-p", join(work, "tsconfig.json")], { cwd: work, stdio: "inherit" });
 console.log("pack/install/bin smoke passed");
+});

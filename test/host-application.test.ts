@@ -6,6 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
+import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
+import { parseReviewedWebSourceDescriptor, parseReviewedWebSourceInspection, parseReviewedWebSourceRefs } from "../src/reviewed-web-source-contract.js";
 import {
   buildReviewSessionEvent,
   buildReviewSessionEvents,
@@ -18,6 +20,25 @@ import {
   type FieldworkLifecycleEventV1,
 } from "../src/index.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+
+test("the browser-safe reviewed-source contract rejects untrusted versions and opaque extras", () => {
+  assert.throws(() => parseReviewedWebSourceDescriptor({
+    apiVersion: "fieldwork.kontourai.io/v2", kind: "ReviewedWebSourceDescriptor", status: "missing",
+  }));
+  assert.throws(() => parseReviewedWebSourceDescriptor({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted", rawBundle: "private",
+  }));
+  assert.throws(() => parseReviewedWebSourceDescriptor({
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), runResource: "run", captureRef: "capture", preparedArtifact: { ref: "prepared", digest: "0".repeat(64), contentLength: 1 }, review: { revision: 0, state: "reviewed" }, evidence: { id: "e", claimId: "c", proposalIndex: 0, import: { name: "i" }, candidate: { id: "candidate" }, reviewItem: { name: "item" }, reviewDecision: { name: "decision" }, locator: { scheme: "forged", locator: "chars:100-200", occurrence: { index: 0, count: 1, start: 0, end: 1 } } }, integrity: { state: "unchecked" }, inspection: { pageChars: 16_384, maxPages: 8 },
+  }));
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 99, start: 100, end: 1, text: "unrelated" }], totalPages: 0, truncated: false, nextCursor: "0" }));
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 0, start: 0, end: 16_384, text: "x".repeat(16_384) }], totalPages: 2, truncated: true, nextCursor: "0" }));
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [], totalPages: 0, truncated: true, nextCursor: "0" }));
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 0, start: 0, end: 1, text: "x" }, { index: 1, start: 16_384, end: 16_385, text: "y" }], totalPages: 2, truncated: false }));
+  assert.throws(() => parseReviewedWebSourceRefs({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "available", refs: ["fieldwork-reviewed-source:v1:" + "0".repeat(64), "fieldwork-reviewed-source:v1:" + "0".repeat(64)], truncated: false, nextCursor: "0" }));
+  assert.throws(() => parseReviewedWebSourceRefs({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "available", refs: [], truncated: true, nextCursor: "0" }));
+  assert.equal(parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 127, start: 127 * 16_384, end: 128 * 16_384, text: "x".repeat(16_384) }], totalPages: 128, truncated: false }).status, "available");
+});
 
 test("the application contract launches, presents, observes, and returns one reviewed run", async () => {
   const application = createFieldworkApplication();
@@ -97,8 +118,8 @@ test("host presentation accepts bounded HTTP navigation and rejects executable U
 test("an authorized host lists, describes, and inspects only a reviewed exact web source", async () => {
   const snapshotRoot = await mkdtemp(join(tmpdir(), "fieldwork-reviewed-source-snapshots-"));
   const runRoot = await tempRoot("reviewed-source-run");
-  const body = "<main><p>Status: Active</p></main>";
-  const snapshot = { sourceId: "reviewed-source", url: "https://example.test/status", status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/html" } };
+  const body = `Status: Active\n${"x".repeat(9 * 16_384)}tail`;
+  const snapshot = { sourceId: "reviewed-source", url: `https://example.test/${"a".repeat(500)}`, status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/plain" } };
   await createFilesystemSnapshotStore({ root: snapshotRoot }).put(snapshot);
   const ref = buildSnapshotSourceRef(snapshot);
   const initial = createFieldworkApplication();
@@ -114,18 +135,49 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
   const application = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: run.runDirectory, snapshotRoot, authorize: ({ operation }) => { calls.push(operation); return true; } } });
   const listed = await application.listReviewedWebSourceRefs();
   assert.equal(listed.status, "available");
+  assert.deepEqual(parseReviewedWebSourceRefs(listed), listed);
   assert.equal(listed.refs.length, 1);
   const exactRef = listed.refs[0]!;
   const described = await application.describeReviewedWebSource(exactRef);
   assert.equal(described.status, "available");
   if (described.status === "available") {
     assert.equal(described.integrity.state, "unchecked");
+    assert.ok(described.captureRef.length > 512, "an owner-supported exact capture ref is not constrained like an internal ID");
     assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
     assert.equal("file" in described.preparedArtifact, false, "storage filenames are never part of the public DTO");
+    const exported = await initial.reviewedOutput(run.runDirectory) as { evidence: Parameters<typeof restoreReviewedExtractionEvidence>[0][] };
+    const ownerEvidence = exported.evidence
+      .filter((entry) => (entry as { metadata?: { reviewedExtraction?: unknown } }).metadata?.reviewedExtraction)
+      .map((entry) => ({ entry, restored: restoreReviewedExtractionEvidence(entry) }))
+      .find(({ restored }) => restored.proposalIndex === described.evidence.proposalIndex);
+    assert.ok(ownerEvidence, "the descriptor must carry an actual owner-exported evidence/claim join");
+    assert.equal(described.evidence.id, ownerEvidence.entry.id);
+    assert.equal(described.evidence.claimId, ownerEvidence.restored.claimId);
+    assert.equal(described.evidence.candidate.id, ownerEvidence.restored.reviewItem?.spec.candidates[0]?.id);
+    assert.equal(described.evidence.reviewItem.name, ownerEvidence.restored.reviewItem?.metadata.name);
+    assert.equal(described.evidence.reviewDecision.name, ownerEvidence.restored.reviewDecision?.metadata.name);
+    assert.equal("excerpt" in described.evidence, false);
+    assert.equal("value" in described.evidence, false);
+    assert.deepEqual(parseReviewedWebSourceDescriptor(described), described, "the owner never emits a descriptor its published parser rejects");
+    assert.throws(() => parseReviewedWebSourceDescriptor({ ...described, evidence: { ...described.evidence, locator: { ...described.evidence.locator, locator: `chars:0-${described.preparedArtifact.contentLength + 1}`, occurrence: { ...described.evidence.locator.occurrence, start: 0, end: described.preparedArtifact.contentLength + 1 } } } }));
   }
   const inspected = await application.inspectReviewedWebSource(exactRef);
   assert.equal(inspected.status, "available");
-  if (inspected.status === "available") assert.match(inspected.pages[0]!.text, /Status: Active/);
+  if (inspected.status === "available") {
+    assert.match(inspected.pages[0]!.text, /Status: Active/);
+    assert.equal(inspected.truncated, true, "the first bounded owner page advertises its exact continuation");
+    assert.equal(inspected.nextCursor, "8");
+  }
+  assert.deepEqual(parseReviewedWebSourceInspection(inspected), inspected);
+  const continued = await application.inspectReviewedWebSource(exactRef, "8");
+  assert.equal(continued.status, "available");
+  if (continued.status === "available") {
+    assert.equal(continued.truncated, false);
+    assert.equal(continued.pages.length, 2);
+    assert.ok(continued.pages.at(-1)!.text.length < 16_384, "the final page is the genuine partial remainder");
+  }
+  assert.deepEqual(parseReviewedWebSourceInspection(continued), continued);
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef, integrity: "verified", pages: [], totalPages: 129, truncated: false }));
   assert.ok(calls.filter((operation) => operation === "list").length >= 2);
   assert.ok(calls.filter((operation) => operation === "inspect").length >= 2);
   await application.close();
@@ -198,7 +250,11 @@ test("reviewed source metadata stays closed and authorization failures never esc
     await unlink(join(fixture.snapshotRoot, snapshotRecord!));
     const described = await publicReader.describeReviewedWebSource(refs.refs[0]!);
     assert.equal(described.status, "available", "metadata-only listing and description read neither prepared nor snapshot body bytes");
-    if (described.status === "available") assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
+    if (described.status === "available") {
+      assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
+      assert.equal("excerpt" in described.evidence, false, "metadata projection never reads or returns source excerpts");
+      assert.equal("value" in described.evidence, false, "metadata projection never returns candidate values");
+    }
     await writeFile(preparedPath, prepared);
     await publicReader.close();
   } finally { await fixture.close(); }
