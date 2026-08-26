@@ -12,12 +12,16 @@ import {
 import { runFieldwork, reviewedExport } from "./fieldwork.js";
 import { fieldworkHostDescriptor } from "./host-descriptor.js";
 import { openRun, readRunView } from "./server.js";
+import { ReviewedWebSourceReader, type ReviewedWebSourceInspection, type ReviewedWebSourceOwner, type ReviewedWebSourceRefs, type ReviewedWebSourceResult } from "./reviewed-web-source.js";
 
 export interface FieldworkApplicationOpenOptions {
   readonly runDirectory: string;
   readonly port?: number;
   readonly presentation?: FieldworkHostPresentationV1;
   readonly embeddingOrigin?: string;
+}
+export interface FieldworkApplicationOptions {
+  readonly reviewedWebSourceOwner?: ReviewedWebSourceOwner;
 }
 
 export interface FieldworkApplication {
@@ -26,14 +30,19 @@ export interface FieldworkApplication {
   run(options: RunOptions): Promise<FieldworkRunResult>;
   open(options: FieldworkApplicationOpenOptions): Promise<OpenRunService>;
   reviewedOutput(runDirectory: string): Promise<ReviewedExportV1>;
+  listReviewedWebSourceRefs(cursor?: string): Promise<ReviewedWebSourceRefs>;
+  /** Owner-bound web source operations. They are unavailable until a host configures an owner. */
+  describeReviewedWebSource(exactRef: string): Promise<ReviewedWebSourceResult>;
+  inspectReviewedWebSource(exactRef: string, cursor?: string): Promise<ReviewedWebSourceInspection>;
   close(): Promise<void>;
 }
 
 /** Compose Fieldwork as one independently runnable, host-neutral application. */
-export function createFieldworkApplication(): FieldworkApplication {
+export function createFieldworkApplication(options: FieldworkApplicationOptions = {}): FieldworkApplication {
   const listeners = new Set<FieldworkLifecycleListener>();
   const sessions = new Set<OpenRunService>();
   let sequence = 0;
+  const reviewedWebSource = options.reviewedWebSourceOwner && new ReviewedWebSourceReader(options.reviewedWebSourceOwner);
   const emit = (
     type: FieldworkLifecycleEventType,
     runResource: string,
@@ -91,6 +100,18 @@ export function createFieldworkApplication(): FieldworkApplication {
       const selected = await readRunView(runDirectory);
       emit("review-exported", selected.run.resource, selected.run.revision, selected.review.events.length);
       return output;
+    },
+    async listReviewedWebSourceRefs(cursor) {
+      if (!reviewedWebSource) return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "restricted" };
+      return reviewedWebSource.listReviewedWebSourceRefs(cursor);
+    },
+    async describeReviewedWebSource(exactRef) {
+      if (!reviewedWebSource) return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted" };
+      return reviewedWebSource.describeReviewedWebSource(exactRef);
+    },
+    async inspectReviewedWebSource(exactRef, cursor) {
+      if (!reviewedWebSource) return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "restricted" };
+      return reviewedWebSource.inspectReviewedWebSource(exactRef, cursor);
     },
     async close() {
       await Promise.all([...sessions].map((session) => session.close()));

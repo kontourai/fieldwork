@@ -84,8 +84,8 @@ export function inspectionExport(
 export function openRun(runDirectory: string, options?: OpenRunOptions): Promise<OpenRunService> {
   return internalOpen(runDirectory, options);
 }
-export function createFieldworkApplication(): import("./host-application.js").FieldworkApplication {
-  return internalCreateApplication();
+export function createFieldworkApplication(options?: import("./host-application.js").FieldworkApplicationOptions): import("./host-application.js").FieldworkApplication {
+  return internalCreateApplication(options);
 }
 export function recheckFieldwork(
   options: import("./recheck.js").FieldworkRecheckOptions
@@ -105,8 +105,9 @@ export type {
   ReviewedExportV1, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
 } from "./api-contracts.js";
 export type {
-  FieldworkApplication, FieldworkApplicationOpenOptions,
+  FieldworkApplication, FieldworkApplicationOpenOptions, FieldworkApplicationOptions,
 } from "./host-application.js";
+export type { ReviewedWebSourceOwner, ReviewedWebSourceResult, ReviewedWebSourceInspection, ReviewedWebSourceRefs } from "./reviewed-web-source.js";
 export type {
   DatumRuntimeBindingOptions, FieldworkExecutionIdentity, FieldworkRuntimeBinding,
   FieldworkRuntimeBudget, FieldworkRuntimeCandidate,
