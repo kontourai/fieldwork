@@ -262,27 +262,23 @@ export class FieldworkSourceCheckReceiptStore {
   }
   /** Metadata-only v2 read: it never locks, repairs, creates, or calls an owner. */
   public async readCurrentWithWitness(sourceId: string): Promise<CurrentReadResult> {
+    let pointerPresent = false;
     try {
       validId(sourceId);
       const before = await this.readDirectoryIdentities(sourceId);
       const pointerFile = await this.readDetailed(this.pointerPath(sourceId), "pointer");
       const pointer = JSON.parse(pointerFile.bytes.toString());
       validPointer(pointer, sourceId);
+      pointerPresent = true;
       if (pointer.state === "pending") return { kind: "pending" };
       if (pointer.state !== "current" || !pointer.receipt || !pointer.receiptDigest) return { kind: "unavailable" };
       const receiptFile = await this.readDetailed(join(this.dir(sourceId), pointer.receipt), "receipt");
-      if (sha(receiptFile.bytes) !== pointer.receiptDigest) throw new StoreError("corrupt");
-      let receipt: unknown;
-      try { receipt = JSON.parse(receiptFile.bytes.toString()); } catch { throw new StoreError("corrupt"); }
-      validReceipt(receipt);
+      const receipt = this.decodeReceipt(sourceId, pointer, receiptFile.bytes);
+      const after = await this.readDirectoryIdentities(sourceId);
+      if (!sameIdentity(before.root, after.root) || !sameIdentity(before.source, after.source)) return { kind: "unavailable" };
       // A v1 receipt is retained for compatibility/history, but never proves
       // currentness.  Callers may begin a fresh v2 check from owner heads.
       if (!isReceiptV2(receipt)) return { kind: "legacy" };
-      const match = NAME.exec(pointer.receipt);
-      if (!match || Number(match[1]) !== pointer.generation || match[2] !== pointer.receiptDigest ||
-        receipt.generation !== pointer.generation || receipt.sourceId !== sourceId) throw new StoreError("corrupt");
-      const after = await this.readDirectoryIdentities(sourceId);
-      if (!sameIdentity(before.root, after.root) || !sameIdentity(before.source, after.source)) return { kind: "unavailable" };
       const unsigned: Omit<CurrentWitness, "token"> = {
         kind: "fieldwork.source-check-receipt-witness/v1", sourceId,
         generation: pointer.generation, receiptDigest: pointer.receiptDigest,
@@ -293,7 +289,10 @@ export class FieldworkSourceCheckReceiptStore {
       const witness = { ...unsigned, token: witnessToken(unsigned) };
       return { kind: "available", receipt, witness };
     } catch (e) {
-      if (code(e) === "ENOENT") return { kind: "missing" };
+      // Only an absent pointer means the source has no record. Once a valid
+      // pointer was opened, a disappearing receipt is corrupt state, never a
+      // whole-store miss.
+      if (!pointerPresent && code(e) === "ENOENT") return { kind: "missing" };
       return { kind: typed(e).kind };
     }
   }
@@ -347,22 +346,35 @@ export class FieldworkSourceCheckReceiptStore {
       join(this.dir(sourceId), pointer.receipt),
       "receipt",
     );
+    return this.decodeReceipt(sourceId, pointer, bytes);
+  }
+  /** The same logical binding is required by legacy history and v2 witnesses. */
+  private decodeReceipt(
+    sourceId: string,
+    pointer: Pointer,
+    bytes: Buffer,
+  ): StoredReceipt {
     if (sha(bytes) !== pointer.receiptDigest) throw new StoreError("corrupt");
     let receipt: unknown;
-    try {
-      receipt = JSON.parse(bytes.toString());
-    } catch {
-      throw new StoreError("corrupt");
-    }
+    try { receipt = JSON.parse(bytes.toString()); } catch { throw new StoreError("corrupt"); }
     validReceipt(receipt);
+    this.assertPointerReceiptConsistency(sourceId, pointer, receipt as StoredReceipt);
+    return receipt as StoredReceipt;
+  }
+  private assertPointerReceiptConsistency(
+    sourceId: string,
+    pointer: Pointer,
+    receipt: StoredReceipt,
+  ) {
+    if (!pointer.receipt || !pointer.receiptDigest) throw new StoreError("corrupt");
     const match = NAME.exec(pointer.receipt);
     if (
       !match || Number(match[1]) !== pointer.generation ||
       match[2] !== pointer.receiptDigest ||
-      (receipt as StoredReceipt).generation !== pointer.generation ||
-      (receipt as StoredReceipt).sourceId !== sourceId
+      receipt.generation !== pointer.generation || receipt.sourceId !== sourceId ||
+      receipt.priorProposalHeadId !== pointer.baseline.proposalHeadId ||
+      !same(receipt.priorCapture, pointer.baseline.admittedAcquisition)
     ) throw new StoreError("corrupt");
-    return receipt as StoredReceipt;
   }
   private async readDirectoryIdentities(sourceId: string) {
     return { root: await directoryIdentity(resolve(this.root)), source: await directoryIdentity(this.dir(sourceId)) };
