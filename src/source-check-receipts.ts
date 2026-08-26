@@ -93,9 +93,9 @@ export class FieldworkSourceCheckReceiptStore {
     value: Baseline,
     readHead: ReadHead,
   ): Promise<Pending> {
-    const baseline = copy(value);
-    validBaseline(sourceId, baseline);
     try {
+      const baseline = copy(value);
+      validBaseline(sourceId, baseline);
       return await this.lock(sourceId, async () => {
         const old = await this.pointer(sourceId, true);
         if (
@@ -204,6 +204,10 @@ export class FieldworkSourceCheckReceiptStore {
       const observed = await checkedHead(readHead);
       const receipt = await this.receipt(sourceId, pointer);
       if (
+        receipt.priorProposalHeadId !== pointer.baseline.proposalHeadId ||
+        !same(receipt.priorCapture, pointer.baseline.admittedAcquisition)
+      ) throw new StoreError("corrupt");
+      if (
         observed !== receipt.resultProposalHeadId ||
         await checkedHead(readHead) !== observed ||
         !samePointer(await this.pointer(sourceId, false), pointer)
@@ -304,6 +308,8 @@ export class FieldworkSourceCheckReceiptStore {
   }
   private async replace(path: string, value: Pointer) {
     await this.ensure(value.sourceId);
+    const bytes = Buffer.from(JSON.stringify(value));
+    if (bytes.length > MAX) throw new StoreError("corrupt");
     const temp = `${path}.${randomUUID()}.pending`;
     const handle = await open(
       temp,
@@ -311,7 +317,7 @@ export class FieldworkSourceCheckReceiptStore {
       0o600,
     );
     try {
-      await handle.writeFile(JSON.stringify(value));
+      await handle.writeFile(bytes);
       await handle.sync();
     } finally {
       await handle.close();
@@ -481,6 +487,7 @@ function validBaseline(source: string, value: unknown) {
     !HASH.test(b.proposalHeadId)
   ) throw new StoreError("corrupt");
   validCapture(b.admittedAcquisition, source);
+  assertPortableOutput(b.admittedAcquisition);
 }
 function validPending(value: unknown) {
   if (!exact(value, ["sourceId", "generation", "pointerToken", "baseline"])) {
@@ -553,9 +560,12 @@ function validReceipt(value: unknown) {
   if (
     (r.outcome === "changed" &&
       r.resultProposalHeadId === r.priorProposalHeadId) ||
-    ((r.outcome === "unchanged-304" || r.outcome === "unchanged-hash") &&
+    (r.outcome === "unchanged-304" &&
       (r.resultProposalHeadId !== r.priorProposalHeadId ||
-        !same(r.priorCapture, r.currentCapture)))
+        !same(r.priorCapture, r.currentCapture))) ||
+    (r.outcome === "unchanged-hash" &&
+      (r.resultProposalHeadId !== r.priorProposalHeadId ||
+        r.priorCapture.bodyHash !== r.currentCapture.bodyHash))
   ) throw new StoreError("corrupt");
   assertPortableOutput(r);
 }
