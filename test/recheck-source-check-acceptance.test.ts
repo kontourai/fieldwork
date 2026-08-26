@@ -109,6 +109,22 @@ for (const transport of ["http", "response"] as const) test(`public recheck keep
   }
 });
 
+test("a real owner-backed v2 receipt binds both heads and its private read witness", async (t) => {
+  const f = await ownerFixture(t, "http");
+  const result = await recheckFieldwork({ ...f.options, acquisition: { check: f.check } });
+  const read = await f.receipts.readCurrentWithWitness(f.source.id);
+  assert.equal(read.kind, "available");
+  assert.ok(read.kind === "available");
+  assert.equal(read.receipt.version, 2);
+  assert.equal(read.receipt.acquisitionHead.sourceId, f.source.id);
+  assert.equal(read.receipt.acquisitionHead.headSnapshotRef.bodyHash, (await f.capture(currentRef(result.check!))).bodyHash);
+  assert.equal(read.receipt.proposalHead.sourceId, f.source.id);
+  assert.equal(read.receipt.proposalHead.observationId, result.priorObservation!.observationId);
+  assert.equal(read.receipt.proposalHeadSnapshotRef, result.priorObservation!.snapshotRef);
+  assert.deepEqual(await f.receipts.compareCurrentWitness(read.witness), { kind: "matches" });
+  await f.frozenPrior();
+});
+
 for (const legacy of [false, true]) test(`pending baseline retains owner capture facts, not hash(ref) or extraction time (legacy=${legacy})`, async (t) => {
   const f = await ownerFixture(t, "response", legacy);
   const expected = await f.capture(f.initialRef);

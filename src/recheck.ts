@@ -219,37 +219,22 @@ export async function recheckFieldwork(
   );
   // Publish pending before network I/O. A later started check therefore makes
   // an earlier completion non-current rather than silently reviving it.
-  // Receipt storage freezes its own baseline. This recheck integration remains
-  // intentionally narrow while the public currentness reader is completed.
+  // Both owners supply their own authenticated heads; Fieldwork only records
+  // and compares their opaque witnesses. The top-level Forage store and the
+  // Lookout observation store remain independent authorities.
   let priorCapture = await exactReceiptCapture(snapshotStore, priorStored.snapshotRef);
-  let expectedAcquisitionRef = priorCapture.snapshotRef;
-  const assertAcquisitionHead = async (): Promise<void> => {
-    const latest = await snapshotStore.latest(invocation.source.id);
-    if (!latest || buildSnapshotSourceRef(latest) !== expectedAcquisitionRef) {
-      throw withCode("RECHECK_CONFLICT", "Source acquisition advanced during recheck");
-    }
-  };
-  const readProposalHead = async (): Promise<string | null> => {
-    const latest = await store.loadLatest(invocation.source.id);
-    if (!latest.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Proposal head could not be loaded");
-    return latest.value?.observationId ?? null;
-  };
-  // Read the previous immutable receipt against its own proposal witness first.
-  // Only after selecting its actual acquisition capture can a new operation
-  // fence both heads around every receipt-store callback.
-  const existingReceipt = await receipts.readCurrent(invocation.source.id, readProposalHead);
-  if (existingReceipt.kind === "available") {
-    priorCapture = existingReceipt.receipt.currentCapture;
-    expectedAcquisitionRef = priorCapture.snapshotRef;
-  } else if (existingReceipt.kind !== "missing") {
+  const priorReceipt = await receipts.readCurrentWithWitness(invocation.source.id);
+  if (priorReceipt.kind === "available") priorCapture = priorReceipt.receipt.currentCapture;
+  // v1 remains history, never currentness. A newly authenticated v2 operation
+  // starts from the actual owner heads instead of treating the legacy bytes as
+  // a current receipt.
+  else if (priorReceipt.kind !== "missing" && priorReceipt.kind !== "legacy") {
     throw withCode("RECHECK_CONFLICT", "Prior source currentness is not available");
   }
-  const readHead = async (): Promise<string | null> => {
-    await assertAcquisitionHead();
-    const head = await readProposalHead();
-    await assertAcquisitionHead();
-    return head;
-  };
+  const baselineHeads = await verifiedOwnerHeads(
+    snapshotStore, store, invocation.source.id, priorCapture, priorStored.observationId,
+  );
+  const baselineReadHead = ownerWitnessReader(snapshotStore, store, baselineHeads);
   const pending = await receipts.begin(
     invocation.source.id,
     {
@@ -257,7 +242,7 @@ export async function recheckFieldwork(
       proposalHeadId: priorStored.observationId,
       admittedAcquisition: priorCapture,
     },
-    readProposalHead,
+    baselineReadHead,
   );
   let check: FieldworkCheckResult;
   try {
@@ -320,19 +305,21 @@ export async function recheckFieldwork(
   }
   const admittedCheck = checkAdmission.value;
   // The actual Forage acquisition head is independent of Lookout's proposal
-  // head. A deferred older check must not relabel a newer capture as current.
-  expectedAcquisitionRef = admittedCheck.current.snapshotRef;
-  await assertAcquisitionHead();
+  // head. Completion reads both new heads after the owner admission.
   if (check.kind === "unchanged-304" || check.kind === "unchanged-hash") {
+    const completionHeads = await verifiedOwnerHeads(
+      snapshotStore, store, invocation.source.id, admittedCheck.current, priorStored.observationId,
+    );
     await finalizeReceipt(receipts, pending,
-      receiptCompletion(
+      receiptCompletionWithHeads(
         check.kind,
         priorStored.observationId,
         priorCapture,
         admittedCheck.current,
         check.checkedAt,
+        completionHeads,
       ),
-      readHead,
+      ownerWitnessReader(snapshotStore, store, completionHeads),
     );
     return portableResult({
       classification: "unchanged-source",
@@ -503,18 +490,22 @@ export async function recheckFieldwork(
       cause,
     );
   }
+  const completionHeads = await verifiedOwnerHeads(
+    snapshotStore, store, invocation.source.id, admittedCheck.current, committed.value.observationId,
+  );
   await finalizeReceipt(
     receipts,
     pending,
-    receiptCompletion(
+    receiptCompletionWithHeads(
       "changed",
       committed.value.observationId,
       priorCapture,
       admittedCheck.current,
       check.checkedAt,
+      completionHeads,
       priorStored.observationId,
     ),
-    readHead,
+    ownerWitnessReader(snapshotStore, store, completionHeads),
   );
   const result = portableResult({
     classification: items.length === 0 ? "stable-proposals" : "semantic-drift",
@@ -553,6 +544,74 @@ function receiptCompletion(
     resultProposalHeadId,
     priorCapture,
     currentCapture,
+  } as const;
+}
+
+type VerifiedOwnerHeads = {
+  readonly acquisition: Extract<Awaited<ReturnType<ReturnType<typeof createFilesystemSnapshotStore>["readVerifiedHead"]>>, { kind: "found" }>;
+  readonly proposal: Extract<Awaited<ReturnType<ObservationStore["readVerifiedHead"]>>, { kind: "verified" }>;
+};
+
+/** Read the concrete owner stores once, then bind their actual immutable heads. */
+async function verifiedOwnerHeads(
+  snapshots: ReturnType<typeof createFilesystemSnapshotStore>,
+  observations: ObservationStore,
+  sourceId: string,
+  capture: Capture,
+  observationId: string,
+): Promise<VerifiedOwnerHeads> {
+  const [acquisition, proposal] = await Promise.all([
+    snapshots.readVerifiedHead(sourceId), observations.readVerifiedHead(sourceId),
+  ]);
+  if (acquisition.kind !== "found" || proposal.kind !== "verified" ||
+    proposal.sourceId !== sourceId || proposal.observationId !== observationId ||
+    !sameCaptureHead(capture, acquisition.headSnapshotRef)) {
+    throw withCode("RECHECK_CONFLICT", "Source owners advanced during recheck");
+  }
+  return { acquisition, proposal };
+}
+
+/** Metadata-only owner comparisons. No latest()/body/proposal read is used here. */
+function ownerWitnessReader(
+  snapshots: ReturnType<typeof createFilesystemSnapshotStore>,
+  observations: ObservationStore,
+  heads: VerifiedOwnerHeads,
+): () => Promise<string | null> {
+  return async () => {
+    const [acquisition, proposal] = await Promise.all([
+      snapshots.compareHeadWitness(heads.acquisition.witness),
+      observations.compareHeadWitness(heads.proposal.witness),
+    ]);
+    if (acquisition.kind !== "matches" || proposal.kind !== "matches" ||
+      proposal.sourceId !== heads.proposal.sourceId || proposal.observationId !== heads.proposal.observationId) {
+      throw withCode("RECHECK_CONFLICT", "Source owners advanced during recheck");
+    }
+    return heads.proposal.observationId;
+  };
+}
+
+function sameCaptureHead(capture: Capture, head: { sourceId: string; url: string; bodyHash: string; fetchedAt: string; snapshotDigest: string }) {
+  return capture.sourceId === head.sourceId && capture.url === head.url &&
+    capture.bodyHash === head.bodyHash && capture.fetchedAt === head.fetchedAt &&
+    // Historical v1 captures can lack an envelope digest.  We do not invent
+    // one; the newly admitted v2 current capture still has to match in full.
+    (capture.snapshotDigest === undefined || capture.snapshotDigest === head.snapshotDigest);
+}
+
+function receiptCompletionWithHeads(
+  outcome: Parameters<typeof receiptCompletion>[0],
+  resultProposalHeadId: string,
+  priorCapture: Capture,
+  currentCapture: Capture,
+  checkedAt: string,
+  heads: VerifiedOwnerHeads,
+  priorProposalHeadId = resultProposalHeadId,
+) {
+  return {
+    ...receiptCompletion(outcome, resultProposalHeadId, priorCapture, currentCapture, checkedAt, priorProposalHeadId),
+    acquisitionHead: heads.acquisition.witness,
+    proposalHead: heads.proposal.witness,
+    proposalHeadSnapshotRef: heads.proposal.snapshotRef,
   } as const;
 }
 

@@ -60,11 +60,9 @@ test("unchanged source skips extraction and preserves the prior review truth", a
 test("cosmetic source change with byte-identical proposals creates no semantic review work", async () => {
   const setup = await baseline("Status: Active");
   const current = snapshot("capture-current", "Status: Active\nCosmetic footer", "2026-07-23T11:00:00.000Z");
-  await setup.store.put(current);
-
   const result = await recheckFieldwork({
     ...setup.options,
-    acquisition: { check: async () => check("changed", setup.priorRef, buildSnapshotSourceRef(current)) },
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
   });
 
   assert.equal(result.classification, "stable-proposals");
@@ -84,10 +82,9 @@ test("changed, moved, and removed evidence route deterministic old/new observati
   ]) {
     const setup = await baseline("Status: Active");
     const current = snapshot(`capture-${scenario.name}`, scenario.body, "2026-07-23T12:00:00.000Z");
-    await setup.store.put(current);
     const result = await recheckFieldwork({
       ...setup.options,
-      acquisition: { check: async () => check("changed", setup.priorRef, buildSnapshotSourceRef(current)) },
+      acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
     });
 
     assert.equal(result.classification, "semantic-drift", scenario.name);
@@ -191,11 +188,9 @@ test("competing acquisition heads have at most one continuity winner", async () 
   const setup = await baseline("Status: Active");
   const left = snapshot("capture-left", "Status: Pending", "2026-07-23T14:00:00.000Z");
   const right = snapshot("capture-right", "Status: Closed", "2026-07-23T14:00:01.000Z");
-  await Promise.all([setup.store.put(left), setup.store.put(right)]);
-
   const attempts = await Promise.allSettled([left, right].map((current) => recheckFieldwork({
     ...setup.options,
-    acquisition: { check: async () => check("changed", setup.priorRef, buildSnapshotSourceRef(current)) },
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
   })));
   assert.ok(attempts.filter((entry) => entry.status === "fulfilled").length <= 1);
   for (const rejected of attempts) {
@@ -538,10 +533,9 @@ function priorCandidateSourceRef(result: Awaited<ReturnType<typeof semanticPair>
 async function roundFor(captureId: string, body: string, priorBody = "Status: Active") {
   const setup = await baseline(priorBody);
   const current = snapshot(captureId, body, "2026-07-23T16:00:00.000Z");
-  await setup.store.put(current);
   return recheckFieldwork({
     ...setup.options,
-    acquisition: { check: async () => check("changed", setup.priorRef, buildSnapshotSourceRef(current)) },
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
   });
 }
 
@@ -575,11 +569,10 @@ async function decideRound(
 async function semanticPair() {
   const setup = await baseline("Status: Active");
   const current = snapshot("capture-replay", "Status: Pending", "2026-07-23T15:00:00.000Z");
-  await setup.store.put(current);
   return recheckFieldwork({
     ...setup.options,
     now: () => "2026-07-23T15:01:00.000Z",
-    acquisition: { check: async () => check("changed", setup.priorRef, buildSnapshotSourceRef(current)) },
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
   });
 }
 

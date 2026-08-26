@@ -92,7 +92,7 @@ test("vendor renewal example proves typed grounding, Survey review, export, and 
   };
   const priorSnapshot = snapshot(source.id, source.url, sourceText, "2026-07-25T08:00:00.000Z");
   const currentSnapshot = snapshot(source.id, source.url, revisedText, "2026-07-25T09:00:00.000Z");
-  await Promise.all([store.put(priorSnapshot), store.put(currentSnapshot)]);
+  await store.put(priorSnapshot);
   const priorRef = buildSnapshotSourceRef(priorSnapshot);
   const currentRef = buildSnapshotSourceRef(currentSnapshot);
 
@@ -185,7 +185,9 @@ test("vendor renewal example proves typed grounding, Survey review, export, and 
     snapshotRoot,
     now: () => "2026-07-25T09:01:00.000Z",
     acquisition: {
-      check: async () => ({
+      check: async () => {
+        await store.put(currentSnapshot);
+        return {
         sourceId: source.id,
         sourceUrl: source.url,
         checkedAt: "2026-07-25T09:00:30.000Z",
@@ -194,7 +196,8 @@ test("vendor renewal example proves typed grounding, Survey review, export, and 
         priorSnapshotRef: priorRef,
         currentSnapshotRef: currentRef,
         changeBasis: "hash",
-      }),
+        };
+      },
     },
   });
   assert.equal(recheck.classification, oracle.recheck.classification);

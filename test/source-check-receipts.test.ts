@@ -82,6 +82,9 @@ test("a real public Forage exact reference beyond the former internal cap starts
     currentCapture: admittedAcquisition,
   }, async () => headA);
   assert.equal(finalized.kind, "available");
+  // Existing v1 bytes remain readable through the compatibility API, but lack
+  // owner witnesses and cannot be promoted into the v2 currentness path.
+  assert.deepEqual(await store.readCurrentWithWitness(sourceId), { kind: "legacy" });
 });
 
 test("a newer pending generation fences an old completion and changed receipts bind the resulting head", async () => {

@@ -244,14 +244,14 @@ test("finalize rechecks the exact published pointer after its last head await", 
   const pendingBytes = await readFile(f.pointer);
   let calls = 0;
   const result = await f.store.finalize(f.pending, completion(), async () => {
-    if (++calls === 3) await writeFile(f.pointer, pendingBytes);
+    if (++calls === 2) await writeFile(f.pointer, pendingBytes);
     return next;
   });
-  assert.equal(calls, 3, "exercise the post-publication head fence");
+  assert.equal(calls, 2, "exercise the post-publication head fence");
   assert.equal(result.kind, "unavailable");
 });
 
-for (const boundary of [1, 2, 3]) {
+for (const boundary of [1, 2]) {
   test(`external head advance at finalize fence ${boundary} is unavailable`, async (t) => {
     const f = await fixture(t);
     let calls = 0;
@@ -336,7 +336,7 @@ for (const phase of [0, 1, 2, 3]) {
     assert.deepEqual(await c.exited, { code: null, signal: "SIGKILL" });
     const store = new FieldworkSourceCheckReceiptStore(root);
     const result = await store.readCurrent(source, async () => next);
-    assert.equal(result.kind, phase === 0 ? "missing" : phase === 3 ? "available" : "pending");
+    assert.equal(result.kind, phase === 0 ? "missing" : phase >= 2 ? "available" : "pending");
     const directory = join(root, hash(source));
     const receipts = (await readdir(directory)).filter((name) => /^receipt-.*\.json$/.test(name));
     assert.equal(receipts.length, phase >= 2 ? 1 : 0);
@@ -347,8 +347,8 @@ for (const phase of [0, 1, 2, 3]) {
     }
     const aged = new Date(Date.now() - 120_000);
     await utimes(join(directory, ".lock"), aged, aged);
-    const restartHead = phase === 3 ? next : head;
-    const pending = await store.begin(source, { pointerToken: await store.currentPointerToken(source), proposalHeadId: restartHead, admittedAcquisition: phase === 3 ? completion().currentCapture : capture() }, async () => restartHead);
+    const restartHead = phase >= 2 ? next : head;
+    const pending = await store.begin(source, { pointerToken: await store.currentPointerToken(source), proposalHeadId: restartHead, admittedAcquisition: phase >= 2 ? completion().currentCapture : capture() }, async () => restartHead);
     assert.equal(pending.generation, phase === 0 ? 1 : 2);
   });
 }

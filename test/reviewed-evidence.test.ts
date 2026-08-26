@@ -185,7 +185,6 @@ test("a recheck round's grounding is reported not-evaluated, never fabricated as
     snapshotRef: priorRef, snapshotRoot, root: runRoot,
   });
   const currentSnapshot = snap("capture-current", "Status: Pending", "2026-07-23T15:00:00.000Z");
-  await store.put(currentSnapshot);
   const currentRef = buildSnapshotSourceRef(currentSnapshot);
   const check: CheckResult = {
     sourceId: source.id, sourceUrl: source.url, checkedAt: "2026-07-23T11:00:00.000Z", warnings: [],
@@ -196,7 +195,7 @@ test("a recheck round's grounding is reported not-evaluated, never fabricated as
     taskPath: join(resolve("examples/generic"), "task.json"),
     root: runRoot, observationRoot, snapshotRoot,
     now: () => "2026-07-23T15:01:00.000Z",
-    acquisition: { check: async () => check },
+    acquisition: { check: async () => { await store.put(currentSnapshot); return check; } },
   });
   assert.ok(recheck.run, "recheck must produce a decidable round");
   await acceptAll(recheck.run!.runDirectory);

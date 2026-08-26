@@ -12,12 +12,16 @@ const capture = {
   fetchedAt: "2026-08-26T10:00:00.000Z",
   integrity: "body-and-identity" as const,
 };
-const store = new FieldworkSourceCheckReceiptStore(root);
 const park = async (phase: string): Promise<never> => {
   process.send?.({ phase });
   await new Promise(() => { process.on("message", () => undefined); });
   throw new Error("Unreachable");
 };
+const store = new FieldworkSourceCheckReceiptStore(root, {
+  ...(mode === "crash-finalize" && Number(boundaryText) === 3
+    ? { afterPointerPublication: () => park("finalize-3") }
+    : {}),
+});
 const pending = await store.begin("source-a", {
   pointerToken: await store.currentPointerToken("source-a"),
   proposalHeadId: head,
