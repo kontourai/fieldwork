@@ -3,14 +3,17 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   admitProposalObservation,
+  admitSourceCheck,
   buildSemanticReviewWork,
   createObservationStore,
   type ProposalSetObservation,
   type LookoutSource,
+  type CheckResult,
   type SemanticReviewChange,
   type StoredProposalObservationV1,
 } from "@kontourai/lookout";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
+import { buildSnapshotSourceRef, resolveSnapshotSourceRef } from "@kontourai/forage/fetch";
 import {
   FieldworkSourceCheckReceiptStore,
   type Capture,
@@ -67,8 +70,9 @@ interface FieldworkCheckCommon {
   readonly sourceId: string;
   readonly sourceUrl: string;
   readonly checkedAt: string;
-  readonly warnings: readonly string[];
+  readonly warnings: string[];
 }
+/** Fieldwork's closed facade mirrors an owner result without leaking owner declarations. */
 export type FieldworkCheckResult =
   | (FieldworkCheckCommon & {
       readonly kind: "unchanged-304";
@@ -117,12 +121,17 @@ export interface FieldworkEvidenceObservation {
 }
 
 export interface FieldworkRecheckResult {
-  readonly apiVersion: "fieldwork.kontourai.io/v1";
+  readonly apiVersion: "fieldwork.kontourai.io/v2";
   readonly kind: "FieldworkRecheckResult";
   readonly classification: FieldworkRecheckClassification;
-  readonly check: FieldworkCheckResult;
+  /** No acquisition ran only for preflight task drift or an acquisition throw. */
+  readonly acquisition:
+    | { readonly kind: "not-run"; readonly reason: "task-drift" }
+    | { readonly kind: "completed" }
+    | { readonly kind: "failed" };
+  readonly check: FieldworkCheckResult | null;
   readonly providerSkipped: boolean;
-  readonly priorObservation: FieldworkEvidenceObservation;
+  readonly priorObservation: FieldworkEvidenceObservation | null;
   readonly currentObservation: FieldworkEvidenceObservation | null;
   readonly review: {
     readonly transitionId: string | null;
@@ -140,13 +149,20 @@ export interface FieldworkRecheckResult {
 export async function recheckFieldwork(
   options: FieldworkRecheckOptions,
 ): Promise<FieldworkRecheckResult> {
-  const prior = await readRun(options.priorRunDirectory);
+  /* Capture every capability and identity before the first await. Callers may
+   * mutate their options object while acquisition is suspended; that must not
+   * redirect a live operation into another source or private store. */
+  const invocation = captureInvocation(options);
+  const [prior, taskText] = await Promise.all([
+    readRun(invocation.priorRunDirectory),
+    readFile(invocation.taskPath, "utf8"),
+  ]);
   const task = parseFieldworkTask(
-    JSON.parse(await readFile(options.taskPath, "utf8")),
+    JSON.parse(taskText),
   );
   if (
-    "targetSchema" in options.source &&
-    canonicalJson(options.source.targetSchema) !==
+    "targetSchema" in invocation.source &&
+    canonicalJson(invocation.source.targetSchema) !==
       canonicalJson(traverseTask(task).targetSchema)
   ) {
     throw withCode(
@@ -156,125 +172,161 @@ export async function recheckFieldwork(
   }
   const store = createObservationStore({
     root: resolve(
-      options.observationRoot ??
-        join(options.root ?? ".fieldwork/runs", ".lookout-observations"),
+      invocation.observationRoot ??
+        join(invocation.root ?? ".fieldwork/runs", ".lookout-observations"),
     ),
   });
+  const priorObservation = observationFor(invocation.source.id, prior.envelope);
+
+  // This is deliberately read-only: task drift is decided before acquisition,
+  // receipt pending-state, snapshots, or a synthetic proposal observation.
+  if (canonicalJson(task) !== canonicalJson(prior.run.task)) {
+    const loaded = await store.loadLatest(invocation.source.id);
+    if (!loaded.ok) {
+      throw withCode(
+        "RECHECK_OBSERVATION_FAILED",
+        "Prior observation could not be loaded",
+        loaded.error,
+      );
+    }
+    if (loaded.value && !sameObservation(loaded.value, priorObservation)) {
+      throw withCode(
+        "RECHECK_CONFLICT",
+        "Stored source continuity does not match the selected prior run",
+      );
+    }
+    return portableResult({
+      classification: "task-drift",
+      acquisition: { kind: "not-run", reason: "task-drift" },
+      check: null,
+      providerSkipped: true,
+      priorObservation: loaded.value ? evidence(loaded.value) : null,
+    });
+  }
   const snapshotStore = createFilesystemSnapshotStore({
-    root: options.snapshotRoot ?? ".fieldwork/snapshots",
+    root: invocation.snapshotRoot ?? ".fieldwork/snapshots",
   });
-  const priorObservation = observationFor(options.source.id, prior.envelope);
   const priorStored = await establishPrior(
     store,
     snapshotStore,
-    options.source,
+    invocation.source,
     priorObservation,
-    options.now?.() ?? prior.run.createdAt,
+    invocation.now?.() ?? prior.run.createdAt,
   );
   const receipts = new FieldworkSourceCheckReceiptStore(
-    options.receiptRoot ??
-      join(options.root ?? ".fieldwork/runs", ".source-check-receipts"),
+    invocation.receiptRoot ??
+      join(invocation.root ?? ".fieldwork/runs", ".source-check-receipts"),
   );
   // Publish pending before network I/O. A later started check therefore makes
   // an earlier completion non-current rather than silently reviving it.
   // Receipt storage freezes its own baseline. This recheck integration remains
   // intentionally narrow while the public currentness reader is completed.
-  const priorCapture = receiptCapture(
-    options.source,
-    priorStored.snapshotRef,
-    priorStored.observedAt,
-  );
+  let priorCapture = await exactReceiptCapture(snapshotStore, priorStored.snapshotRef);
+  let expectedAcquisitionRef = priorCapture.snapshotRef;
+  const assertAcquisitionHead = async (): Promise<void> => {
+    const latest = await snapshotStore.latest(invocation.source.id);
+    if (!latest || buildSnapshotSourceRef(latest) !== expectedAcquisitionRef) {
+      throw withCode("RECHECK_CONFLICT", "Source acquisition advanced during recheck");
+    }
+  };
+  const readProposalHead = async (): Promise<string | null> => {
+    const latest = await store.loadLatest(invocation.source.id);
+    if (!latest.ok) throw withCode("RECHECK_OBSERVATION_FAILED", "Proposal head could not be loaded");
+    return latest.value?.observationId ?? null;
+  };
+  // Read the previous immutable receipt against its own proposal witness first.
+  // Only after selecting its actual acquisition capture can a new operation
+  // fence both heads around every receipt-store callback.
+  const existingReceipt = await receipts.readCurrent(invocation.source.id, readProposalHead);
+  if (existingReceipt.kind === "available") {
+    priorCapture = existingReceipt.receipt.currentCapture;
+    expectedAcquisitionRef = priorCapture.snapshotRef;
+  } else if (existingReceipt.kind !== "missing") {
+    throw withCode("RECHECK_CONFLICT", "Prior source currentness is not available");
+  }
   const readHead = async (): Promise<string | null> => {
-    const latest = await store.loadLatest(options.source.id);
-    return latest.ok ? (latest.value?.observationId ?? null) : null;
+    await assertAcquisitionHead();
+    const head = await readProposalHead();
+    await assertAcquisitionHead();
+    return head;
   };
   const pending = await receipts.begin(
-    options.source.id,
+    invocation.source.id,
     {
-      pointerToken: await receipts.currentPointerToken(options.source.id),
+      pointerToken: await receipts.currentPointerToken(invocation.source.id),
       proposalHeadId: priorStored.observationId,
       admittedAcquisition: priorCapture,
     },
-    readHead,
+    readProposalHead,
   );
-  const check = await options.acquisition.check(options.source);
-  assertCheckIdentity(check, options.source);
-  assertCheckContinuity(check, priorStored.snapshotRef);
-
-  if (canonicalJson(task) !== canonicalJson(prior.run.task)) {
-    await receipts.finalize(
-      pending,
-      receiptCompletion(
-        "error",
-        priorStored.observationId,
-        priorCapture,
-        priorCapture,
-      ),
-      readHead,
-    );
-    return portableResult({
-      classification: "task-drift",
-      check,
-      providerSkipped: true,
-      priorObservation: evidence(priorStored),
-    });
-  }
-  if (check.kind === "error") {
-    await receipts.finalize(
-      pending,
-      receiptCompletion(
-        "error",
-        priorStored.observationId,
-        priorCapture,
-        priorCapture,
-      ),
-      readHead,
-    );
+  let check: FieldworkCheckResult;
+  try {
+    check = await invocation.check(invocation.source);
+  } catch {
     return portableResult({
       classification: "source-unavailable",
+      acquisition: { kind: "failed" },
+      check: null,
+      providerSkipped: true,
+      priorObservation: evidence(priorStored),
+    });
+  }
+  assertCheckIdentity(check, invocation.source);
+  if (check.kind === "error") {
+    return portableResult({
+      classification: "source-unavailable",
+      acquisition: { kind: "failed" },
       check,
       providerSkipped: true,
       priorObservation: evidence(priorStored),
     });
   }
+  const checkAdmission = await admitSourceCheck({
+    source: lookoutSource(invocation.source),
+    check: asLookoutCheck(check),
+    expectedPriorSnapshotRef: priorCapture.snapshotRef,
+    snapshotStore,
+  });
+  if (!checkAdmission.ok) {
+    // A legacy preparation-drift fixture has no new source capture. It is a
+    // non-current diagnostic result, never a receipt-backed semantic success.
+    if (check.kind === "changed" && check.currentSnapshotRef === priorCapture.snapshotRef) {
+      const currentRun = await runFieldwork(runOptions(invocation, check.currentSnapshotRef));
+      const current = await readRun(currentRun.runDirectory);
+      if (preparationChangedWithoutTaskChange(prior, current)) {
+        return portableResult({
+          classification: "preparation-drift",
+          acquisition: { kind: "completed" },
+          check,
+          providerSkipped: false,
+          priorObservation: evidence(priorStored),
+          currentObservation: evidence({ observationId: digestObservation(observationFor(invocation.source.id, current.envelope)), ...observationFor(invocation.source.id, current.envelope) }),
+          items: current.run.review.snapshot.items as unknown as JsonObject[],
+          run: currentRun,
+        });
+      }
+    }
+    throw withCode("RECHECK_CONFLICT", "Source check could not be admitted", checkAdmission.error);
+  }
+  const admittedCheck = checkAdmission.value;
+  // The actual Forage acquisition head is independent of Lookout's proposal
+  // head. A deferred older check must not relabel a newer capture as current.
+  expectedAcquisitionRef = admittedCheck.current.snapshotRef;
+  await assertAcquisitionHead();
   if (check.kind === "unchanged-304" || check.kind === "unchanged-hash") {
-    const captureRef =
-      check.kind === "unchanged-304"
-        ? check.snapshotRef
-        : check.currentSnapshotRef;
-    const admitted = await admitProposalObservation({
-      source: lookoutSource(options.source),
-      current: {
-        ...priorObservation,
-        snapshotRef: captureRef,
-        observedAt: check.checkedAt,
-      },
-      check: {
-        checkedAt: check.checkedAt,
-        resultKind: "unchanged-hash",
-        currentSnapshotRef: captureRef,
-      },
-      prior: priorStored,
-      snapshotStore,
-    });
-    if (!admitted.ok)
-      throw withCode(
-        "RECHECK_OBSERVATION_FAILED",
-        "Unchanged source capture could not be admitted",
-        admitted.error,
-      );
-    await receipts.finalize(
-      pending,
+    await finalizeReceipt(receipts, pending,
       receiptCompletion(
         check.kind,
         priorStored.observationId,
         priorCapture,
-        admitted.value.current,
+        admittedCheck.current,
+        check.checkedAt,
       ),
       readHead,
     );
     return portableResult({
       classification: "unchanged-source",
+      acquisition: { kind: "completed" },
       check,
       providerSkipped: true,
       priorObservation: evidence(priorStored),
@@ -284,28 +336,18 @@ export async function recheckFieldwork(
   let currentRun: FieldworkRunResult;
   try {
     currentRun = await runFieldwork(
-      runOptions(options, check.currentSnapshotRef),
+      runOptions(invocation, admittedCheck.current.snapshotRef),
     );
   } catch (cause) {
-    await receipts.finalize(
-      pending,
-      receiptCompletion(
-        "extraction-failure",
-        priorStored.observationId,
-        priorCapture,
-        priorCapture,
-      ),
-      readHead,
-    );
     throw withCode(
-      "RECHECK_EXTRACTION_FAILED",
-      "Changed source could not be extracted",
+      "RECHECK_OBSERVATION_FAILED",
+      "Source recheck requires recovery",
       cause,
     );
   }
   const current = await readRun(currentRun.runDirectory);
   const currentObservation = observationFor(
-    options.source.id,
+    invocation.source.id,
     current.envelope,
   );
   if (current.run.runResource === prior.run.runResource) {
@@ -328,6 +370,7 @@ export async function recheckFieldwork(
     return portableResult({
       classification: "preparation-drift",
       check,
+      acquisition: { kind: "completed" },
       providerSkipped: false,
       priorObservation: evidence(priorStored),
       currentObservation: evidence({
@@ -342,7 +385,7 @@ export async function recheckFieldwork(
   // Admission is deliberately before the Lookout mutation: a dependency bump
   // alone cannot protect a direct Fieldwork commit from unauthenticated refs.
   const admitted = await admitProposalObservation({
-    source: lookoutSource(options.source),
+    source: lookoutSource(invocation.source),
     current: currentObservation,
     check: {
       checkedAt: check.checkedAt,
@@ -361,7 +404,7 @@ export async function recheckFieldwork(
   const committed = await store.commit(
     {
       observation: currentObservation,
-      recordedAt: options.now?.() ?? new Date().toISOString(),
+      recordedAt: invocation.now?.() ?? new Date().toISOString(),
       check: {
         checkedAt: check.checkedAt,
         resultKind: "changed",
@@ -371,16 +414,6 @@ export async function recheckFieldwork(
     priorStored.observationId,
   );
   if (!committed.ok) {
-    await receipts.finalize(
-      pending,
-      receiptCompletion(
-        "error",
-        priorStored.observationId,
-        priorCapture,
-        priorCapture,
-      ),
-      readHead,
-    );
     const code =
       committed.error.kind === "continuity-conflict"
         ? "RECHECK_CONFLICT"
@@ -391,18 +424,6 @@ export async function recheckFieldwork(
       committed.error,
     );
   }
-  await receipts.finalize(
-    pending,
-    receiptCompletion(
-      "changed",
-      committed.value.observationId,
-      priorCapture,
-      admitted.value.current,
-      priorStored.observationId,
-    ),
-    readHead,
-  );
-
   const semantic = buildSemanticReviewWork({
     prior: priorObservation,
     current: currentObservation,
@@ -442,9 +463,31 @@ export async function recheckFieldwork(
       },
     },
   );
-  await saveReview(current.directory, current.run, newReviewRound(items));
+  try {
+    await saveReview(current.directory, current.run, newReviewRound(items));
+  } catch (cause) {
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Source recheck requires recovery",
+      cause,
+    );
+  }
+  await finalizeReceipt(
+    receipts,
+    pending,
+    receiptCompletion(
+      "changed",
+      committed.value.observationId,
+      priorCapture,
+      admittedCheck.current,
+      check.checkedAt,
+      priorStored.observationId,
+    ),
+    readHead,
+  );
   const result = portableResult({
     classification: items.length === 0 ? "stable-proposals" : "semantic-drift",
+    acquisition: { kind: "completed" },
     check,
     providerSkipped: false,
     priorObservation: evidence(priorStored),
@@ -459,21 +502,6 @@ export async function recheckFieldwork(
 type ObservationStore = ReturnType<typeof createObservationStore>;
 type StoredObservation = StoredProposalObservationV1;
 
-function receiptCapture(
-  source: FieldworkLookoutSource,
-  snapshotRef: string,
-  fetchedAt: string,
-): Capture {
-  return {
-    sourceId: source.id,
-    snapshotRef,
-    url: source.url,
-    bodyHash: createHash("sha256").update(snapshotRef).digest("hex"),
-    fetchedAt,
-    integrity: "body-and-identity",
-  };
-}
-
 function receiptCompletion(
   outcome:
     | "unchanged-304"
@@ -484,10 +512,11 @@ function receiptCompletion(
   resultProposalHeadId: string,
   priorCapture: Capture,
   currentCapture: Capture,
+  checkedAt: string,
   priorProposalHeadId = resultProposalHeadId,
 ) {
   return {
-    checkedAt: currentCapture.fetchedAt,
+    checkedAt,
     outcome,
     priorProposalHeadId,
     resultProposalHeadId,
@@ -634,7 +663,7 @@ function claimTarget(task: FieldworkTask, change: SemanticReviewChange) {
 }
 
 function runOptions(
-  options: FieldworkRecheckOptions,
+  options: Invocation,
   snapshotRef: string,
 ): RunOptions {
   return {
@@ -672,6 +701,10 @@ function assertCheckIdentity(
       "Lookout check does not identify the requested source",
     );
   }
+}
+
+function asLookoutCheck(check: FieldworkCheckResult): CheckResult {
+  return check as CheckResult;
 }
 
 function assertCheckContinuity(
@@ -726,18 +759,20 @@ function lookoutSource(source: FieldworkLookoutSource): LookoutSource {
 
 function portableResult(input: {
   classification: FieldworkRecheckClassification;
-  check: FieldworkCheckResult;
+  acquisition: FieldworkRecheckResult["acquisition"];
+  check: FieldworkCheckResult | null;
   providerSkipped: boolean;
-  priorObservation: FieldworkEvidenceObservation;
+  priorObservation: FieldworkEvidenceObservation | null;
   currentObservation?: FieldworkEvidenceObservation;
   transitionId?: string;
   items?: readonly JsonObject[];
   run?: FieldworkRunResult;
 }): FieldworkRecheckResult {
   const result: FieldworkRecheckResult = {
-    apiVersion: "fieldwork.kontourai.io/v1",
+    apiVersion: "fieldwork.kontourai.io/v2",
     kind: "FieldworkRecheckResult",
     classification: input.classification,
+    acquisition: input.acquisition,
     check: input.check,
     providerSkipped: input.providerSkipped,
     priorObservation: input.priorObservation,
@@ -757,6 +792,83 @@ function portableResult(input: {
     review: result.review,
   });
   return result;
+}
+
+interface Invocation {
+  readonly source: FieldworkLookoutSource;
+  readonly priorRunDirectory: string;
+  readonly taskPath: string;
+  readonly check: (source: FieldworkLookoutSource) => Promise<FieldworkCheckResult>;
+  readonly root?: string;
+  readonly observationRoot?: string;
+  readonly receiptRoot?: string;
+  readonly snapshotRoot?: string;
+  readonly runtime?: FieldworkRuntimeBinding;
+  readonly sourceAdapters?: FieldworkSourceAdapters;
+  readonly signal?: AbortSignal;
+  readonly now?: () => string;
+}
+
+function captureInvocation(options: FieldworkRecheckOptions): Invocation {
+  const acquisition = options.acquisition;
+  return {
+    source: structuredClone(options.source),
+    priorRunDirectory: options.priorRunDirectory,
+    taskPath: options.taskPath,
+    check: acquisition.check.bind(acquisition),
+    ...(options.root === undefined ? {} : { root: options.root }),
+    ...(options.observationRoot === undefined ? {} : { observationRoot: options.observationRoot }),
+    ...(options.receiptRoot === undefined ? {} : { receiptRoot: options.receiptRoot }),
+    ...(options.snapshotRoot === undefined ? {} : { snapshotRoot: options.snapshotRoot }),
+    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+    ...(options.sourceAdapters === undefined ? {} : { sourceAdapters: options.sourceAdapters }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  };
+}
+
+async function exactReceiptCapture(
+  snapshotStore: ReturnType<typeof createFilesystemSnapshotStore>,
+  snapshotRef: string,
+): Promise<Capture> {
+  const resolved = await resolveSnapshotSourceRef(snapshotStore, snapshotRef);
+  if (!resolved.ok) {
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Prior source capture could not be resolved",
+      resolved.error,
+    );
+  }
+  return {
+    sourceId: resolved.snapshot.sourceId,
+    snapshotRef,
+    url: resolved.snapshot.url,
+    bodyHash: resolved.snapshot.bodyHash,
+    fetchedAt: resolved.snapshot.fetchedAt,
+    ...(resolved.reference.snapshotDigest
+      ? { snapshotDigest: resolved.reference.snapshotDigest }
+      : {}),
+    integrity: resolved.integrity,
+  };
+}
+
+async function finalizeReceipt(
+  receipts: FieldworkSourceCheckReceiptStore,
+  pending: Awaited<ReturnType<FieldworkSourceCheckReceiptStore["begin"]>>,
+  completion: Parameters<FieldworkSourceCheckReceiptStore["finalize"]>[1],
+  readHead: () => Promise<string | null>,
+): Promise<void> {
+  const result = await receipts.finalize(pending, completion, readHead);
+  if (result.kind !== "available") {
+    throw withCode(
+      result.kind === "corrupt" || result.kind === "busy"
+        ? "RECHECK_OBSERVATION_FAILED"
+        : "RECHECK_CONFLICT",
+      result.kind === "corrupt" || result.kind === "busy"
+        ? "Source recheck requires recovery"
+        : "Source recheck was superseded",
+    );
+  }
 }
 
 function digestObservation(observation: ProposalSetObservation): string {

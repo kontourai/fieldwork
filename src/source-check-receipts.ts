@@ -466,7 +466,8 @@ function validCapture(value: unknown, sourceId: string) {
   }
   if (
     c.sourceId !== sourceId || typeof c.snapshotRef !== "string" ||
-    c.snapshotRef.length > 512 || url.protocol !== "https:" || url.username ||
+    c.snapshotRef.length > 512 ||
+    !["http:", "https:"].includes(url.protocol) || url.username ||
     url.password || !HASH.test(c.bodyHash) || typeof c.fetchedAt !== "string" ||
     Number.isNaN(Date.parse(c.fetchedAt)) ||
     !["snapshot-envelope", "body-and-identity"].includes(c.integrity) ||
