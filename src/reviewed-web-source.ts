@@ -36,12 +36,15 @@ export class ReviewedWebSourceReader {
 
   async listReviewedWebSourceRefs(cursor?: string): Promise<ReviewedWebSourceRefs> {
     if (!validCursor(cursor)) return refs("unsupported");
-    if (!await this.owner.authorize({ operation: "list" })) return refs("restricted");
+    if (!await this.authorized({ operation: "list" })) return refs("restricted");
     try {
-      const all = await this.reviewedRefs();
+      // Retain the metadata identity with the opaque refs so the last fence
+      // covers the same reviewed snapshot which was used to enumerate them.
+      const { refs: all, run } = await this.reviewedRefs();
       const start = Number(cursor ?? "0");
       const entries = all.slice(start, start + 128);
-      if (!await this.owner.authorize({ operation: "list" })) return refs("restricted");
+      if (!await this.authorized({ operation: "list" })) return refs("restricted");
+      if (!currentReviewFence(this.owner.runDirectory, run)) return refs("corrupt");
       const next = start + entries.length;
       return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "available", refs: entries, truncated: next < all.length, ...(next < all.length ? { nextCursor: String(next) } : {}) };
     } catch { return refs("corrupt"); }
@@ -49,12 +52,13 @@ export class ReviewedWebSourceReader {
 
   async describeReviewedWebSource(exactRef: string): Promise<ReviewedWebSourceResult> {
     if (!isExactRef(exactRef)) return descriptor("unsupported");
-    if (!await this.owner.authorize({ operation: "describe", exactRef })) return descriptor("restricted");
+    if (!await this.authorized({ operation: "describe", exactRef })) return descriptor("restricted");
     let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
     try { found = await this.metadata(exactRef); }
     catch { return descriptor("missing"); }
     if (!found) return descriptor("missing");
-    if (!await this.owner.authorize({ operation: "describe", exactRef })) return descriptor("restricted");
+    if (!await this.authorized({ operation: "describe", exactRef })) return descriptor("restricted");
+    if (!currentReviewFence(this.owner.runDirectory, found.run)) return descriptor("missing");
     return {
       apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "available", exactRef,
       runResource: found.run.runResource, captureRef: found.captureRef,
@@ -67,7 +71,7 @@ export class ReviewedWebSourceReader {
 
   async inspectReviewedWebSource(exactRef: string, cursor?: string): Promise<ReviewedWebSourceInspection> {
     if (!isExactRef(exactRef) || !validCursor(cursor)) return inspection("unsupported");
-    if (!await this.owner.authorize({ operation: "inspect", exactRef })) return inspection("restricted");
+    if (!await this.authorized({ operation: "inspect", exactRef })) return inspection("restricted");
     let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
     try { found = await this.metadata(exactRef); } catch { return inspection("corrupt"); }
     if (!found) return inspection("missing");
@@ -88,7 +92,7 @@ export class ReviewedWebSourceReader {
       // prepared artifact, and capture instead of equating display text.
       const selected = await selectedReviewedEvidence(this.owner.runDirectory, found.proposalIndex, found.candidateId);
       if (!selected) return inspection("missing");
-      if (!await this.owner.authorize({ operation: "inspect", exactRef })) return inspection("restricted");
+      if (!await this.authorized({ operation: "inspect", exactRef })) return inspection("restricted");
       // No awaits after authorization: this bounded fence sees any appended
       // accept/reject event that raced the authorization promise.
       if (!currentReviewFence(this.owner.runDirectory, stored.run)) return inspection("missing");
@@ -125,22 +129,28 @@ export class ReviewedWebSourceReader {
     return undefined;
   }
 
-  private async reviewedRefs(): Promise<string[]> {
+  private async reviewedRefs(): Promise<{ readonly refs: string[]; readonly run: Awaited<ReturnType<typeof readRunMetadata>>["run"] }> {
     const stored = await readRunMetadata(this.owner.runDirectory);
     const captureRef = stored.envelope.source.snapshotRef;
-    if (!captureRef || !parseSnapshotSourceRef(captureRef)) return [];
+    if (!captureRef || !parseSnapshotSourceRef(captureRef)) return { refs: [], run: stored.run };
     const imported = importExtractionEnvelope(stored.envelope, { importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND, claimTarget: proposal => {
       const projection = stored.run.task.spec.projections.find(entry => entry.fieldPath === proposal.fieldPath);
       if (!projection) throw new Error("unknown projection");
       return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
     }});
     const applied = deriveServerReviewSessionApplyResult({ record: reviewSessionRecord(stored.run, stored.run.review.events.length), events: stored.run.review.events, requiredResolvedItems: "all" });
-    if (!applied.ok) return [];
-    return stored.envelope.result.proposals.flatMap((proposal, index) => {
+    if (!applied.ok) return { refs: [], run: stored.run };
+    return { run: stored.run, refs: stored.envelope.result.proposals.flatMap((proposal, index) => {
       const candidate = imported.reviewItems[index]?.spec.candidates[0];
       return candidate && applied.results.some(result => result.selectedCandidateId === candidate.id && result.status === "verified")
         ? [opaqueRef(stored.run.runResource, captureRef, stored.run.preparedArtifact.ref, stored.run.preparedArtifact.digest, index, proposal.provenance.occurrence)] : [];
-    });
+    }) };
+  }
+
+  /** Authorization failures deliberately have the same closed public result as denial. */
+  private async authorized(request: { readonly operation: "list" | "describe" | "inspect"; readonly exactRef?: string }): Promise<boolean> {
+    try { return await this.owner.authorize(request); }
+    catch { return false; }
   }
 }
 

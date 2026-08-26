@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import {
+  buildReviewSessionEvent,
   buildReviewSessionEvents,
+  defaultReviewSessionName,
   type ReviewQueueSessionState,
 } from "@kontourai/survey/review-workbench";
 import {
@@ -141,6 +143,137 @@ test("reviewed web-source owner reads are total and do not expose a missing owne
   });
   await application.close();
 });
+
+test("reviewed web sources bind each opaque occurrence and close every final authorization race", async () => {
+  const fixture = await reviewedSourceFixture();
+  try {
+    const owner = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: fixture.run.runDirectory, snapshotRoot: fixture.snapshotRoot, authorize: () => true } });
+    const listed = await owner.listReviewedWebSourceRefs();
+    assert.equal(listed.status, "available");
+    if (listed.status !== "available") return;
+    assert.equal(listed.refs.length, 2, "two otherwise-identical excerpts retain distinct opaque occurrences");
+    const [first, second] = listed.refs;
+    await appendRejectedDecision(fixture);
+    const after = await owner.listReviewedWebSourceRefs();
+    assert.deepEqual(after.status === "available" ? after.refs : [], [first], "rejecting one duplicate cannot publish its sibling");
+    assert.equal((await owner.inspectReviewedWebSource(second!)).status, "missing");
+    await owner.close();
+  } finally { await fixture.close(); }
+
+  for (const operation of ["list", "describe", "inspect"] as const) {
+    const raced = await reviewedSourceFixture();
+    try {
+      let calls = 0;
+      const reader = createFieldworkApplication({ reviewedWebSourceOwner: {
+        runDirectory: raced.run.runDirectory, snapshotRoot: raced.snapshotRoot,
+        authorize: async () => {
+          if (++calls === 2) await appendRejectedDecision(raced);
+          return true;
+        },
+      } });
+      const refs = await createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: raced.run.runDirectory, snapshotRoot: raced.snapshotRoot, authorize: () => true } }).listReviewedWebSourceRefs();
+      assert.equal(refs.status, "available");
+      const exactRef = refs.status === "available" ? refs.refs[0]! : "";
+      const result = operation === "list" ? await reader.listReviewedWebSourceRefs()
+        : operation === "describe" ? await reader.describeReviewedWebSource(exactRef)
+          : await reader.inspectReviewedWebSource(exactRef);
+      assert.notEqual(result.status, "available", `${operation} must not publish the review state observed before final authorization`);
+      await reader.close();
+    } finally { await raced.close(); }
+  }
+});
+
+test("reviewed source metadata stays closed and authorization failures never escape", async () => {
+  const fixture = await reviewedSourceFixture();
+  try {
+    const publicReader = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: fixture.run.runDirectory, snapshotRoot: fixture.snapshotRoot, authorize: () => true } });
+    const refs = await publicReader.listReviewedWebSourceRefs();
+    assert.equal(refs.status, "available");
+    if (refs.status !== "available") return;
+    const preparedPath = join(fixture.run.runDirectory, "prepared.txt");
+    const prepared = await readFile(preparedPath);
+    await unlink(preparedPath);
+    const snapshotRecord = (await readdir(fixture.snapshotRoot, { recursive: true })).find((entry) => entry.endsWith(".json") && !entry.includes("identity-index"));
+    assert.ok(snapshotRecord);
+    await unlink(join(fixture.snapshotRoot, snapshotRecord!));
+    const described = await publicReader.describeReviewedWebSource(refs.refs[0]!);
+    assert.equal(described.status, "available", "metadata-only listing and description read neither prepared nor snapshot body bytes");
+    if (described.status === "available") assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
+    await writeFile(preparedPath, prepared);
+    await publicReader.close();
+  } finally { await fixture.close(); }
+
+  for (const authorize of [
+    () => { throw new Error("EACCES /private/owner-secret/key"); },
+    async () => Promise.reject(new Error("EACCES /private/owner-secret/key")),
+  ]) {
+    const fixture = await reviewedSourceFixture();
+    try {
+      const reader = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: fixture.run.runDirectory, snapshotRoot: fixture.snapshotRoot, authorize } });
+      const exactRef = "fieldwork-reviewed-source:v1:" + "0".repeat(64);
+      for (const result of [await reader.listReviewedWebSourceRefs(), await reader.describeReviewedWebSource(exactRef), await reader.inspectReviewedWebSource(exactRef)]) {
+        assert.equal(result.status, "restricted");
+        assert.doesNotMatch(JSON.stringify(result), /owner-secret|private/);
+      }
+      await reader.close();
+    } finally { await fixture.close(); }
+  }
+});
+
+test("reviewed source inspection rejects a physically tampered Forage record without pages", async () => {
+  const fixture = await reviewedSourceFixture();
+  try {
+    const reader = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: fixture.run.runDirectory, snapshotRoot: fixture.snapshotRoot, authorize: () => true } });
+    const listed = await reader.listReviewedWebSourceRefs();
+    assert.equal(listed.status, "available");
+    const record = (await readdir(fixture.snapshotRoot, { recursive: true })).find((entry) => entry.endsWith(".json") && !entry.includes("identity-index"));
+    assert.ok(record, "the test changes the actual persisted Forage JSON, retaining its filename/hash");
+    const file = join(fixture.snapshotRoot, record!);
+    const tampered = JSON.parse(await readFile(file, "utf8")) as { url: string };
+    tampered.url = "https://example.test/tampered";
+    await writeFile(file, JSON.stringify(tampered));
+    const inspection = await reader.inspectReviewedWebSource(listed.status === "available" ? listed.refs[0]! : "");
+    assert.equal(inspection.status, "corrupt");
+    assert.equal("pages" in inspection, false);
+    await reader.close();
+  } finally { await fixture.close(); }
+});
+
+async function reviewedSourceFixture() {
+  const snapshotRoot = await mkdtemp(join(tmpdir(), "fieldwork-reviewed-source-snapshots-"));
+  const runRoot = await tempRoot("reviewed-source-run");
+  const taskPath = join(runRoot, "duplicate-task.json");
+  const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));
+  const first = task.spec.traverse.targetSchema[0];
+  const projection = task.spec.projections[0];
+  task.spec.traverse.targetSchema.push({ ...first, path: "record.status2" });
+  task.spec.projections.push({ ...projection, fieldPath: "record.status2", claim: { ...projection.claim, subjectId: "generic-2" } });
+  await writeFile(taskPath, JSON.stringify(task));
+  const body = "<main><p>Status: Active</p></main>";
+  const snapshot = { sourceId: "reviewed-source", url: "https://example.test/status", status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/html" } };
+  await createFilesystemSnapshotStore({ root: snapshotRoot }).put(snapshot);
+  const initial = createFieldworkApplication();
+  const run = await initial.run({ taskPath, snapshotRef: buildSnapshotSourceRef(snapshot), snapshotRoot, root: runRoot });
+  const server = await initial.open({ runDirectory: run.runDirectory });
+  const view = await server.view();
+  const state = view.review.snapshot as unknown as ReviewQueueSessionState;
+  const events = buildReviewSessionEvents({ ...state, decisionsByItemName: Object.fromEntries(state.items.map((item) => [item.metadata.name, "accept-proposed"])), reviewedAt: "2026-08-26T00:00:00.000Z", actorId: "reviewed-source-test" });
+  const saved = await apiFetch(server, "/api/v1/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }) }).then((response) => response.json());
+  assert.equal(saved.ok, true);
+  return { run, snapshotRoot, server, initial, close: async () => { await server.close(); await initial.close(); } };
+}
+
+async function appendRejectedDecision(fixture: Awaited<ReturnType<typeof reviewedSourceFixture>>): Promise<void> {
+  const view = await fixture.server.view();
+  const state = { ...(view.review.snapshot as unknown as ReviewQueueSessionState), actorId: "regression-reviewer", reviewedAt: new Date().toISOString() };
+  const item = state.items[1]!;
+  const events = [...view.review.events,
+    buildReviewSessionEvent(state, { sessionName: defaultReviewSessionName, sequence: view.review.events.length + 1, eventType: "decision-changed", occurredAt: state.reviewedAt, reviewItemName: item.metadata.name, reviewDecisionName: `${item.metadata.name}-reject-proposed`, candidateId: item.spec.candidates[0]!.id, status: "rejected", data: { workbenchDecision: "reject-proposed" } }),
+    buildReviewSessionEvent(state, { sessionName: defaultReviewSessionName, sequence: view.review.events.length + 2, eventType: "decision-submitted", occurredAt: state.reviewedAt, reviewItemName: item.metadata.name, reviewDecisionName: `${item.metadata.name}-reject-proposed`, candidateId: item.spec.candidates[0]!.id, status: "rejected", data: { workbenchDecision: "reject-proposed" } }),
+  ];
+  const saved = await apiFetch(fixture.server, "/api/v1/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ events, expectedEventCount: view.review.events.length, expectedRevision: view.run.revision }) }).then((response) => response.json());
+  assert.equal(saved.ok, true);
+}
 
 test("host embedding is exact-origin opt-in and deny-by-default", async () => {
   const application = createFieldworkApplication();
