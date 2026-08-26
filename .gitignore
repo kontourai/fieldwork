@@ -5,3 +5,6 @@ test-results/
 *.tgz
 
 .kontourai/
+
+# Local Surface projections emitted by Veritas readiness.
+.surface/runs/

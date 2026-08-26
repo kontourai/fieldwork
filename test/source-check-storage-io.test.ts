@@ -165,7 +165,7 @@ test("pending acquisition baseline rejects portable disclosure before persisting
   await assert.rejects(() => f.store.begin(source, {
     pointerToken: f.pending.pointerToken,
     proposalHeadId: head,
-    admittedAcquisition: { ...capture(), snapshotRef: "/Users/private/raw-source.txt" },
+    admittedAcquisition: { ...capture(), snapshotRef: "/home/example/raw-source.txt" },
   }, async () => head), (error: unknown) => {
     assert.ok(error instanceof Error && "kind" in error);
     assert.equal(error.kind, "corrupt");
