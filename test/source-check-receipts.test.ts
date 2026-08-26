@@ -161,6 +161,7 @@ test("corrupt pointers, dangling current receipts, and source-directory symlinks
     ),
   );
   await assertDanglingCurrentReceipt();
+  await assertMalformedReceiptNamesNeverOpen();
 });
 
 async function readerFixture(version: 1 | 2) {
@@ -206,6 +207,27 @@ async function assertDanglingCurrentReceipt() {
   const compared = await f.store.compareCurrentWitness(current.witness);
   assert.deepEqual(compared, { kind: "corrupt" });
   assert.doesNotMatch(JSON.stringify({ read, compared }), /fieldwork-source-check-reader|\//i);
+}
+
+async function assertMalformedReceiptNamesNeverOpen() {
+  for (const receipt of [
+    "../outside.json",
+    "/tmp/fieldwork-outside.json",
+    "./receipt.json",
+    "receipt-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json/../special",
+  ]) {
+    const f = await readerFixture(1);
+    const pointer = JSON.parse(await readFile(f.pointer, "utf8"));
+    pointer.receipt = receipt;
+    await writeFile(f.pointer, JSON.stringify(pointer));
+    let opens = 0;
+    const reader = new FieldworkSourceCheckReceiptStore(f.root, {
+      afterReadOpen: async (kind) => { if (kind === "receipt") opens++; },
+    });
+    assert.deepEqual(await reader.readCurrentWithWitness("source-a"), { kind: "corrupt" });
+    assert.deepEqual(await reader.readCurrent("source-a", async () => headB), { kind: "corrupt" });
+    assert.equal(opens, 0, `${receipt} must be rejected before any receipt open`);
+  }
 }
 
 async function assertReaderMismatches(version: 1 | 2) {

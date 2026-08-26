@@ -656,10 +656,14 @@ function validPointer(value: unknown, source: string) {
     !["pending", "current", "failed"].includes(p.state) || !UUID.test(p.token)
   ) throw new StoreError("corrupt");
   validBaseline(source, p.baseline);
+  const hasReceipt = p.receipt !== undefined;
+  const hasDigest = p.receiptDigest !== undefined;
+  const validReceiptPointer =
+    typeof p.receipt === "string" && NAME.test(p.receipt) &&
+    typeof p.receiptDigest === "string" && HASH.test(p.receiptDigest);
   if (
-    (p.state === "current" &&
-      (!p.receipt || !p.receiptDigest || !HASH.test(p.receiptDigest))) ||
-    (p.receipt !== undefined && typeof p.receipt !== "string")
+    (p.state === "current" && !validReceiptPointer) ||
+    ((hasReceipt || hasDigest) && !validReceiptPointer)
   ) throw new StoreError("corrupt");
 }
 function validReceipt(value: unknown) {
