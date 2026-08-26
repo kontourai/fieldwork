@@ -124,7 +124,7 @@ export interface FieldworkRecheckResult {
   readonly apiVersion: "fieldwork.kontourai.io/v2";
   readonly kind: "FieldworkRecheckResult";
   readonly classification: FieldworkRecheckClassification;
-  /** No acquisition ran only for preflight task drift or an acquisition throw. */
+  /** Distinguishes preflight not-run from completed and failed acquisition. */
   readonly acquisition:
     | { readonly kind: "not-run"; readonly reason: "task-drift" }
     | { readonly kind: "completed" }
