@@ -116,12 +116,29 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
   const exactRef = listed.refs[0]!;
   const described = await application.describeReviewedWebSource(exactRef);
   assert.equal(described.status, "available");
-  if (described.status === "available") assert.equal(described.integrity.state, "unchecked");
+  if (described.status === "available") {
+    assert.equal(described.integrity.state, "unchecked");
+    assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
+    assert.equal("file" in described.preparedArtifact, false, "storage filenames are never part of the public DTO");
+  }
   const inspected = await application.inspectReviewedWebSource(exactRef);
   assert.equal(inspected.status, "available");
   if (inspected.status === "available") assert.match(inspected.pages[0]!.text, /Status: Active/);
   assert.ok(calls.filter((operation) => operation === "list").length >= 2);
   assert.ok(calls.filter((operation) => operation === "inspect").length >= 2);
+  await application.close();
+});
+
+test("reviewed web-source owner reads are total and do not expose a missing owner path", async () => {
+  const missing = join(await tempRoot("reviewed-source-missing"), "does-not-exist");
+  const application = createFieldworkApplication({
+    reviewedWebSourceOwner: { runDirectory: missing, snapshotRoot: missing, authorize: () => true },
+  });
+  const ref = "fieldwork-reviewed-source:v1:" + "0".repeat(64);
+  const result = await application.describeReviewedWebSource(ref);
+  assert.deepEqual(result, {
+    apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "missing",
+  });
   await application.close();
 });
 

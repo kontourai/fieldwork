@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import { link, lstat, mkdir, open, readFile, realpath, rename, rm, unlink, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { validatePortableExtractionResultEnvelope, type PortableExtractionResultEnvelope } from "@kontourai/traverse";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { ReviewSessionEvent } from "@kontourai/survey";
 import { z } from "zod";
-import { FIELDWORK_LIMITS, fieldworkTaskSchema, type FieldworkTask } from "./contracts.js";
+import { FIELDWORK_LIMITS, canonicalJson, fieldworkTaskSchema, type FieldworkTask } from "./contracts.js";
 import { parsePersistedReview, persistedReviewEventSchema, persistedReviewSnapshotSchema } from "./survey-persistence.js";
 import { fieldworkStoredExecutionSchema, type FieldworkStoredExecution } from "./runtime-contracts.js";
 
@@ -71,6 +71,25 @@ export interface StoredRunMetadataRead {
   directory: string;
   run: StoredRun;
   envelope: PortableExtractionResultEnvelope;
+}
+
+/**
+ * The last check after an asynchronous host authorization.  It intentionally
+ * reads only the small authoritative record synchronously: a reviewer cannot
+ * replace a decision between authorization and publication.  This is a read
+ * fence, never a lock or write on a read path.
+ */
+export function currentReviewFence(runDirectory: string, expected: Pick<StoredRun, "runResource" | "preparedArtifact" | "review">): boolean {
+  try {
+    const text = readFileSync(join(resolve(runDirectory), "run.json"), "utf8");
+    if (Buffer.byteLength(text, "utf8") > FIELDWORK_LIMITS.artifactBytes) return false;
+    const current = storedRunSchema.parse(JSON.parse(text));
+    return current.runResource === expected.runResource
+      && canonicalJson(current.preparedArtifact) === canonicalJson(expected.preparedArtifact)
+      && current.review.revision === expected.review.revision
+      && current.review.snapshotHash === expected.review.snapshotHash
+      && canonicalJson(current.review.events) === canonicalJson(expected.review.events);
+  } catch { return false; }
 }
 
 export const defaultRunRoot = ".fieldwork/runs";

@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { parseSnapshotSourceRef, resolveSnapshotSourceRef } from "@kontourai/forage/fetch";
-import { resolvePreparedArtifact } from "@kontourai/traverse";
+import { enumerateExactOccurrences, resolvePreparedArtifact } from "@kontourai/traverse";
 import { deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
 import { canonicalJson } from "./contracts.js";
-import { FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionRecord } from "./fieldwork.js";
-import { readRun, readRunMetadata } from "./run-store.js";
+import { FIELDWORK_SOURCE_KIND, importNameFor, reviewedExport, reviewSessionRecord } from "./fieldwork.js";
+import { currentReviewFence, readRun, readRunMetadata } from "./run-store.js";
 import { importExtractionEnvelope } from "@kontourai/survey";
+import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
 
 const PAGE_CHARS = 16_384;
 const MAX_PAGES = 8;
@@ -49,13 +50,15 @@ export class ReviewedWebSourceReader {
   async describeReviewedWebSource(exactRef: string): Promise<ReviewedWebSourceResult> {
     if (!isExactRef(exactRef)) return descriptor("unsupported");
     if (!await this.owner.authorize({ operation: "describe", exactRef })) return descriptor("restricted");
-    const found = await this.metadata(exactRef);
+    let found: Awaited<ReturnType<ReviewedWebSourceReader["metadata"]>>;
+    try { found = await this.metadata(exactRef); }
+    catch { return descriptor("missing"); }
     if (!found) return descriptor("missing");
     if (!await this.owner.authorize({ operation: "describe", exactRef })) return descriptor("restricted");
     return {
       apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "available", exactRef,
       runResource: found.run.runResource, captureRef: found.captureRef,
-      preparedArtifact: found.run.preparedArtifact,
+      preparedArtifact: closedPrepared(found.run.preparedArtifact),
       review: { revision: found.run.review.revision, state: "reviewed" },
       // Metadata binds claims to an artifact but deliberately does not read its bytes.
       integrity: { state: "unchecked" }, inspection: { pageChars: PAGE_CHARS, maxPages: MAX_PAGES },
@@ -79,8 +82,16 @@ export class ReviewedWebSourceReader {
       const resolution = await resolvePreparedArtifact(stored.envelope.result.preparedArtifact, { get: () => stored.preparedText });
       if (resolution.status === "digest-mismatch") return inspection("digest-mismatch");
       if (resolution.status !== "available" || resolution.artifact.ref !== found.run.preparedArtifact.ref) return inspection("corrupt");
-      if (!verifyOccurrence(stored.preparedText, found.proposal)) return inspection("corrupt");
+      if (!matchesOccurrence(stored.preparedText, found.proposal)) return inspection("corrupt");
+      // Rebuild the same attested Survey-to-Surface projection exported to
+      // consumers; it binds this exact proposal index, candidate, decision,
+      // prepared artifact, and capture instead of equating display text.
+      const selected = await selectedReviewedEvidence(this.owner.runDirectory, found.proposalIndex, found.candidateId);
+      if (!selected) return inspection("missing");
       if (!await this.owner.authorize({ operation: "inspect", exactRef })) return inspection("restricted");
+      // No awaits after authorization: this bounded fence sees any appended
+      // accept/reject event that raced the authorization promise.
+      if (!currentReviewFence(this.owner.runDirectory, stored.run)) return inspection("missing");
       const page = Number(cursor ?? "0");
       const totalPages = Math.ceil(stored.preparedText.length / PAGE_CHARS);
       const pages = Array.from({ length: Math.min(MAX_PAGES, Math.max(0, totalPages - page)) }, (_, offset) => {
@@ -107,9 +118,9 @@ export class ReviewedWebSourceReader {
       const proposal = stored.envelope.result.proposals[index]!;
       const ref = opaqueRef(stored.run.runResource, captureRef, stored.run.preparedArtifact.ref, stored.run.preparedArtifact.digest, index, proposal.provenance.occurrence);
       if (ref !== exactRef) continue;
-      const candidate = imported.reviewItems.flatMap(item => item.spec.candidates).find(value => value.locator?.locator === proposal.provenance.locator && value.locator?.excerpt === proposal.provenance.excerpt);
+      const candidate = imported.reviewItems[index]?.spec.candidates[0];
       if (!candidate || !applied.results.some(result => result.selectedCandidateId === candidate.id && result.status === "verified")) return undefined;
-      return { run: stored.run, captureRef, proposal };
+      return { run: stored.run, captureRef, proposal, proposalIndex: index, candidateId: candidate.id };
     }
     return undefined;
   }
@@ -126,7 +137,7 @@ export class ReviewedWebSourceReader {
     const applied = deriveServerReviewSessionApplyResult({ record: reviewSessionRecord(stored.run, stored.run.review.events.length), events: stored.run.review.events, requiredResolvedItems: "all" });
     if (!applied.ok) return [];
     return stored.envelope.result.proposals.flatMap((proposal, index) => {
-      const candidate = imported.reviewItems.flatMap(item => item.spec.candidates).find(value => value.locator?.locator === proposal.provenance.locator && value.locator?.excerpt === proposal.provenance.excerpt);
+      const candidate = imported.reviewItems[index]?.spec.candidates[0];
       return candidate && applied.results.some(result => result.selectedCandidateId === candidate.id && result.status === "verified")
         ? [opaqueRef(stored.run.runResource, captureRef, stored.run.preparedArtifact.ref, stored.run.preparedArtifact.digest, index, proposal.provenance.occurrence)] : [];
     });
@@ -141,10 +152,25 @@ function validCursor(value: string | undefined): boolean { return value === unde
 function descriptor(status: Exclude<ReviewedWebSourceResult["status"], "available">): ReviewedWebSourceResult { return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status }; }
 function inspection(status: Exclude<ReviewedWebSourceInspection["status"], "available">): ReviewedWebSourceInspection { return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status }; }
 function refs(status: Exclude<ReviewedWebSourceRefs["status"], "available">): ReviewedWebSourceRefs { return { apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status }; }
-function verifyOccurrence(text: string, proposal: { provenance: { excerpt: string; occurrence: { selected: { start: number; end: number }; count: number } } }): boolean {
+function matchesOccurrence(text: string, proposal: { provenance: { excerpt: string; occurrence: { selected: { start: number; end: number }; count: number } } }): boolean {
   const { excerpt, occurrence } = proposal.provenance; const { start, end } = occurrence.selected;
   if (start < 0 || end < start || text.slice(start, end) !== excerpt) return false;
-  let count = 0; let at = text.indexOf(excerpt);
-  while (at >= 0) { count++; at = text.indexOf(excerpt, at + Math.max(1, excerpt.length)); }
-  return count === occurrence.count;
+  const exact = enumerateExactOccurrences(text, excerpt);
+  return exact.length === occurrence.count && exact.some(entry => entry.start === start && entry.end === end);
+}
+
+function closedPrepared(value: { ref: string; digest: string; contentLength: number; file: "prepared.txt" }): { ref: string; digest: string; contentLength: number } {
+  return { ref: value.ref, digest: value.digest, contentLength: value.contentLength };
+}
+
+async function selectedReviewedEvidence(runDirectory: string, proposalIndex: number, candidateId: string): Promise<boolean> {
+  try {
+    const bundle = await reviewedExport(runDirectory) as { evidence?: unknown[] };
+    for (const evidence of bundle.evidence ?? []) {
+      const restored = restoreReviewedExtractionEvidence(evidence as Parameters<typeof restoreReviewedExtractionEvidence>[0]);
+      if (restored.proposalIndex !== proposalIndex) continue;
+      return restored.reviewDecision?.spec.status === "verified" && restored.reviewDecision.spec.candidateId === candidateId;
+    }
+    return false;
+  } catch { return false; }
 }
