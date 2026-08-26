@@ -7,9 +7,10 @@ import { projectAttestedReviewedProjection } from "./fieldwork.js";
 import { currentReviewFence, readRun, readRunMetadata } from "./run-store.js";
 import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
 import type { ReviewedWebSourceInspection, ReviewedWebSourceRefs, ReviewedWebSourceResult } from "./reviewed-web-source-contract.js";
+import { REVIEWED_WEB_SOURCE_MAX_PAGES, REVIEWED_WEB_SOURCE_PAGE_CHARS } from "./fieldwork-limits.js";
 
-const PAGE_CHARS = 16_384;
-const MAX_PAGES = 8;
+const PAGE_CHARS = REVIEWED_WEB_SOURCE_PAGE_CHARS;
+const MAX_PAGES = REVIEWED_WEB_SOURCE_MAX_PAGES;
 
 export interface ReviewedWebSourceOwner {
   /** Host-configured directories; no client request can select either one. */

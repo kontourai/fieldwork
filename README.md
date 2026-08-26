@@ -162,8 +162,10 @@ The typed TypeScript API exports `acquireFieldwork`, `runFieldwork`, `runFieldwo
 A host can configure `createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory, snapshotRoot, authorize } })` to inspect a reviewed web source without opening its browser session. The directories are trusted host configuration, never client-selected paths. The host supplies `authorize({ operation, exactRef })`; authorization is checked before reads and again before publication, and authorization errors return `restricted` without diagnostics.
 
 - `listReviewedWebSourceRefs(cursor?)` returns bounded, opaque owner-issued refs for the configured run. Follow `nextCursor`; do not manufacture refs from URLs or excerpt text.
-- `describeReviewedWebSource(ref)` reads only metadata. It identifies the exact retained capture, prepared artifact and current review revision, while explicitly reporting byte integrity as `unchecked`.
+- `describeReviewedWebSource(ref)` reads only metadata. It identifies the exact retained capture, prepared artifact, current review revision, and the Surface-restored reviewed evidence/claim identity (S/E), while explicitly reporting byte integrity as `unchecked`. It is not an answer assessment or source-currentness result.
 - `inspectReviewedWebSource(ref, cursor?)` verifies the retained Forage capture, Traverse prepared artifact/occurrence and Surface-restored reviewed evidence before returning inert text pages. Each response contains at most eight 16,384-character pages, with `totalPages`, `nextCursor` and `truncated` indicating remaining pages. Render text as text, not HTML.
+
+Browser or plugin consumers should import `@kontourai/fieldwork/reviewed-web-source-contract` and parse every untrusted descriptor, inspection, or ref response before use. Its pure parsers reject malformed versions, unknown fields, incoherent identities, and invalid continuation metadata.
 
 These operations never fetch upstream or write a review. A committed rejection during a read withholds the old reviewed result. Missing, restricted or invalid sources do not silently select another proposal or capture. A reviewed-source ref is not an answer assessment, a policy-satisfaction result, or a claim that the upstream website is unchanged; explicit source rechecks remain separate.
 

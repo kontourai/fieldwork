@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FIELDWORK_SOURCE_BYTES, REVIEWED_WEB_SOURCE_MAX_PAGES, REVIEWED_WEB_SOURCE_MAX_TOTAL_PAGES, REVIEWED_WEB_SOURCE_PAGE_CHARS } from "./fieldwork-limits.js";
 
 const apiVersion = "fieldwork.kontourai.io/v1";
 const exactRef = z.string().regex(/^fieldwork-reviewed-source:v1:[a-f0-9]{64}$/);
@@ -21,26 +22,27 @@ const unavailableDescriptor = closed({ apiVersion: z.literal(apiVersion), kind: 
 const availableDescriptor = closed({
   apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceDescriptor"), status: z.literal("available"), exactRef,
   runResource: identity, captureRef,
-  preparedArtifact: closed({ ref: identity, digest: z.string().regex(/^[a-f0-9]{64}$/), contentLength: z.number().int().nonnegative().max(16 * 1024 * 1024) }),
+  preparedArtifact: closed({ ref: identity, digest: z.string().regex(/^[a-f0-9]{64}$/), contentLength: z.number().int().nonnegative().max(FIELDWORK_SOURCE_BYTES) }),
   review: closed({ revision: z.number().int().nonnegative(), state: z.literal("reviewed") }),
   evidence: closed({ id: identity, claimId: identity, proposalIndex: z.number().int().nonnegative(), import: closed({ name: identity }), candidate: closed({ id: identity }), reviewItem: closed({ name: identity }), reviewDecision: closed({ name: identity }), locator: closed({ scheme: z.literal("traverse-exact-occurrence-v1"), locator: exactLocator, occurrence: closed({ index: z.number().int().nonnegative(), count: z.number().int().positive(), start: z.number().int().nonnegative(), end: z.number().int().nonnegative() }) }) }),
-  integrity: closed({ state: z.literal("unchecked") }), inspection: closed({ pageChars: z.literal(16_384), maxPages: z.literal(8) }),
+  integrity: closed({ state: z.literal("unchecked") }), inspection: closed({ pageChars: z.literal(REVIEWED_WEB_SOURCE_PAGE_CHARS), maxPages: z.literal(REVIEWED_WEB_SOURCE_MAX_PAGES) }),
 }).superRefine((value, context) => {
   if (value.evidence.locator.occurrence.end < value.evidence.locator.occurrence.start) context.addIssue({ code: "custom", message: "Occurrence end precedes start" });
   if (value.evidence.locator.occurrence.index >= value.evidence.locator.occurrence.count) context.addIssue({ code: "custom", message: "Occurrence index is outside count" });
+  if (value.evidence.locator.occurrence.end > value.preparedArtifact.contentLength) context.addIssue({ code: "custom", message: "Occurrence exceeds prepared artifact" });
   if (value.evidence.locator.locator !== `chars:${value.evidence.locator.occurrence.start}-${value.evidence.locator.occurrence.end}`) context.addIssue({ code: "custom", message: "Locator and occurrence offsets disagree" });
 });
 
 export const reviewedWebSourceDescriptorSchema: z.ZodType<ReviewedWebSourceResult> = z.union([availableDescriptor, unavailableDescriptor]);
 export function parseReviewedWebSourceDescriptor(value: unknown): ReviewedWebSourceResult { return reviewedWebSourceDescriptorSchema.parse(value); }
 
-const availableInspection = closed({ apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceInspection"), status: z.literal("available"), exactRef, integrity: z.literal("verified"), pages: z.array(closed({ index: z.number().int().nonnegative(), start: z.number().int().nonnegative(), end: z.number().int().nonnegative(), text: z.string().max(16_384) })).max(8), totalPages: z.number().int().nonnegative(), nextCursor: z.string().regex(/^(?:0|[1-9][0-9]{0,5})$/).optional(), truncated: z.boolean() }).superRefine((value, context) => {
+const availableInspection = closed({ apiVersion: z.literal(apiVersion), kind: z.literal("ReviewedWebSourceInspection"), status: z.literal("available"), exactRef, integrity: z.literal("verified"), pages: z.array(closed({ index: z.number().int().nonnegative().max(REVIEWED_WEB_SOURCE_MAX_TOTAL_PAGES - 1), start: z.number().int().nonnegative().max(FIELDWORK_SOURCE_BYTES), end: z.number().int().nonnegative().max(FIELDWORK_SOURCE_BYTES), text: z.string().max(REVIEWED_WEB_SOURCE_PAGE_CHARS) })).max(REVIEWED_WEB_SOURCE_MAX_PAGES), totalPages: z.number().int().nonnegative().max(REVIEWED_WEB_SOURCE_MAX_TOTAL_PAGES), nextCursor: z.string().regex(/^(?:0|[1-9][0-9]{0,5})$/).optional(), truncated: z.boolean() }).superRefine((value, context) => {
   if (value.pages.length === 0 && (value.totalPages !== 0 || value.truncated || value.nextCursor !== undefined)) context.addIssue({ code: "custom", message: "Only an empty source may have no pages" });
   if (value.truncated !== (value.nextCursor !== undefined)) context.addIssue({ code: "custom", message: "Cursor and truncation disagree" });
   for (const [offset, page] of value.pages.entries()) {
-    if (page.end !== page.start + page.text.length || page.start !== page.index * 16_384 || page.end < page.start) context.addIssue({ code: "custom", message: "Page span disagrees with its text" });
+    if (page.end !== page.start + page.text.length || page.start !== page.index * REVIEWED_WEB_SOURCE_PAGE_CHARS || page.end < page.start) context.addIssue({ code: "custom", message: "Page span disagrees with its text" });
     if (page.index >= value.totalPages || (offset > 0 && page.index !== value.pages[offset - 1]!.index + 1)) context.addIssue({ code: "custom", message: "Page indices are not contiguous" });
-    if (page.index < value.totalPages - 1 && page.text.length !== 16_384) context.addIssue({ code: "custom", message: "A non-final page must be complete" });
+    if (page.index < value.totalPages - 1 && page.text.length !== REVIEWED_WEB_SOURCE_PAGE_CHARS) context.addIssue({ code: "custom", message: "A non-final page must be complete" });
     if (page.index === value.totalPages - 1 && page.text.length === 0) context.addIssue({ code: "custom", message: "The final page of a nonempty source is empty" });
   }
   if (value.pages.length > 0) {

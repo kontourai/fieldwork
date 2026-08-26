@@ -37,6 +37,7 @@ test("the browser-safe reviewed-source contract rejects untrusted versions and o
   assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 0, start: 0, end: 1, text: "x" }, { index: 1, start: 16_384, end: 16_385, text: "y" }], totalPages: 2, truncated: false }));
   assert.throws(() => parseReviewedWebSourceRefs({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "available", refs: ["fieldwork-reviewed-source:v1:" + "0".repeat(64), "fieldwork-reviewed-source:v1:" + "0".repeat(64)], truncated: false, nextCursor: "0" }));
   assert.throws(() => parseReviewedWebSourceRefs({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceRefs", status: "available", refs: [], truncated: true, nextCursor: "0" }));
+  assert.equal(parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef: "fieldwork-reviewed-source:v1:" + "0".repeat(64), integrity: "verified", pages: [{ index: 127, start: 127 * 16_384, end: 128 * 16_384, text: "x".repeat(16_384) }], totalPages: 128, truncated: false }).status, "available");
 });
 
 test("the application contract launches, presents, observes, and returns one reviewed run", async () => {
@@ -158,6 +159,7 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
     assert.equal("excerpt" in described.evidence, false);
     assert.equal("value" in described.evidence, false);
     assert.deepEqual(parseReviewedWebSourceDescriptor(described), described, "the owner never emits a descriptor its published parser rejects");
+    assert.throws(() => parseReviewedWebSourceDescriptor({ ...described, evidence: { ...described.evidence, locator: { ...described.evidence.locator, locator: `chars:0-${described.preparedArtifact.contentLength + 1}`, occurrence: { ...described.evidence.locator.occurrence, start: 0, end: described.preparedArtifact.contentLength + 1 } } } }));
   }
   const inspected = await application.inspectReviewedWebSource(exactRef);
   assert.equal(inspected.status, "available");
@@ -175,6 +177,7 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
     assert.ok(continued.pages.at(-1)!.text.length < 16_384, "the final page is the genuine partial remainder");
   }
   assert.deepEqual(parseReviewedWebSourceInspection(continued), continued);
+  assert.throws(() => parseReviewedWebSourceInspection({ apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceInspection", status: "available", exactRef, integrity: "verified", pages: [], totalPages: 129, truncated: false }));
   assert.ok(calls.filter((operation) => operation === "list").length >= 2);
   assert.ok(calls.filter((operation) => operation === "inspect").length >= 2);
   await application.close();

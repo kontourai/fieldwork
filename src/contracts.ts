@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { createExtractionTaskSpec, validateExtractionTaskSpec, type ExtractionTaskSpec } from "@kontourai/traverse";
+import { FIELDWORK_SOURCE_BYTES } from "./fieldwork-limits.js";
 
 export const FIELDWORK_LIMITS = {
   taskBytes: 256 * 1024,
-  sourceBytes: 2 * 1024 * 1024,
+  sourceBytes: FIELDWORK_SOURCE_BYTES,
   requestBodyBytes: 16 * 1024 * 1024,
   artifactBytes: 32 * 1024 * 1024,
   projections: 128,
