@@ -50,7 +50,7 @@
     "test:a11y": "playwright test test/browser/a11y.spec.ts",
     "test:browser": "playwright test",
     "test:package": "npm run build && npm pack --dry-run && node scripts/package-smoke.mjs",
-    "check:content": "node scripts/check-content-boundary.mjs",
+    "check:content": "node scripts/check-content-boundary.mjs && node scripts/check-reviewed-web-source-contract.mjs",
     "check:decisions": "node scripts/check-decisions.mjs",
     "check:guards": "node scripts/check-guards.mjs",
     "check:veritas": "veritas readiness --working-tree",

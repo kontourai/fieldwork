@@ -192,6 +192,54 @@ Browser or plugin consumers should import `@kontourai/fieldwork/reviewed-web-sou
 
 These operations never fetch upstream or write a review. A committed rejection during a read withholds the old reviewed result. Missing, restricted or invalid sources do not silently select another proposal or capture. A reviewed-source ref is not an answer assessment, a policy-satisfaction result, or a claim that the upstream website is unchanged; explicit source rechecks remain separate.
 
+### Currentness of a reviewed web source
+
+A host that also owns the local recheck stores can opt in to an as-of metadata
+read. This remains separate from `authorize`: its borrowed lease authorizes both
+the historical reviewed metadata and the later capture/history lookup. The lease
+is checked again before publication; it is not disposed, renewed, or inferred
+from `describe` permission.
+
+```ts
+import { createFieldworkApplication } from "@kontourai/fieldwork";
+import { parseReviewedWebSourceCurrentness } from "@kontourai/fieldwork/reviewed-web-source-contract";
+
+const app = createFieldworkApplication({
+  reviewedWebSourceOwner: {
+    runDirectory,                 // host-selected accepted historical run
+    snapshotRoot,                 // host-selected Forage filesystem owner
+    authorize: authorizeInspection,
+    sourceChecks: {
+      receiptRoot,                // Fieldwork's private completed-check receipts
+      observationRoot,            // host-selected Lookout filesystem owner
+      authorizeCurrentness: ({ operation, exactRef }) => ({
+        isCurrent: () => operation === "currentness" && canReadCurrentness(exactRef),
+      }),
+    },
+  },
+});
+
+const currentness = parseReviewedWebSourceCurrentness(
+  await app.readReviewedWebSourceCurrentness(exactRef),
+);
+```
+
+`available` returns only bounded metadata: the frozen historical evidence ID and
+review revision, the actual owner-issued `checkedAt`, an opaque observation ref,
+and a Surface source-observation input. It does not read a Forage snapshot body,
+Traverse prepared text, or Lookout proposal body; it does not acquire network
+data, write/repair storage, call a provider, or renew a Survey review. Its
+`captureIntegrity: "not-rechecked"` is intentional: the answer is an as-of
+owner-head comparison, not a fresh body-integrity assertion.
+
+Fieldwork never adds a `current` flag here. Resolve the returned `evidenceId`
+against the same frozen reviewed Surface evidence and call Surface's
+`buildReviewedExtractionSourceState(evidence, sourceObservation, checkedAt)` to
+derive `current`, `drifted`, or `unknown` under the consumer's Surface policy.
+An unavailable, legacy, missing-digest, incompatible-source, raced, or denied
+read is a closed result, never a substitute observation or a review-renewal
+signal.
+
 ## Limits
 
 Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bodies up to 16 MiB, stored structured artifacts up to 32 MiB, 128 projections/target fields, 10,000 Survey review items, 10,000 review events, 4,096 characters per general task string, and 512 characters per extraction pattern. Review-item capacity is intentionally separate from target-field capacity because a provider may ground repeated or alternative proposals for one field. Deterministic patterns intentionally support only a literal label followed by one line-bounded capture, for example `Status: ([^\n]+)`. Lookarounds, backreferences, nested/repeated groups, and arbitrary regular expressions are rejected.
