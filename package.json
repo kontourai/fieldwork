@@ -68,12 +68,12 @@
     }
   ],
   "dependencies": {
-    "@kontourai/datum": "0.7.0",
+    "@kontourai/datum": "0.8.0",
     "@kontourai/dispatch": "0.5.0",
     "@kontourai/forage": "0.7.0",
     "@kontourai/lookout": "0.5.2",
     "@kontourai/relay": "0.6.0",
-    "@kontourai/surface": "3.1.0",
+    "@kontourai/surface": "3.2.0",
     "@kontourai/survey": "3.0.0",
     "@kontourai/traverse": "0.25.1",
     "zod": "4.4.3"
@@ -88,7 +88,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
-    "@kontourai/flow-agents": "5.10.0",
+    "@kontourai/flow-agents": "6.2.0",
     "@kontourai/ui": "^1.11.1",
     "@kontourai/veritas": "1.5.6",
     "@playwright/test": "^1.61.1",
