@@ -9,7 +9,7 @@ Run the same task again when a source changes and Fieldwork opens a focused revi
 Requires Node 22.
 
 ```sh
-npm install
+pnpm install
 npm run build
 npm exec -- fieldwork run \
   --task examples/vendor-obligations/task.json \
