@@ -536,7 +536,14 @@ test("a runtime-bound recheck refuses an unsupported field type up front, naming
       ...setup.options,
       source: { ...source, targetSchema: traverseTask(parseFieldworkTask(task)).targetSchema },
       runtime: failingRuntimeBinding(),
-      acquisition: { check: async () => { checks += 1; return check("unchanged-304", setup.priorRef, setup.priorRef); } },
+      acquisition: {
+        check: async () => {
+          checks += 1;
+          const current = snapshot("capture-array", 'Status: ["Paused"]', "2026-07-23T17:30:00.000Z");
+          await setup.store.put(current);
+          return check("changed", setup.priorRef, buildSnapshotSourceRef(current));
+        },
+      },
     }),
     (error: Error & { code?: string }) => {
       assert.equal(error.code, "TASK_UNSUPPORTED_FIELD_TYPE");
