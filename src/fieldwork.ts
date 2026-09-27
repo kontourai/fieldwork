@@ -210,11 +210,44 @@ function fixtureExecution(): FieldworkStoredExecution {
  */
 export async function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   const stored = await readRun(runDirectory);
+  assertCompleteCoverage(stored.envelope);
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = withReviewedGroundingEvidence(bundle, projection.enrichment);
   assertPortableOutput(output);
   return parseReviewedExport(output);
+}
+
+/**
+ * A reviewed export states grounding over the document, so it must not be built
+ * from an extraction that did not read all of it. Traverse records two kinds of
+ * incomplete coverage: a typed partial outcome (a chunk, call, token or cancel
+ * ceiling stopped later chunks), and a chunk whose provider call failed, which
+ * leaves `outcome.status` at `success` and is recorded only in
+ * `providerFailures`. Either way a field that lived in the unread text has no
+ * claim and no gap, so exporting would read as complete. Surface's
+ * reviewed-grounding policy has no coverage gap kind to carry this inside the
+ * bundle, so refuse instead (fieldwork#136).
+ *
+ * This lives on the export path rather than in the shared projection: the
+ * per-proposal reviewed-web-source reads describe one grounded proposal, not
+ * the document's coverage.
+ */
+function assertCompleteCoverage(envelope: PortableExtractionResultEnvelope): void {
+  const { outcome, providerFailures = [] } = envelope.result;
+  const reasons: string[] = [];
+  if (outcome.status === "partial") reasons.push(`partial: ${outcome.reason}`);
+  else if (outcome.status !== "success") reasons.push(`${outcome.status}: ${outcome.category}/${outcome.code}`);
+  for (const failure of providerFailures) reasons.push(`provider ${failure.provider} failed (${failure.kind})`);
+  if (reasons.length === 0) return;
+  throw Object.assign(
+    new Error(
+      `Export refused: this run's extraction did not cover the whole document (${reasons.join("; ")}). `
+      + "Fields in the unread text have neither a claim nor a gap, so a reviewed export would read as complete; "
+      + "re-run the source so that every chunk is extracted."
+    ),
+    { code: "EXPORT_COVERAGE_INCOMPLETE" }
+  );
 }
 
 /**
