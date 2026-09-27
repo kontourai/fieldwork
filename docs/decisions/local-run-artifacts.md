@@ -59,3 +59,26 @@ guards became call-site injections (self-agreement, call deletion,
 binding-not-passed) plus a pinned refusal for the empty-queue rule, and the
 matrix adopted Survey's stricter attribution rule — an injection that fails
 to compile fails the matrix; only a red test run counts as a catch.
+
+## Amendment (fieldwork#148, fieldwork#149)
+
+Review decisions are attributed by the host, not the client. Survey's session
+model takes one actor and one time per round from the queue snapshot, and its
+initial state is a constant placeholder, so every decision used to carry the
+same synthetic reviewer and date. The loopback server now stamps each event it
+appends with the host-configured reviewer (or the reserved `unattributed`
+actor kind when none is configured), its own clock, and a review mode
+(`individual`, `batch`, or `agent`) on the event's producer channel, and
+ignores the actor and time the client sent. The append-only prefix check sets
+that stamp aside, because the browser's copy of earlier events never learns
+it. Export re-derives each result through Survey's own result builder under
+the stamped actor and time until Survey replay reads them
+(kontourai/survey#234). Events stored before stamping are left as stored and
+exported as `legacy-synthetic-actor`.
+
+The unit of an export is the claim, not the run. Checks about the round's
+integrity (attestation, grounded extraction, valid history, coverage, excerpt
+agreement, size) still refuse the whole export. Checks about one claim
+(undecided, resolved onto an absence, contested by a differing accepted value,
+not projectable) exclude that claim and list it with a typed reason. A round
+with no exportable claim is still refused.

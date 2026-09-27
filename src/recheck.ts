@@ -32,6 +32,7 @@ import {
   canonicalSemanticReviewItems,
   FIELDWORK_SOURCE_KIND,
   newReviewRound,
+  assertRuntimeSupportsTask,
   runFieldwork,
 } from "./fieldwork.js";
 import { assertPortableOutput, readRun, saveReview, withRunReviewLock } from "./run-store.js";
@@ -160,6 +161,10 @@ export async function recheckFieldwork(
   const task = parseFieldworkTask(
     JSON.parse(taskText),
   );
+  // Refuse a task the bound runtime cannot extract before acquiring anything,
+  // with the typed error naming the field, rather than letting it surface from
+  // the recheck run wrapped as an observation failure.
+  if (invocation.runtime) assertRuntimeSupportsTask(task);
   if (
     "targetSchema" in invocation.source &&
     canonicalJson(invocation.source.targetSchema) !==
@@ -478,7 +483,7 @@ export async function recheckFieldwork(
           "Changed source run already has review history",
         );
       }
-      await saveReview(stored.directory, stored.run, newReviewRound(items));
+      await saveReview(stored.directory, stored.run, newReviewRound(items, invocation.now?.()));
     });
   } catch (cause) {
     if ((cause as { code?: string } | undefined)?.code === "RECHECK_CONFLICT") {

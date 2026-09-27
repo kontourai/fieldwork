@@ -11,13 +11,14 @@ import { buildExtractionInspectorModel, importExtractionEnvelope, type ReviewSes
 import { FIELDWORK_LIMITS, canonicalJson, failure } from "./contracts.js";
 import {
   fieldworkHostPresentationSchema, parseFieldworkRunView, parsePreparedArtifactView,
-  parseReviewMutationSuccess, type FieldworkHostPresentationV1,
+  parseReviewMutationSuccess, type FieldworkHostPresentationV1, type FieldworkReviewerIdentity,
   type FieldworkLifecycleEventV1, type FieldworkLifecycleListener,
   type FieldworkRunViewV1, type OpenRunOptions, type OpenRunService,
   type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import { canonicalReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionRecord } from "./fieldwork.js";
+import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
 
 const reviewRequestSchema = z.object({
   events: z.array(z.custom<ReviewSessionEvent>((value) => Boolean(value && typeof value === "object"))).max(FIELDWORK_LIMITS.events),
@@ -38,6 +39,7 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
   const initial = await readRunView(runDirectory);
   const presentation = fieldworkHostPresentationSchema.parse(options.presentation ?? defaultPresentation);
   const embeddingOrigin = parseEmbeddingOrigin(options.embeddingOrigin);
+  const reviewer = parseReviewerIdentity(options.reviewer);
   const capabilityToken = randomBytes(32).toString("base64url");
   const listeners = new Set<FieldworkLifecycleListener>();
   if (options.onLifecycleEvent) listeners.add(options.onLifecycleEvent);
@@ -70,7 +72,7 @@ export async function openRun(runDirectory: string, options: OpenRunOptions = {}
     const settled = (async () => {
       try {
         if (!allowedHost(request.headers.host, expectedOrigin)) return void json(response, 400, failure("INVALID_HOST", "Host is not an allowed Fieldwork loopback authority"));
-        await handle(runDirectory, capabilityToken, expectedOrigin, embeddingOrigin, presentation, emit, request, response);
+        await handle(runDirectory, capabilityToken, expectedOrigin, embeddingOrigin, presentation, reviewer, emit, request, response);
       } catch (error) {
         const result = publicError(error);
         json(response, result.status, failure(result.code, result.message));
@@ -148,6 +150,7 @@ async function handle(
   origin: string,
   embeddingOrigin: string | undefined,
   presentation: FieldworkHostPresentationV1,
+  reviewer: FieldworkReviewerIdentity | undefined,
   emit: (type: FieldworkLifecycleEventV1["type"], revision: number, eventCount: number) => void,
   request: IncomingMessage,
   response: ServerResponse,
@@ -170,7 +173,7 @@ async function handle(
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
       return void json(response, 415, failure("JSON_REQUIRED", "Review mutations require application/json"));
     }
-    const result = await submit(directory, await body(request));
+    const result = await submit(directory, await body(request), reviewer);
     if (result.ok) emit("review-event-persisted", result.revision, result.eventCount);
     return void json(response, result.ok ? 200 : 409, result);
   }
@@ -211,7 +214,7 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
   });
 }
 
-async function submit(directory: string, input: unknown): Promise<ReviewMutationResponseV1> {
+async function submit(directory: string, input: unknown, reviewer: FieldworkReviewerIdentity | undefined): Promise<ReviewMutationResponseV1> {
   const parsed = reviewRequestSchema.safeParse(input);
   if (!parsed.success) return failure("INVALID_REVIEW", "Bounded Survey events, event count, and revision are required");
   return withRunReviewLock(directory, async (stored) => {
@@ -220,28 +223,37 @@ async function submit(directory: string, input: unknown): Promise<ReviewMutation
     // prefix and the persisted history describe the same events but are
     // produced by different schemas — the browser posts Survey's own ordering
     // while storage returns this repository's persisted-event ordering — so a
-    // literal JSON.stringify comparison rejected byte-identical history.
-    const prefixMatches = canonicalJson(events.slice(0, stored.run.review.events.length))
-      === canonicalJson(stored.run.review.events);
+    // literal JSON.stringify comparison rejected byte-identical history. The
+    // actor and time are server-owned, so the client's copy of them is not
+    // compared (fieldwork#148).
+    const prefixMatches = canonicalJson(events.slice(0, stored.run.review.events.length).map(withoutServerStamp))
+      === canonicalJson(stored.run.review.events.map(withoutServerStamp));
     if (expectedRevision !== stored.run.review.revision
       || expectedEventCount !== stored.run.review.events.length
       || events.length <= stored.run.review.events.length
       || !prefixMatches) {
       return { ...failure("REVIEW_CONFLICT", "Review history is stale or not append-only"), eventCount: stored.run.review.events.length };
     }
-    const record = reviewSessionRecord(stored.run, events.length);
-    assertServerReviewSessionEvents(record, events);
-    const apply = deriveServerReviewSessionApplyResult({ record, events, requiredResolvedItems: "none" });
+    // The stored history is kept as stored; only the appended events are taken
+    // from the client, and each is stamped with the host-configured reviewer and
+    // this server's clock rather than whatever actor or time the client sent.
+    const appended = stampAppendedEvents(
+      events.slice(stored.run.review.events.length), reviewer, stored.run.review.snapshot.actorId, new Date(),
+    );
+    const persisted = [...stored.run.review.events, ...appended];
+    const record = reviewSessionRecord(stored.run, persisted.length);
+    assertServerReviewSessionEvents(record, persisted);
+    const apply = deriveServerReviewSessionApplyResult({ record, events: persisted, requiredResolvedItems: "none" });
     const revision = stored.run.review.revision + 1;
     // The queue is unchanged by a decision, so its binding is carried forward
     // verbatim: a mutating writer that recomputed the digest would re-bless a
     // queue edited between the decision and this append.
     await saveReview(stored.directory, stored.run, {
-      snapshot: stored.run.review.snapshot, events, revision, snapshotHash: stored.run.review.snapshotHash
+      snapshot: stored.run.review.snapshot, events: persisted, revision, snapshotHash: stored.run.review.snapshotHash
     });
     return parseReviewMutationSuccess({
       apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewMutationResult", ok: true,
-      events, eventCount: events.length, revision, apply
+      events: persisted, eventCount: persisted.length, revision, apply
     });
   });
 }

@@ -59,7 +59,11 @@ test("deterministic extraction persists exact prepared content and refuses unrev
   const result = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("core") });
   const stored = JSON.parse(await readFile(join(result.runDirectory, "run.json"), "utf8"));
   assert.equal(stored.preparedArtifact.contentLength, "Status: Active\n".length);
-  await assert.rejects(() => reviewedExport(result.runDirectory), /unresolved-review-item/);
+  await assert.rejects(() => reviewedExport(result.runDirectory), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_UNDECIDED");
+    assert.match(error.message, /has no resolved review decision/);
+    return true;
+  });
 });
 
 test("task digest changes create a distinct run directory and paths cannot escape a root", async () => {

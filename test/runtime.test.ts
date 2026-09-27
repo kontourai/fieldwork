@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { FakeModelRuntime, ModelInvocationError, type ModelRuntime } from "@kontourai/relay";
-import { runFieldwork } from "../src/fieldwork.js";
+import { runFieldwork, runFieldworkBatch } from "../src/fieldwork.js";
 import { createDatumRuntimeBinding, type FieldworkRuntimeBinding } from "../src/runtime-contracts.js";
 import { createFieldworkRuntimeSession } from "../src/runtime-session.js";
 
@@ -304,6 +304,29 @@ for (const [type, value] of [["array", '["Active","Paused"]'], ["object", '{"sta
     assert.deepEqual(envelope.result.proposals[0].candidateValue, JSON.parse(value));
   });
 }
+
+test("a runtime-bound batch keeps the unsupported field type and its field name, not a generic source failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "fieldwork-runtime-batch-array-"));
+  const task = JSON.parse(await readFile(join(fixture, "task.json"), "utf8"));
+  task.spec.traverse.targetSchema[0].type = "array";
+  const taskPath = join(root, "task.json");
+  await writeFile(taskPath, JSON.stringify(task));
+  const runtime = new FakeModelRuntime([modelResult], "fake:primary");
+  const batch = await runFieldworkBatch({
+    taskPath,
+    root: join(root, "runs"),
+    sources: [{ id: "only", sourcePath: join(fixture, "source.txt") }],
+    runtime: binding([{ id: "primary", runtime }]),
+  });
+  assert.equal(batch.failed, 1);
+  const [item] = batch.items;
+  assert.equal(item?.ok, false);
+  if (item && !item.ok) {
+    assert.equal(item.error.code, "TASK_UNSUPPORTED_FIELD_TYPE");
+    assert.match(item.error.message, /record\.status has type array/);
+  }
+  assert.equal(runtime.requests.length, 0);
+});
 
 function binding(
   candidates: FieldworkRuntimeBinding["candidates"],

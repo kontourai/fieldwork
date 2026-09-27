@@ -99,8 +99,8 @@ const injections = [
   {
     label: "export projects a fresh envelope import again (fieldwork#59)",
     file: "src/fieldwork.ts",
-    from: "  const canonical = projectCanonicalReview(stored.run.runResource, items, applied.results);",
-    to: "  const canonical = projectCanonicalReview(stored.run.runResource, canonicalReviewItems(imported.reviewItems, stored.envelope), applied.results);",
+    from: "  const canonical = projectCanonicalReview(stored.run.runResource, items, results);",
+    to: "  const canonical = projectCanonicalReview(stored.run.runResource, canonicalReviewItems(imported.reviewItems, stored.envelope), results);",
     suite: "test/recheck.test.ts",
   },
 ];

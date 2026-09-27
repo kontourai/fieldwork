@@ -24,6 +24,9 @@ import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
 import { recheckFieldwork } from "../src/recheck.js";
 import { readRun } from "../src/run-store.js";
+import { parseFieldworkTask, traverseTask } from "../src/contracts.js";
+import type { FieldworkRuntimeBinding } from "../src/runtime-contracts.js";
+import { ModelInvocationError, type ModelRuntime } from "@kontourai/relay";
 
 const fixture = resolve("examples/generic");
 const source: LookoutSource = {
@@ -520,6 +523,91 @@ interface ExportedBundle {
   }[];
 }
 
+test("a runtime-bound recheck refuses an unsupported field type up front, naming the field", async () => {
+  const root = await mkdtemp(join(tmpdir(), "fieldwork-recheck-array-"));
+  const task = JSON.parse(await readFile(join(fixture, "task.json"), "utf8"));
+  task.spec.traverse.targetSchema[0].type = "array";
+  const taskPath = join(root, "task.json");
+  await writeFile(taskPath, JSON.stringify(task));
+  const setup = await baseline('Status: ["Active"]', taskPath);
+  let checks = 0;
+  await assert.rejects(
+    () => recheckFieldwork({
+      ...setup.options,
+      source: { ...source, targetSchema: traverseTask(parseFieldworkTask(task)).targetSchema },
+      runtime: failingRuntimeBinding(),
+      acquisition: { check: async () => { checks += 1; return check("unchanged-304", setup.priorRef, setup.priorRef); } },
+    }),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "TASK_UNSUPPORTED_FIELD_TYPE");
+      assert.match(error.message, /record\.status has type array/);
+      return true;
+    },
+  );
+  assert.equal(checks, 0);
+});
+
+test("a recheck round whose extraction did not cover the whole source is refused at export (fieldwork#136)", async () => {
+  // The changed value is read from the first chunk, but a later chunk fails at
+  // the provider, so the envelope still says `success` while part of the
+  // current source was never read. Accepting the change must not export as a
+  // complete receipt.
+  const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
+  const setup = await baseline(`Status: Active${filler}`);
+  const current = snapshot("capture-unread", `Status: Pending${filler}`, "2026-07-23T17:00:00.000Z");
+  const result = await recheckFieldwork({
+    ...setup.options,
+    runtime: statusOnlyRuntimeBinding(),
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
+  });
+  assert.equal(result.classification, "semantic-drift");
+  const stored = await readRun(result.run!.runDirectory);
+  assert.equal(stored.envelope.result.outcome.status, "success");
+  assert.ok((stored.envelope.result.providerFailures?.length ?? 0) >= 1);
+  await decideRound(result.run!.runDirectory, () => "accept-proposed");
+  await assert.rejects(() => reviewedExport(result.run!.runDirectory), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_COVERAGE_INCOMPLETE");
+    return true;
+  });
+});
+
+function failingRuntimeBinding(): FieldworkRuntimeBinding {
+  return runtimeBinding(async () => { throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false); });
+}
+
+/** Proposes the status its chunk states, and fails any chunk that states none. */
+function statusOnlyRuntimeBinding(): FieldworkRuntimeBinding {
+  return runtimeBinding(async (request) => {
+    const match = /Status: (\w+)/.exec(JSON.stringify(request.messages));
+    if (!match) throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false);
+    return {
+      provider: "fixture-runtime", model: "fixture-model", outputText: "",
+      toolCalls: [{
+        id: "tool-status", name: "submit_extraction_proposals",
+        input: { proposals: [{ fieldPath: "record.status", value: match[1], confidence: 0.98, excerpt: match[0], locator: null, occurrenceHint: null }] },
+      }],
+      usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1, stopReason: "tool_use",
+    };
+  });
+}
+
+function runtimeBinding(invoke: ModelRuntime["invoke"]): FieldworkRuntimeBinding {
+  const runtime: ModelRuntime = {
+    id: "fake:recheck-runtime",
+    capabilities: () => ({
+      structuredTools: true, structuredToolsFidelity: "native", outputTokenLimitFidelity: "native",
+      streaming: false, abort: true, usage: true,
+    }),
+    invoke,
+  };
+  return {
+    role: "fieldwork-extraction",
+    candidates: [{ id: "scripted", runtime }],
+    budget: { maxAttempts: 8, maxTotalTokens: 8_000, maxElapsedMs: 60_000 },
+    maxTokensPerAttempt: 1_000,
+  };
+}
+
 function evidenceOf(bundle: ExportedBundle, claimId: string): ExportedBundle["evidence"][number] {
   const entry = bundle.evidence.find((item) => item.claimId === claimId);
   assert.ok(entry, `no evidence for ${claimId}`);
@@ -584,7 +672,7 @@ async function semanticPair() {
   });
 }
 
-async function baseline(body: string) {
+async function baseline(body: string, taskPath = join(fixture, "task.json")) {
   const root = await mkdtemp(join(tmpdir(), "fieldwork-recheck-"));
   const snapshotRoot = join(root, "snapshots");
   const runRoot = join(root, "runs");
@@ -594,7 +682,7 @@ async function baseline(body: string) {
   await store.put(priorSnapshot);
   const priorRef = buildSnapshotSourceRef(priorSnapshot);
   const prior = await runFieldwork({
-    taskPath: join(fixture, "task.json"),
+    taskPath,
     snapshotRef: priorRef,
     snapshotRoot,
     root: runRoot,
@@ -607,7 +695,7 @@ async function baseline(body: string) {
     options: {
       source,
       priorRunDirectory: prior.runDirectory,
-      taskPath: join(fixture, "task.json"),
+      taskPath,
       root: runRoot,
       observationRoot,
       snapshotRoot,

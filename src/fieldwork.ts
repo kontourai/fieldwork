@@ -35,6 +35,7 @@ import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
 import { resolveFieldworkSource } from "./source-input.js";
 import { buildReviewedEvidenceEnrichment } from "./reviewed-evidence.js";
+import { attributeReviewResults, UNATTRIBUTED_ACTOR_ID, type ReviewDecisionAttribution } from "./review-attribution.js";
 
 /**
  * Source kind Fieldwork reports to Survey for every raw source it records. Both
@@ -107,11 +108,12 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     }
   });
   if (imported.record.status.state !== "grounded") throw new Error("Survey refused ungrounded extraction envelope");
+  const createdAt = new Date().toISOString();
   const run: StoredRun = {
-    schemaVersion: 1, runResource, createdAt: new Date().toISOString(), taskName: task.metadata.name, task,
+    schemaVersion: 1, runResource, createdAt, taskName: task.metadata.name, task,
     execution: runtimeSession?.execution ?? fixtureExecution(),
     preparedArtifact: { ref: result.preparedArtifact.ref, digest: result.preparedArtifact.digest, contentLength: result.preparedArtifact.contentLength, file: "prepared.txt" },
-    envelopeFile: "extraction-envelope.json", review: newReviewRound(canonicalReviewItems(imported.reviewItems, envelope))
+    envelopeFile: "extraction-envelope.json", review: newReviewRound(canonicalReviewItems(imported.reviewItems, envelope), createdAt)
   };
   const persistedDirectory = await writeRun(root, run, envelope, resolution.text);
   return {
@@ -178,6 +180,9 @@ function batchError(error: unknown): { code: string; message: string } {
     PDF_ADAPTER_REQUIRED: "PDF source requires a configured adapter",
     IMAGE_ADAPTER_REQUIRED: "Image source requires a configured adapter",
   };
+  // A task-level refusal names a task field, never source text, so its own
+  // message is safe to carry and is the only thing that says which field.
+  if (code === "TASK_UNSUPPORTED_FIELD_TYPE" && error instanceof Error) return { code, message: error.message };
   return { code, message: safeMessages[code] ?? "Source processing failed" };
 }
 
@@ -189,7 +194,7 @@ function batchError(error: unknown): { code: string; message: string } {
  * applies only when a runtime is bound. Remove once Traverse can express nested
  * target schemas (fieldwork#139).
  */
-function assertRuntimeSupportsTask(task: FieldworkTask): void {
+export function assertRuntimeSupportsTask(task: FieldworkTask): void {
   const unsupported = task.spec.traverse.targetSchema.find((field) => field.type === "array" || field.type === "object");
   if (!unsupported) return;
   throw Object.assign(
@@ -240,9 +245,37 @@ export async function reviewedExport(
   assertExcerptsMatchPreparedText(stored.envelope, stored.preparedText);
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
-  const output = withReviewedGroundingEvidence(bundle, projection.enrichment);
+  const output = {
+    ...withReviewedGroundingEvidence(bundle, projection.enrichment),
+    reviewRound: reviewRoundScope(stored, projection),
+  };
   assertPortableOutput(output);
   return parseReviewedExport(output);
+}
+
+/**
+ * What this export covers of its review round: the revision it was taken at,
+ * every claim it left out and why, and who decided each claim it carries, how,
+ * and when the server accepted it. `complete` is true exactly when nothing was
+ * excluded, so a consumer can tell a complete export from a partial one.
+ *
+ * Attribution lives here rather than on Survey's review outcome until Survey
+ * can hold an actor kind and review mode (kontourai/survey#234). The outcome's
+ * own `actor` and `reviewedAt` already carry the stamped actor and time.
+ */
+function reviewRoundScope(
+  stored: StoredRunMetadataRead,
+  projection: ReturnType<typeof projectAttestedReviewedProjection>,
+): Record<string, unknown> {
+  return {
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "ReviewedExportScope",
+    revision: stored.run.review.revision,
+    eventCount: stored.run.review.events.length,
+    complete: projection.excluded.length === 0,
+    excluded: projection.excluded,
+    decisions: projection.attribution,
+  };
 }
 
 /**
@@ -335,6 +368,15 @@ function assertExcerptsMatchPreparedText(envelope: PortableExtractionResultEnvel
  * a run, so no caller hydrates prepared source bytes just to prove the
  * persisted queue, envelope, candidate, decision, and canonical claim IDs
  * agree. This remains an internal Fieldwork composition seam.
+ *
+ * The unit of trust is the claim, not the run (fieldwork#149). Checks about
+ * the round's integrity — the queue's attestation, a grounded extraction, a
+ * valid event history — still refuse the whole round. Checks about one claim
+ * — undecided, resolved onto an absence, contested by a differing accepted
+ * value, not projectable — exclude that claim and list it in `excluded`, so
+ * one contested field no longer blocks every other reviewed claim. Nothing
+ * excluded becomes a claim, verified or otherwise. A round with nothing left
+ * to export is still refused: a receipt over nothing certifies nothing.
  */
 export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead): {
   readonly imported: ExtractionEnvelopeImportResult;
@@ -342,6 +384,8 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
   readonly results: readonly ReviewWorkbenchResult[];
   readonly canonical: ReturnType<typeof buildCanonicalReviewedTrustInput>;
   readonly enrichment: ReturnType<typeof buildReviewedEvidenceEnrichment>;
+  readonly excluded: readonly ReviewedExportExclusion[];
+  readonly attribution: readonly (ReviewDecisionAttribution & { readonly claimId: string })[];
 } {
   assertPortableOutput(stored.envelope);
   const imported = importExtractionEnvelope(stored.envelope, {
@@ -353,16 +397,18 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
     }
   });
   if (imported.record.status.state !== "grounded") throw new Error("Export refused: extraction is not grounded");
-  const items = stored.run.review.snapshot.items as readonly ReviewItem[];
-  assertReviewedQueueIsAttested(items, imported, stored.envelope);
+  const queue = stored.run.review.snapshot.items as readonly ReviewItem[];
+  assertReviewedQueueIsAttested(queue, imported, stored.envelope);
   const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
-  const applied = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "all" });
-  if (!applied.ok) {
+  const applied = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
+  if (!applied.ok || !applied.replayedSession) {
     throw new Error(`Export refused: ${applied.issues.map((issue) => `${issue.code}: ${issue.message}`).join(" ")}`);
   }
-  assertGroundedSelection(items, applied.results);
-  assertOneDecisionPerClaimTarget(items, applied.results);
-  const canonical = projectCanonicalReview(stored.run.runResource, items, applied.results);
+  const attributed = attributeReviewResults(applied.replayedSession, stored.run.review.events, applied.results);
+  const exportable = partitionExportableClaims(stored.run.runResource, queue, attributed.results);
+  const { items, results, excluded } = exportable;
+  if (items.length === 0) throw nothingExportable(excluded, exportable.errors);
+  const canonical = projectCanonicalReview(stored.run.runResource, items, results);
   const claimIdByCandidateId = new Map<string, string>();
   for (const claim of canonical.surveyInput.claims) {
     if (claim.candidateId === undefined) continue;
@@ -370,11 +416,113 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
     claimIdByCandidateId.set(claim.candidateId, claim.id);
   }
   const enrichment = buildReviewedEvidenceEnrichment({
-    imported, items, results: applied.results,
+    imported, items, results,
     isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
     claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
   });
-  return { imported, items, results: applied.results, canonical, enrichment };
+  const attribution = results.map((result) => {
+    const entry = attributed.attribution.find((candidate) => candidate.reviewItemName === result.reviewItemName);
+    const claimId = claimIdByCandidateId.get(result.selectedCandidate.projection?.candidateId ?? result.selectedCandidateId);
+    if (!entry || !claimId) throw new Error(`Cannot attribute the reviewed claim decided by ${result.reviewItemName}`);
+    return { ...entry, claimId };
+  });
+  return { imported, items, results, canonical, enrichment, excluded, attribution };
+}
+
+/**
+ * Why one reviewed claim was left out of an export. `fieldPath` is the claim
+ * target's field; `itemNames` are the review items that would have stated it.
+ */
+export interface ReviewedExportExclusion {
+  readonly fieldPath: string;
+  readonly itemNames: readonly string[];
+  readonly code: "EXPORT_UNDECIDED" | "EXPORT_UNGROUNDED_SELECTION" | "EXPORT_CONFLICTING_DECISIONS" | "EXPORT_NOT_PROJECTABLE";
+}
+
+/**
+ * Split a decided round into the claims that can be exported and the ones
+ * that cannot, per claim target rather than per round. The checks and their
+ * messages are the ones that used to refuse the whole round.
+ */
+function partitionExportableClaims(
+  runResource: string,
+  queue: readonly ReviewItem[],
+  decided: readonly ReviewWorkbenchResult[],
+): {
+  readonly items: ReviewItem[];
+  readonly results: ReviewWorkbenchResult[];
+  readonly excluded: ReviewedExportExclusion[];
+  readonly errors: Error[];
+} {
+  const resultsByName = new Map(decided.map((result) => [result.reviewItemName, result]));
+  const itemsByName = new Map(queue.map((item) => [item.metadata.name, item]));
+  const excluded: ReviewedExportExclusion[] = [];
+  const errors: Error[] = [];
+  const out = new Set<string>();
+  const exclude = (entry: ReviewedExportExclusion, error: Error): void => {
+    excluded.push(entry);
+    errors.push(error);
+    for (const name of entry.itemNames) out.add(name);
+  };
+  for (const item of queue) {
+    if (resultsByName.has(item.metadata.name)) continue;
+    exclude({ fieldPath: fieldPathOf(item), itemNames: [item.metadata.name], code: "EXPORT_UNDECIDED" }, undecided(item));
+  }
+  for (const result of decided) {
+    const item = itemsByName.get(result.reviewItemName);
+    const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
+    // Skipping what cannot be resolved is how a check stops noticing removals.
+    if (!item || !selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    const ungrounded = ungroundedSelection(item, selected, result);
+    if (ungrounded) exclude({ fieldPath: fieldPathOf(item), itemNames: [item.metadata.name], code: "EXPORT_UNGROUNDED_SELECTION" }, ungrounded);
+  }
+  for (const conflict of conflictingClaimTargets(queue, decided)) {
+    exclude({ fieldPath: conflict.fieldPath, itemNames: conflict.itemNames, code: "EXPORT_CONFLICTING_DECISIONS" }, conflict.error);
+  }
+  const items: ReviewItem[] = [];
+  const results: ReviewWorkbenchResult[] = [];
+  for (const item of queue) {
+    const result = resultsByName.get(item.metadata.name);
+    if (!result || out.has(item.metadata.name)) continue;
+    try {
+      projectCanonicalReview(runResource, [item], [result]);
+    } catch (error) {
+      exclude({ fieldPath: fieldPathOf(item), itemNames: [item.metadata.name], code: "EXPORT_NOT_PROJECTABLE" }, error as Error);
+      continue;
+    }
+    items.push(item);
+    results.push(result);
+  }
+  return { items, results, excluded, errors };
+}
+
+function fieldPathOf(item: ReviewItem): string {
+  return item.spec.candidates[0]?.claimTarget.fieldOrBehavior ?? item.spec.target;
+}
+
+function undecided(item: ReviewItem): Error {
+  return Object.assign(
+    new Error(`Export refused: review item ${item.metadata.name} (${fieldPathOf(item)}) has no resolved review decision.`),
+    { code: "EXPORT_UNDECIDED" }
+  );
+}
+
+/**
+ * Every claim in the round was excluded. Refuse with the first exclusion's own
+ * typed error, which carries the advice for that claim, and say how many other
+ * claims were excluded and why.
+ */
+function nothingExportable(excluded: readonly ReviewedExportExclusion[], errors: readonly Error[]): Error {
+  const [first] = errors;
+  if (!first) {
+    return Object.assign(new Error("Export refused: this review round has no claims to export."), { code: "EXPORT_NOT_PROJECTABLE", excluded });
+  }
+  const others = excluded.slice(1);
+  if (others.length > 0) {
+    first.message += ` No claim in this round is exportable; ${others.length} other exclusion(s): `
+      + `${others.map((entry) => `${entry.code} ${entry.fieldPath}`).join(", ")}.`;
+  }
+  return Object.assign(first, { excluded });
 }
 
 /**
@@ -593,8 +741,8 @@ function projectCanonicalReview(
  * came from (`assertProducerDiscipline`, to-surface.ts). A recheck round can
  * resolve onto a candidate that records an *absence* — a removed proposal, an
  * added one seen from the side that did not have it, a coverage or provenance
- * gap — and an absence has no span. Say that plainly here instead of letting
- * Survey's terse locator error be the whole story.
+ * gap — and an absence has no span. Exclude that claim and say so plainly,
+ * instead of letting Survey's terse locator error be the whole story.
  *
  * Which decision is exportable depends on which side is grounded, so name that
  * side rather than assume it: on a removal the prior value is the grounded one
@@ -605,23 +753,16 @@ function projectCanonicalReview(
  * would need a reviewed-retraction record the trust bundle has no shape for,
  * which is an upstream question, not something to fake with an uncited claim.
  */
-function assertGroundedSelection(items: readonly ReviewItem[], results: readonly ReviewWorkbenchResult[]): void {
-  const itemsByName = new Map(items.map((item) => [item.metadata.name, item]));
-  for (const result of results) {
-    const item = itemsByName.get(result.reviewItemName);
-    const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
-    // Skipping what cannot be resolved is how a check stops noticing removals.
-    if (!item || !selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
-    if (selected.locator?.locator) continue;
-    throw Object.assign(
-      new Error(
-        `Export refused: ${selected.claimTarget.fieldOrBehavior} is resolved onto a candidate that records no source span `
-        + `(review item ${item.metadata.name}, decision ${result.decision}). A reviewed claim about a document has to cite `
-        + `where in the document it came from, and this candidate is an absence. ${groundedAdvice(item)}`
-      ),
-      { code: "EXPORT_UNGROUNDED_SELECTION" }
-    );
-  }
+function ungroundedSelection(item: ReviewItem, selected: ReviewItem["spec"]["candidates"][number], result: ReviewWorkbenchResult): Error | undefined {
+  if (selected.locator?.locator) return undefined;
+  return Object.assign(
+    new Error(
+      `Export refused: ${selected.claimTarget.fieldOrBehavior} is resolved onto a candidate that records no source span `
+      + `(review item ${item.metadata.name}, decision ${result.decision}). A reviewed claim about a document has to cite `
+      + `where in the document it came from, and this candidate is an absence. ${groundedAdvice(item)}`
+    ),
+    { code: "EXPORT_UNGROUNDED_SELECTION" }
+  );
 }
 
 /** The decision on this item that selects a candidate which does cite a span. */
@@ -644,7 +785,9 @@ function groundedAdvice(item: ReviewItem): string {
  * propose different values for one field — two chunks state it differently, or
  * a recheck round raises a value change and a provenance change for one drifted
  * field (kontourai/lookout#34) — and accepting two different values would export
- * a receipt that asserts both. Refuse that, naming the field.
+ * a receipt that asserts both. Exclude every item on that field instead,
+ * naming it (fieldwork#149): which of the two values is right is exactly what
+ * the review did not settle.
  *
  * Only `verified` results assert a value. Rejected and could-not-confirm
  * results still carry their candidate's value as `effectiveValue`, but their
@@ -652,30 +795,42 @@ function groundedAdvice(item: ReviewItem): string {
  * comparing them would make every multi-value round unexportable whatever the
  * reviewer decided (fieldwork#137).
  */
-function assertOneDecisionPerClaimTarget(items: readonly ReviewItem[], results: readonly ReviewWorkbenchResult[]): void {
+function conflictingClaimTargets(
+  items: readonly ReviewItem[],
+  results: readonly ReviewWorkbenchResult[],
+): { readonly fieldPath: string; readonly itemNames: string[]; readonly error: Error }[] {
   const itemsByName = new Map(items.map((item) => [item.metadata.name, item]));
-  const accepted = new Map<string, { itemName: string; value: string }>();
+  const byTarget = new Map<string, { fieldPath: string; itemNames: string[]; accepted: { itemName: string; value: string }[] }>();
   for (const result of results) {
     const item = itemsByName.get(result.reviewItemName);
     const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
     if (!selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
-    if (result.status !== "verified") continue;
     const { claimId: _claimId, ...target } = selected.claimTarget;
     const key = canonicalJson(target);
-    const value = canonicalJson(result.effectiveValue);
-    const existing = accepted.get(key);
-    if (existing && existing.value !== value) {
-      throw Object.assign(
+    const entry = byTarget.get(key) ?? { fieldPath: target.fieldOrBehavior, itemNames: [], accepted: [] };
+    byTarget.set(key, entry);
+    entry.itemNames.push(result.reviewItemName);
+    if (result.status === "verified") entry.accepted.push({ itemName: result.reviewItemName, value: canonicalJson(result.effectiveValue) });
+  }
+  const conflicts: { fieldPath: string; itemNames: string[]; error: Error }[] = [];
+  for (const entry of byTarget.values()) {
+    const [first] = entry.accepted;
+    const differing = entry.accepted.find((candidate) => candidate.value !== first?.value);
+    if (!first || !differing) continue;
+    conflicts.push({
+      fieldPath: entry.fieldPath,
+      itemNames: entry.itemNames,
+      error: Object.assign(
         new Error(
-          `Export refused: this review round accepts two different values for ${target.fieldOrBehavior}. `
-          + `Items ${existing.itemName} and ${result.reviewItemName} both resolve to a verified value, and they differ; `
-          + `accept at most one value for ${target.fieldOrBehavior} and reject or leave unconfirmed the other.`
+          `Export refused: this review round accepts two different values for ${entry.fieldPath}. `
+          + `Items ${first.itemName} and ${differing.itemName} both resolve to a verified value, and they differ; `
+          + `accept at most one value for ${entry.fieldPath} and reject or leave unconfirmed the other.`
         ),
         { code: "EXPORT_CONFLICTING_DECISIONS" }
-      );
-    }
-    if (!existing) accepted.set(key, { itemName: result.reviewItemName, value });
+      ),
+    });
   }
+  return conflicts;
 }
 
 /**
@@ -691,9 +846,14 @@ function assertOneDecisionPerClaimTarget(items: readonly ReviewItem[], results: 
  * and refused at export. Its digest is taken with the same hash Survey binds
  * with, so the storage rule — written once, never recomputed by a later
  * writer — is identical on both paths.
+ *
+ * Survey's initial state carries a constant placeholder reviewer and date. The
+ * round has no reviewer when it opens — the server stamps one per decision
+ * (fieldwork#148) — so the round's default actor says so, and its time is when
+ * the round opened.
  */
-export function newReviewRound(items: readonly ReviewItem[]): StoredRun["review"] {
-  const snapshot = initialReviewQueueSessionState(items as ReviewItem[]);
+export function newReviewRound(items: readonly ReviewItem[], openedAt = new Date().toISOString()): StoredRun["review"] {
+  const snapshot = { ...initialReviewQueueSessionState(items as ReviewItem[]), actorId: UNATTRIBUTED_ACTOR_ID, reviewedAt: openedAt };
   const snapshotHash = items.length > 0
     ? bindReviewQueue(snapshot, { sessionName: REVIEW_SESSION_NAME }).spec.snapshotHash
     : hashReviewQueueSnapshot(snapshot);

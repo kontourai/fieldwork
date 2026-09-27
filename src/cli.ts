@@ -104,8 +104,12 @@ async function main(argv: string[]): Promise<void> {
       const run = args.find((value) => !value.startsWith("--"));
       if (!run) throw Object.assign(new Error("open requires <run>"), { code: "INVALID_ARGUMENT" });
       const theme = enumFlag(args, "--theme", ["dark", "light"] as const);
+      const reviewerId = flag(args, "--reviewer");
+      const reviewerKind = enumFlag(args, "--reviewer-kind", ["human", "agent"] as const);
+      if (reviewerKind !== undefined && reviewerId === undefined) invalid("--reviewer-kind requires --reviewer <id>");
       const service = await openRun(resolve(run), {
         port: Number(flag(args, "--port") ?? 0),
+        ...(reviewerId === undefined ? {} : { reviewer: { id: reviewerId, kind: reviewerKind ?? "human" } }),
         ...(theme === undefined ? {} : {
           presentation: {
             apiVersion: "fieldwork.kontourai.io/v1",
@@ -126,7 +130,16 @@ async function main(argv: string[]): Promise<void> {
       if (!run || !outputPath) throw Object.assign(new Error("export requires <run> --output <file>"), { code: "INVALID_ARGUMENT" });
       const artifact = await reviewedExport(resolve(run));
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
-      return output({ ok: true, output: outputPath }, has(args, "--json"));
+      // A partial export is written, but never silently: it is reported with
+      // what was left out, and exits 3 so a script cannot mistake it for a
+      // complete one.
+      const scope = artifact.reviewRound as { complete?: boolean; excluded?: unknown[] } | undefined;
+      if (scope?.complete === false) {
+        output({ ok: true, output: outputPath, complete: false, excluded: scope.excluded ?? [] }, has(args, "--json"));
+        process.exitCode = 3;
+        return;
+      }
+      return output({ ok: true, output: outputPath, complete: true }, has(args, "--json"));
     }
     if (command === "inspect") {
       const run = args.find((value) => !value.startsWith("--")), outputPath = flag(args, "--output");

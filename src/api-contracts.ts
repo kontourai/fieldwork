@@ -192,8 +192,19 @@ export interface FieldworkLifecycleEventV1 {
   readonly eventCount: number;
 }
 export type FieldworkLifecycleListener = (event: FieldworkLifecycleEventV1) => void;
+/**
+ * The reviewer a host vouches for. The server stamps it on every decision it
+ * accepts, with its own clock; nothing a client sends replaces it. `agent`
+ * records every decision as agent-made. Omit it and decisions are recorded
+ * with the `unattributed` actor kind.
+ */
+export interface FieldworkReviewerIdentity {
+  readonly id: string;
+  readonly kind: "human" | "agent";
+}
 export interface OpenRunOptions {
   readonly port?: number;
+  readonly reviewer?: FieldworkReviewerIdentity;
   readonly presentation?: FieldworkHostPresentationV1;
   /**
    * Exact HTTP(S) origin allowed to embed the review UI. Omit to deny framing.
