@@ -210,11 +210,44 @@ function fixtureExecution(): FieldworkStoredExecution {
  */
 export async function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   const stored = await readRun(runDirectory);
+  assertCompleteCoverage(stored.envelope);
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = withReviewedGroundingEvidence(bundle, projection.enrichment);
   assertPortableOutput(output);
   return parseReviewedExport(output);
+}
+
+/**
+ * A reviewed export states grounding over the document, so it must not be built
+ * from an extraction that did not read all of it. Traverse records two kinds of
+ * incomplete coverage: a typed partial outcome (a chunk, call, token or cancel
+ * ceiling stopped later chunks), and a chunk whose provider call failed, which
+ * leaves `outcome.status` at `success` and is recorded only in
+ * `providerFailures`. Either way a field that lived in the unread text has no
+ * claim and no gap, so exporting would read as complete. Surface's
+ * reviewed-grounding policy has no coverage gap kind to carry this inside the
+ * bundle, so refuse instead (fieldwork#136).
+ *
+ * This lives on the export path rather than in the shared projection: the
+ * per-proposal reviewed-web-source reads describe one grounded proposal, not
+ * the document's coverage.
+ */
+function assertCompleteCoverage(envelope: PortableExtractionResultEnvelope): void {
+  const { outcome, providerFailures = [] } = envelope.result;
+  const reasons: string[] = [];
+  if (outcome.status === "partial") reasons.push(`partial: ${outcome.reason}`);
+  else if (outcome.status !== "success") reasons.push(`${outcome.status}: ${outcome.category}/${outcome.code}`);
+  for (const failure of providerFailures) reasons.push(`provider ${failure.provider} failed (${failure.kind})`);
+  if (reasons.length === 0) return;
+  throw Object.assign(
+    new Error(
+      `Export refused: this run's extraction did not cover the whole document (${reasons.join("; ")}). `
+      + "Fields in the unread text have neither a claim nor a gap, so a reviewed export would read as complete; "
+      + "re-run the source so that every chunk is extracted."
+    ),
+    { code: "EXPORT_COVERAGE_INCOMPLETE" }
+  );
 }
 
 /**
@@ -528,34 +561,41 @@ function groundedAdvice(item: ReviewItem): string {
 }
 
 /**
- * A trust bundle states one reviewed value per claim target. A recheck round can
- * raise two items for one drifted field — a value change and a provenance
- * change (kontourai/lookout#34) — and deciding those two differently would
- * otherwise export a receipt that asserts two values for one field. Refuse,
- * naming the field, rather than emit the contradiction.
+ * A trust bundle states one reviewed value per claim target. Two items can
+ * propose different values for one field — two chunks state it differently, or
+ * a recheck round raises a value change and a provenance change for one drifted
+ * field (kontourai/lookout#34) — and accepting two different values would export
+ * a receipt that asserts both. Refuse that, naming the field.
+ *
+ * Only `verified` results assert a value. Rejected and could-not-confirm
+ * results still carry their candidate's value as `effectiveValue`, but their
+ * claim status (`rejected`, `proposed`) keeps them from asserting it, so
+ * comparing them would make every multi-value round unexportable whatever the
+ * reviewer decided (fieldwork#137).
  */
 function assertOneDecisionPerClaimTarget(items: readonly ReviewItem[], results: readonly ReviewWorkbenchResult[]): void {
   const itemsByName = new Map(items.map((item) => [item.metadata.name, item]));
-  const decided = new Map<string, { itemName: string; outcome: string }>();
+  const accepted = new Map<string, { itemName: string; value: string }>();
   for (const result of results) {
     const item = itemsByName.get(result.reviewItemName);
     const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
     if (!selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    if (result.status !== "verified") continue;
     const { claimId: _claimId, ...target } = selected.claimTarget;
     const key = canonicalJson(target);
-    const outcome = canonicalJson({ status: result.status, value: result.effectiveValue });
-    const existing = decided.get(key);
-    if (existing && existing.outcome !== outcome) {
+    const value = canonicalJson(result.effectiveValue);
+    const existing = accepted.get(key);
+    if (existing && existing.value !== value) {
       throw Object.assign(
         new Error(
-          `Export refused: this review round records conflicting decisions for ${target.fieldOrBehavior}. `
-          + `Items ${existing.itemName} and ${result.reviewItemName} resolve the same field to different reviewed values; `
-          + "decide them the same way and export again."
+          `Export refused: this review round accepts two different values for ${target.fieldOrBehavior}. `
+          + `Items ${existing.itemName} and ${result.reviewItemName} both resolve to a verified value, and they differ; `
+          + `accept at most one value for ${target.fieldOrBehavior} and reject or leave unconfirmed the other.`
         ),
         { code: "EXPORT_CONFLICTING_DECISIONS" }
       );
     }
-    if (!existing) decided.set(key, { itemName: result.reviewItemName, outcome });
+    if (!existing) accepted.set(key, { itemName: result.reviewItemName, value });
   }
 }
 
