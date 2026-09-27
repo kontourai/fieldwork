@@ -436,7 +436,9 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
 export interface ReviewedExportExclusion {
   readonly fieldPath: string;
   readonly itemNames: readonly string[];
-  readonly code: "EXPORT_UNDECIDED" | "EXPORT_UNGROUNDED_SELECTION" | "EXPORT_CONFLICTING_DECISIONS" | "EXPORT_NOT_PROJECTABLE";
+  readonly code:
+    | "EXPORT_UNDECIDED" | "EXPORT_FIELD_UNSETTLED" | "EXPORT_UNGROUNDED_SELECTION"
+    | "EXPORT_CONFLICTING_DECISIONS" | "EXPORT_NOT_PROJECTABLE";
 }
 
 /**
@@ -479,6 +481,12 @@ function partitionExportableClaims(
   for (const conflict of conflictingClaimTargets(queue, decided)) {
     exclude({ fieldPath: conflict.fieldPath, itemNames: conflict.itemNames, code: "EXPORT_CONFLICTING_DECISIONS" }, conflict.error);
   }
+  // A field is settled only when every item that states it is decided. An
+  // undecided sibling may carry a different value, so exporting the decided
+  // one would state as reviewed what the review left open.
+  for (const unsettled of unsettledClaimTargets(queue, resultsByName)) {
+    exclude({ fieldPath: unsettled.fieldPath, itemNames: unsettled.itemNames, code: "EXPORT_FIELD_UNSETTLED" }, unsettled.error);
+  }
   const items: ReviewItem[] = [];
   const results: ReviewWorkbenchResult[] = [];
   for (const item of queue) {
@@ -494,6 +502,35 @@ function partitionExportableClaims(
     results.push(result);
   }
   return { items, results, excluded, errors };
+}
+
+function unsettledClaimTargets(
+  queue: readonly ReviewItem[],
+  resultsByName: ReadonlyMap<string, ReviewWorkbenchResult>,
+): { readonly fieldPath: string; readonly itemNames: string[]; readonly error: Error }[] {
+  const byTarget = new Map<string, { fieldPath: string; decided: string[]; undecided: string[] }>();
+  for (const item of queue) {
+    const target = item.spec.candidates[0]?.claimTarget;
+    if (!target) continue;
+    const { claimId: _claimId, ...identity } = target;
+    const key = canonicalJson(identity);
+    const entry = byTarget.get(key) ?? { fieldPath: target.fieldOrBehavior, decided: [], undecided: [] };
+    byTarget.set(key, entry);
+    (resultsByName.has(item.metadata.name) ? entry.decided : entry.undecided).push(item.metadata.name);
+  }
+  return [...byTarget.values()]
+    .filter((entry) => entry.decided.length > 0 && entry.undecided.length > 0)
+    .map((entry) => ({
+      fieldPath: entry.fieldPath,
+      itemNames: entry.decided,
+      error: Object.assign(
+        new Error(
+          `Export refused: ${entry.fieldPath} is not settled. Items ${entry.decided.join(", ")} are decided but `
+          + `${entry.undecided.join(", ")} on the same field is not; decide every item on ${entry.fieldPath} before it can be exported.`
+        ),
+        { code: "EXPORT_FIELD_UNSETTLED" }
+      ),
+    }));
 }
 
 function fieldPathOf(item: ReviewItem): string {

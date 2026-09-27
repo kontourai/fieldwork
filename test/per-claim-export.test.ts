@@ -68,6 +68,23 @@ test("an undecided item is listed as EXPORT_UNDECIDED and never becomes a claim,
   assert.equal(exported.reviewRound.complete, false);
 });
 
+test("a field with a decided item and an undecided sibling exports no value for that field", async () => {
+  const run = await sixFieldRun("unsettled");
+  const items = await queue(run);
+  const paused = items.find((item) => item.value === "Paused")!;
+  const active = items.find((item) => item.value === "Active")!;
+  await decide(run, Object.fromEntries(items.filter((item) => item !== paused).map((item) => [item.name, "accept-proposed"])));
+
+  const exported = await reviewedExport(run) as unknown as ExportedBundle;
+  assert.equal(exported.claims.some((claim) => claim.fieldOrBehavior === "record.status"), false);
+  assert.equal(exported.claims.length, 5);
+  assert.deepEqual(exported.reviewRound.excluded, [
+    { fieldPath: "record.status", itemNames: [paused.name], code: "EXPORT_UNDECIDED" },
+    { fieldPath: "record.status", itemNames: [active.name], code: "EXPORT_FIELD_UNSETTLED" },
+  ]);
+  assert.equal(exported.reviewRound.complete, false);
+});
+
 test("excluded is empty and the export complete exactly when every item exported", async () => {
   const run = await sixFieldRun("complete");
   const items = await queue(run);

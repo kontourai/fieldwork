@@ -80,5 +80,6 @@ The unit of an export is the claim, not the run. Checks about the round's
 integrity (attestation, grounded extraction, valid history, coverage, excerpt
 agreement, size) still refuse the whole export. Checks about one claim
 (undecided, resolved onto an absence, contested by a differing accepted value,
-not projectable) exclude that claim and list it with a typed reason. A round
+on a field another item still leaves undecided, not projectable) exclude that
+claim and list it with a typed reason. A round
 with no exportable claim is still refused.

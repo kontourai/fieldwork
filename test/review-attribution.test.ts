@@ -10,6 +10,7 @@ import {
 } from "@kontourai/survey/review-workbench";
 import type { ReviewItem } from "@kontourai/survey";
 import type { FieldworkReviewerIdentity, FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-contracts.js";
+import { canonicalJson } from "../src/contracts.js";
 import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { REVIEW_ATTRIBUTION_PRODUCER, UNATTRIBUTED_ACTOR_ID } from "../src/review-attribution.js";
 import { openRun } from "../src/server.js";
@@ -118,6 +119,45 @@ test("a run decided before server stamping still loads and exports, its decision
     { actor: { id: "review-workbench-operator", kind: "legacy-synthetic-actor" }, mode: undefined },
   ]);
   assert.equal(await readFile(runPath, "utf8"), before);
+});
+
+test("re-posting the stored prefix with a forged actor and time leaves the stored prefix byte-unchanged", async () => {
+  // The client owns only the events it appends. It posts its copy of the
+  // earlier ones as the append-only prefix, and that copy is compared without
+  // the server stamp, so a client could strip or rewrite the stamp there. The
+  // stored events, not the client's copy, have to be what is kept.
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json", sourcePath: "examples/vendor-obligations/source.txt", root: await tempRoot("attr-forged-prefix"),
+  });
+  const first = await decide(run.runDirectory, { id: "alice", kind: "human" }, 1);
+  const runPath = join(run.runDirectory, "run.json");
+  const storedPrefix = canonicalJson(JSON.parse(await readFile(runPath, "utf8")).review.events);
+  const service = await openRun(run.runDirectory, { reviewer: { id: "alice", kind: "human" } });
+  try {
+    const view = await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = view.review.snapshot as unknown as ReviewQueueSessionState;
+    const next = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(snapshot.items.slice(0, 2).map((item) => [item.metadata.name, "accept-proposed"])),
+    });
+    const forged = (view.review.events as unknown as StoredEvent[]).map((event) => ({
+      ...event,
+      metadata: { ...event.metadata, producer: { ...event.metadata.producer, [REVIEW_ATTRIBUTION_PRODUCER]: { actorKind: "human", mode: "individual" } } },
+      spec: { ...event.spec, actor: { id: "mallory" }, occurredAt: "2020-01-01T00:00:00.000Z" },
+    }));
+    const saved = await apiFetch(service, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events: [...forged, ...next.slice(first.length)], expectedEventCount: first.length, expectedRevision: 1 }),
+    }).then((response) => response.json()) as ReviewMutationResponseV1;
+    assert.equal(saved.ok, true, JSON.stringify(saved));
+  } finally { await service.close(); }
+  const stored = JSON.parse(await readFile(runPath, "utf8")).review.events as StoredEvent[];
+  assert.ok(stored.length > first.length);
+  // Content-exact, stamp included. Key order is not compared: the store
+  // re-serializes events in its own schema order on every save.
+  assert.equal(canonicalJson(stored.slice(0, first.length)), storedPrefix);
+  assert.doesNotMatch(JSON.stringify(stored), /mallory|2020-01-01/);
 });
 
 interface StoredEvent {
