@@ -49,6 +49,7 @@ export type FieldworkSourceKind = NonNullable<ReviewCandidate["source"]["kind"]>
 export async function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   const taskText = await boundedInput(options.taskPath, FIELDWORK_LIMITS.taskBytes, "task");
   const task = parseFieldworkTask(JSON.parse(taskText));
+  if (options.runtime) assertRuntimeSupportsTask(task);
   const source = await resolveFieldworkSource({
     ...(options.sourcePath === undefined ? {} : { sourcePath: options.sourcePath }),
     ...(options.snapshotRef === undefined ? {} : { snapshotRef: options.snapshotRef }),
@@ -178,6 +179,27 @@ function batchError(error: unknown): { code: string; message: string } {
     IMAGE_ADAPTER_REQUIRED: "Image source requires a configured adapter",
   };
   return { code, message: safeMessages[code] ?? "Source processing failed" };
+}
+
+/**
+ * A model runtime always runs through Traverse's Relay adapter, which cannot
+ * express a nested schema for `array` or `object` targets and refuses them only
+ * once extraction starts, with an untyped error. Refuse the task up front,
+ * naming the field. The deterministic provider supports both types, so this
+ * applies only when a runtime is bound. Remove once Traverse can express nested
+ * target schemas (fieldwork#139).
+ */
+function assertRuntimeSupportsTask(task: FieldworkTask): void {
+  const unsupported = task.spec.traverse.targetSchema.find((field) => field.type === "array" || field.type === "object");
+  if (!unsupported) return;
+  throw Object.assign(
+    new Error(
+      `Task field ${unsupported.path} has type ${unsupported.type}, which a model runtime cannot extract yet: `
+      + "Traverse's Relay adapter has no nested schema for array or object targets. "
+      + "Use a scalar type for this field, or run the task without a model runtime."
+    ),
+    { code: "TASK_UNSUPPORTED_FIELD_TYPE" }
+  );
 }
 
 function fixtureExecution(): FieldworkStoredExecution {
