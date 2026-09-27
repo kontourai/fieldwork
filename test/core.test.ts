@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, readdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseFieldworkTask } from "../src/contracts.js";
+import { FIELDWORK_LIMITS, parseFieldworkTask } from "../src/contracts.js";
 import { reviewedExport, reviewSessionRecord, runFieldwork } from "../src/fieldwork.js";
 import { tempRoot } from "./helpers.js";
 import { assertPortableOutput, portablePath, readRun } from "../src/run-store.js";
@@ -159,6 +159,40 @@ test("a review queue edited after its decisions cannot be exported", async () =>
       return true;
     },
   );
+});
+
+/* Each proposal's reviewed evidence embeds the whole extraction, so export size
+   is quadratic in proposal count (fieldwork#141). The ceiling is lowered here
+   rather than building a fixture large enough to reach the real one. */
+test("a reviewed export estimated above the size ceiling is refused before any evidence is projected", async () => {
+  assert.equal(FIELDWORK_LIMITS.reviewedExportEstimateBytes, 32 * 1024 * 1024);
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("export-size-ceiling"),
+  });
+  const tooLarge = (ceiling: number) => (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_TOO_LARGE");
+    assert.match(error.message, new RegExp(`of 7 proposals .* above the ${ceiling}-byte ceiling`));
+    return true;
+  };
+
+  // Undecided, the projection would refuse with unresolved-review-item; the
+  // size refusal has to come first, before any projection work.
+  let estimate = 0;
+  await assert.rejects(() => reviewedExport(run.runDirectory, { maxEstimatedBytes: 1 }), (error: Error & { code?: string }) => {
+    tooLarge(1)(error);
+    estimate = Number(/estimated at (\d+) bytes/.exec(error.message)?.[1]);
+    return true;
+  });
+  assert.ok(estimate > 0);
+
+  await decideEveryItem(run.runDirectory);
+  await assert.rejects(() => reviewedExport(run.runDirectory, { maxEstimatedBytes: estimate - 1 }), tooLarge(estimate - 1));
+  const atCeiling = await reviewedExport(run.runDirectory, { maxEstimatedBytes: estimate }) as { claims: unknown[] };
+  assert.equal(atCeiling.claims.length, 7);
+  const byDefault = await reviewedExport(run.runDirectory) as { claims: unknown[] };
+  assert.equal(byDefault.claims.length, 7);
 });
 
 /* Per-item integrity does not give set integrity: dropping an item leaves every

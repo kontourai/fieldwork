@@ -7,6 +7,16 @@ export const FIELDWORK_LIMITS = {
   sourceBytes: FIELDWORK_SOURCE_BYTES,
   requestBodyBytes: 16 * 1024 * 1024,
   artifactBytes: 32 * 1024 * 1024,
+  /**
+   * Ceiling on a reviewed export's estimated size: the serialized extraction
+   * envelope times the number of first-round review items. Each item's
+   * reviewed-extraction evidence embeds the whole import record, so export size
+   * grows with the square of the proposal count until Surface's evidence
+   * profile has a compact form (fieldwork#141). Measured exports run about 1.5x
+   * this estimate, which keeps a refused export far below V8's maximum string
+   * length.
+   */
+  reviewedExportEstimateBytes: 32 * 1024 * 1024,
   projections: 128,
   reviewItems: 10_000,
   events: 10_000,

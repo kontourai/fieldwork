@@ -230,9 +230,13 @@ function fixtureExecution(): FieldworkStoredExecution {
  * to the prepared bytes by digest. A one-sided edit fails the first; an edit
  * that also refreshes the digest fails the second.
  */
-export async function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
+export async function reviewedExport(
+  runDirectory: string,
+  options: { readonly maxEstimatedBytes?: number } = {},
+): Promise<ReviewedExportV1> {
   const stored = await readRun(runDirectory);
   assertCompleteCoverage(stored.envelope);
+  assertExportSizeWithinCeiling(stored, options.maxEstimatedBytes ?? FIELDWORK_LIMITS.reviewedExportEstimateBytes);
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = withReviewedGroundingEvidence(bundle, projection.enrichment);
@@ -269,6 +273,32 @@ function assertCompleteCoverage(envelope: PortableExtractionResultEnvelope): voi
       + "re-run the source so that every chunk is extracted."
     ),
     { code: "EXPORT_COVERAGE_INCOMPLETE" }
+  );
+}
+
+/**
+ * Every first-round item's reviewed-extraction evidence embeds the whole
+ * import record, envelope included, so an export carries one envelope copy per
+ * decided proposal and grows with the square of the proposal count. A few
+ * hundred proposals would otherwise fail late, inside serialization, with a
+ * runtime string-length or memory error. Estimate the size before projecting
+ * any evidence and refuse above the ceiling (fieldwork#141). A recheck round
+ * projects no such evidence, so it has nothing to estimate. Remove once
+ * Surface's reviewed-extraction evidence profile can reference one shared
+ * envelope instead of cloning it per entry.
+ */
+function assertExportSizeWithinCeiling(stored: StoredRunMetadataRead, maxEstimatedBytes: number): void {
+  const items = stored.run.review.snapshot.items as readonly ReviewItem[];
+  if (items.some((item) => item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER])) return;
+  const estimatedBytes = Buffer.byteLength(JSON.stringify(stored.envelope)) * items.length;
+  if (estimatedBytes <= maxEstimatedBytes) return;
+  throw Object.assign(
+    new Error(
+      `Export refused: a reviewed export of ${items.length} proposals is estimated at ${estimatedBytes} bytes, `
+      + `above the ${maxEstimatedBytes}-byte ceiling. Each proposal's reviewed evidence embeds the whole extraction, `
+      + "so export size grows with the square of the proposal count; split the source or narrow the task so fewer proposals are reviewed per run."
+    ),
+    { code: "EXPORT_TOO_LARGE" }
   );
 }
 
