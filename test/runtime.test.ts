@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -272,6 +272,38 @@ test("pre-dispatch cancellation records an aborted receipt without reserving cap
   assert.equal(session.execution.receipts[0]?.outcome, "aborted");
   assert.equal(session.execution.receipts[0]?.authorization, undefined);
 });
+
+for (const [type, value] of [["array", '["Active","Paused"]'], ["object", '{"state":"Active"}']] as const) {
+  test(`a runtime-bound run refuses a ${type} target before any provider call, and the deterministic provider still runs it`, async () => {
+    // Traverse's Relay adapter cannot express a nested schema for array/object
+    // targets, so a runtime-bound run would fail after validation with an
+    // untyped error (fieldwork#139). The deterministic provider supports both.
+    const root = await mkdtemp(join(tmpdir(), `fieldwork-runtime-${type}-`));
+    const task = JSON.parse(await readFile(join(fixture, "task.json"), "utf8"));
+    task.spec.traverse.targetSchema[0].type = type;
+    const taskPath = join(root, "task.json");
+    const sourcePath = join(root, "source.txt");
+    await writeFile(taskPath, JSON.stringify(task));
+    await writeFile(sourcePath, `Status: ${value}\n`);
+    const runtime = new FakeModelRuntime([modelResult], "fake:primary");
+    const runRoot = join(root, "runtime-runs");
+
+    await assert.rejects(
+      () => runFieldwork({ taskPath, sourcePath, root: runRoot, runtime: binding([{ id: "primary", runtime }]) }),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, "TASK_UNSUPPORTED_FIELD_TYPE");
+        assert.match(error.message, new RegExp(`record\\.status.*${type}|${type}.*record\\.status`));
+        return true;
+      },
+    );
+    assert.equal(runtime.requests.length, 0);
+    await assert.rejects(() => readdir(runRoot), { code: "ENOENT" });
+
+    const deterministic = await runFieldwork({ taskPath, sourcePath, root: join(root, "fixture-runs") });
+    const envelope = JSON.parse(await readFile(join(deterministic.runDirectory, "extraction-envelope.json"), "utf8"));
+    assert.deepEqual(envelope.result.proposals[0].candidateValue, JSON.parse(value));
+  });
+}
 
 function binding(
   candidates: FieldworkRuntimeBinding["candidates"],
