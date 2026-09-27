@@ -12,9 +12,11 @@ export const FIELDWORK_LIMITS = {
    * envelope times the number of first-round review items. Each item's
    * reviewed-extraction evidence embeds the whole import record, so export size
    * grows with the square of the proposal count until Surface's evidence
-   * profile has a compact form (fieldwork#141). Measured exports run about 1.5x
-   * this estimate, which keeps a refused export far below V8's maximum string
-   * length.
+   * profile has a compact form (fieldwork#141). At large proposal counts (N=128
+   * in testing) the actual export runs about 1.5x this estimate; at small N the
+   * estimate is dominated by fixed envelope overhead and the ratio does not
+   * hold. Either way this ceiling keeps a refused export far below V8's maximum
+   * string length.
    */
   reviewedExportEstimateBytes: 32 * 1024 * 1024,
   projections: 128,
