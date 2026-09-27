@@ -3,7 +3,10 @@ import test from "node:test";
 import { mkdir, readdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FIELDWORK_LIMITS, parseFieldworkTask } from "../src/contracts.js";
-import { reviewedExport, reviewSessionRecord, runFieldwork } from "../src/fieldwork.js";
+import {
+  canonicalReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, reviewedExport, reviewSessionRecord, runFieldwork,
+} from "../src/fieldwork.js";
+import { importExtractionEnvelope } from "@kontourai/survey";
 import { tempRoot } from "./helpers.js";
 import { assertPortableOutput, portablePath, readRun } from "../src/run-store.js";
 import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
@@ -193,6 +196,56 @@ test("a reviewed export estimated above the size ceiling is refused before any e
   assert.equal(atCeiling.claims.length, 7);
   const byDefault = await reviewedExport(run.runDirectory) as { claims: unknown[] };
   assert.equal(byDefault.claims.length, 7);
+});
+
+/* The queue/envelope attestation compares two stored artifacts with each other,
+   not with the prepared bytes. An editor who rewrites an excerpt in the envelope
+   and re-derives the queue from it passes that attestation; only the prepared
+   text can say the cited excerpt is not there (fieldwork#140). */
+test("an envelope excerpt the prepared text does not contain cannot be exported", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("excerpt-rewrite"),
+  });
+  const honest = await readRun(run.runDirectory);
+  await decideEveryItem(run.runDirectory);
+  const untouched = await reviewedExport(run.runDirectory) as { claims: { fieldOrBehavior: string; value: unknown }[] };
+  assert.equal(untouched.claims.find((claim) => claim.fieldOrBehavior === "commercial.annualFeeUsd")?.value, 48000);
+
+  const envelopePath = join(run.runDirectory, "extraction-envelope.json");
+  const envelope = JSON.parse(await readFile(envelopePath, "utf8"));
+  const fee = envelope.result.proposals.find((proposal: { fieldPath: string }) => proposal.fieldPath === "commercial.annualFeeUsd");
+  assert.equal(fee.provenance.excerpt, "Annual renewal fee USD: 48000");
+  // Same length, so the locator still spans it, but not what the source says.
+  fee.provenance.excerpt = "Annual renewal fee USD: 12000";
+  fee.candidateValue = 12000;
+  await writeFile(envelopePath, JSON.stringify(envelope, null, 2));
+  const imported = importExtractionEnvelope(envelope, {
+    importName: importNameFor(honest.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
+    claimTarget: (proposal) => {
+      const projection = honest.run.task.spec.projections.find((entry) => entry.fieldPath === proposal.fieldPath)!;
+      return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
+    },
+  });
+  const runPath = join(run.runDirectory, "run.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  stored.review = newReviewRound(canonicalReviewItems(imported.reviewItems, envelope));
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+  assert.equal(
+    (await readRun(run.runDirectory)).preparedText.slice(...fee.provenance.locator.slice("chars:".length).split("-").map(Number)),
+    "Annual renewal fee USD: 48000",
+  );
+  await decideEveryItem(run.runDirectory);
+
+  await assert.rejects(
+    () => reviewedExport(run.runDirectory),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_EXCERPT_MISMATCH");
+      assert.match(error.message, /commercial\.annualFeeUsd/);
+      return true;
+    },
+  );
 });
 
 /* Per-item integrity does not give set integrity: dropping an item leaves every

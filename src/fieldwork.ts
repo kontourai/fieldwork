@@ -237,6 +237,7 @@ export async function reviewedExport(
   const stored = await readRun(runDirectory);
   assertCompleteCoverage(stored.envelope);
   assertExportSizeWithinCeiling(stored, options.maxEstimatedBytes ?? FIELDWORK_LIMITS.reviewedExportEstimateBytes);
+  assertExcerptsMatchPreparedText(stored.envelope, stored.preparedText);
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = withReviewedGroundingEvidence(bundle, projection.enrichment);
@@ -300,6 +301,32 @@ function assertExportSizeWithinCeiling(stored: StoredRunMetadataRead, maxEstimat
     ),
     { code: "EXPORT_TOO_LARGE" }
   );
+}
+
+/**
+ * The queue/envelope attestation compares two stored artifacts with each other;
+ * neither is the source. An edit that rewrites an envelope excerpt and
+ * re-derives the queue from it passes that check, and would export a verified
+ * claim citing text the document does not contain (fieldwork#140). `readRun`
+ * has already bound the prepared text to its digest, so compare every
+ * proposal's `chars:a-b` span with those bytes — the same rule the review
+ * inspector uses to show `excerpt-mismatch`. The inspector's own per-candidate
+ * state is not reused: it marks every candidate of a source once any one
+ * mismatches, so it cannot name the field that does.
+ */
+function assertExcerptsMatchPreparedText(envelope: PortableExtractionResultEnvelope, preparedText: string): void {
+  for (const proposal of envelope.result.proposals) {
+    const span = /^chars:(\d+)-(\d+)$/.exec(proposal.provenance.locator);
+    if (span && preparedText.slice(Number(span[1]), Number(span[2])) === proposal.provenance.excerpt) continue;
+    throw Object.assign(
+      new Error(
+        `Export refused: the excerpt recorded for ${proposal.fieldPath} at ${proposal.provenance.locator} `
+        + "is not what the prepared source text contains there. A reviewed claim has to cite text the document "
+        + "actually contains; re-run the source rather than editing stored extraction state."
+      ),
+      { code: "EXPORT_EXCERPT_MISMATCH" }
+    );
+  }
 }
 
 /**
