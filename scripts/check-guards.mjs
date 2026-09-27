@@ -57,7 +57,7 @@ const injections = [
   {
     label: "no attestation against the extraction envelope",
     file: "src/fieldwork.ts",
-    from: "  assertReviewedQueueIsAttested(items, imported, stored.envelope);",
+    from: "  assertReviewedQueueIsAttested(queue, imported, stored.envelope);",
     to: "",
     suite: "test/core.test.ts",
   },
