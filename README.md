@@ -242,7 +242,7 @@ signal.
 
 ## Limits
 
-Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bodies up to 16 MiB, stored structured artifacts up to 32 MiB, 128 projections/target fields, 10,000 Survey review items, 10,000 review events, 4,096 characters per general task string, and 512 characters per extraction pattern. Review-item capacity is intentionally separate from target-field capacity because a provider may ground repeated or alternative proposals for one field. Deterministic patterns intentionally support only a literal label followed by one line-bounded capture, for example `Status: ([^\n]+)`. Lookarounds, backreferences, nested/repeated groups, and arbitrary regular expressions are rejected.
+Fieldwork accepts task files up to 256 KiB, source text up to 2 MiB, mutation bodies up to 16 MiB, stored structured artifacts up to 32 MiB, 128 projections/target fields, 10,000 Survey review items, 10,000 review events, 4,096 characters per general task string, and 512 characters per extraction pattern. Review-item capacity is intentionally separate from target-field capacity because a provider may ground repeated or alternative proposals for one field. A reviewed export is refused with `EXPORT_TOO_LARGE` when its estimated size (serialized extraction envelope times first-round review items) exceeds 32 MiB: each item's reviewed evidence currently embeds the whole extraction, so export size grows with the square of the proposal count. Deterministic patterns intentionally support only a literal label followed by one line-bounded capture, for example `Status: ([^\n]+)`. Lookarounds, backreferences, nested/repeated groups, and arbitrary regular expressions are rejected.
 
 ## Verification
 
