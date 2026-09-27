@@ -490,10 +490,18 @@ test("a round that decides one field two ways is refused rather than exported as
     () => reviewedExport(split.run!.runDirectory),
     (error: Error & { code?: string }) => {
       assert.equal(error.code, "EXPORT_CONFLICTING_DECISIONS");
-      assert.match(error.message, /conflicting decisions for record\.status/);
+      assert.match(error.message, /accepts two different values for record\.status/);
       return true;
     },
   );
+
+  // Rejecting one side of the pair asserts only the accepted value (fieldwork#137).
+  const rejectedOne = await roundFor("capture-both-c", "Status: Paused");
+  await decideRound(rejectedOne.run!.runDirectory, (_name, index) => index === 0 ? "accept-proposed" : "reject-proposed");
+  const oneAccepted = await reviewedExport(rejectedOne.run!.runDirectory) as unknown as {
+    claims: { value: unknown; status: string }[];
+  };
+  assert.deepEqual(oneAccepted.claims.map((claim) => [claim.value, claim.status]), [["Paused", "verified"], ["Paused", "rejected"]]);
 
   const agreed = await roundFor("capture-both-b", "Status: Paused");
   await decideRound(agreed.run!.runDirectory, () => "accept-proposed");
