@@ -10,8 +10,12 @@ import {
   type ModelInvocationResult,
   type ModelRuntime,
 } from "@kontourai/relay";
-import { runFieldwork } from "../src/fieldwork.js";
+import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
+import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
+import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
+import { openRun } from "../src/server.js";
+import { apiFetch } from "./helpers.js";
 import type { FieldworkRuntimeBinding } from "../src/runtime-contracts.js";
 
 const markers = [
@@ -194,6 +198,16 @@ test("one failed concurrent chunk remains typed and reserved while successful ch
   assert.equal(failed.attempts[0].errorCode, "PROVIDER_UNAVAILABLE");
   assert.equal(failed.attempts[0].reservationState, "reserved");
   assert.equal(failed.authorization.outcome, "reserved");
+
+  // The envelope still says `success`, so only providerFailures records that
+  // record.second's chunk was never read. Accepting every surviving item must
+  // not export as allowed grounding over the unread chunk (fieldwork#136).
+  await acceptEveryItem(result.runDirectory);
+  await assert.rejects(() => reviewedExport(result.runDirectory), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_COVERAGE_INCOMPLETE");
+    assert.match(error.message, /provider \S+ failed \(unavailable\)/);
+    return true;
+  });
 });
 
 test("the Traverse provider-call ceiling stops later chunks without discarding earlier grounded results", async () => {
@@ -247,6 +261,41 @@ test("the Traverse maxChunks ceiling reports a distinct max-chunks partial outco
       (entry: { category: string; code: string }) => entry.category === "limit" && entry.code === "content-truncated",
     ),
     JSON.stringify(stored.envelope.result.warningClassifications),
+  );
+});
+
+test("a maxChunks-truncated run cannot be exported as complete reviewed grounding (fieldwork#136)", async () => {
+  const fixture = await providerFixture("max-chunks-export");
+  const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
+  const result = await runFieldwork({
+    ...fixture,
+    runtime: binding(runtime, { concurrency: 1, maxChunks: 2 }),
+  });
+  assert.deepEqual(result.outcome, { status: "partial", reason: "max-chunks" });
+
+  await acceptEveryItem(result.runDirectory);
+  await assert.rejects(() => reviewedExport(result.runDirectory), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_COVERAGE_INCOMPLETE");
+    assert.match(error.message, /partial: max-chunks/);
+    return true;
+  });
+});
+
+test("a complete runtime-bound run still exports allowed grounding over every field", async () => {
+  const fixture = await providerFixture("complete-export");
+  const runtime = scriptedRuntime(async (request) => resultFor(markerFor(request)));
+  const result = await runFieldwork({ ...fixture, runtime: binding(runtime, { concurrency: 1 }) });
+  assert.deepEqual(result.outcome, { status: "success" });
+
+  await acceptEveryItem(result.runDirectory);
+  const exported = await reviewedExport(result.runDirectory) as unknown as {
+    claims: { fieldOrBehavior: string; status: string }[];
+    reviewedGrounding: { outcome: string };
+  };
+  assert.equal(exported.reviewedGrounding.outcome, "allowed");
+  assert.deepEqual(
+    exported.claims.map((claim) => [claim.fieldOrBehavior, claim.status]).sort(),
+    markers.map((marker) => [marker.fieldPath, "verified"]),
   );
 });
 
@@ -323,6 +372,24 @@ test("run-level cancellation stops before provider launch and persists a typed p
   });
   assert.equal(stored.envelope.result.outcome.status, "partial");
 });
+
+async function acceptEveryItem(runDirectory: string): Promise<void> {
+  const server = await openRun(runDirectory);
+  try {
+    const initial = await apiFetch(server, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = initial.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(snapshot.items.map((item) => [item.metadata.name, "accept-proposed"])),
+    });
+    const saved = await apiFetch(server, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }),
+    }).then((response) => response.json()) as { ok: boolean };
+    assert.equal(saved.ok, true);
+  } finally { await server.close(); }
+}
 
 function binding(
   runtime: ModelRuntime & { requests: ModelInvocationRequest[] },

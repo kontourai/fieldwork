@@ -737,7 +737,10 @@ test("format-native PDF and OCR context is visible in the shared inspector", asy
  * metadata, the current/proposed candidate pair, the Forage snapshot refs — is
  * what the shipped command produces.
  */
-async function recheckedRun(label: string): Promise<{ runDirectory: string; itemCount: number }> {
+async function recheckedRun(
+  label: string,
+  bodies?: { readonly prior: string; readonly current: string },
+): Promise<{ runDirectory: string; itemCount: number }> {
   const root = await tempRoot(label);
   const snapshotRoot = join(root, "snapshots");
   const store = createFilesystemSnapshotStore({ root: snapshotRoot });
@@ -751,8 +754,8 @@ async function recheckedRun(label: string): Promise<{ runDirectory: string; item
     bodyHash: createHash("sha256").update(body).digest("hex"),
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
-  const prior = snapshot(await readFile("examples/vendor-obligations/source.txt", "utf8"), "2026-07-25T08:00:00.000Z");
-  const current = snapshot(await readFile("examples/vendor-obligations/source-revised.txt", "utf8"), "2026-07-25T09:00:00.000Z");
+  const prior = snapshot(bodies?.prior ?? await readFile("examples/vendor-obligations/source.txt", "utf8"), "2026-07-25T08:00:00.000Z");
+  const current = snapshot(bodies?.current ?? await readFile("examples/vendor-obligations/source-revised.txt", "utf8"), "2026-07-25T09:00:00.000Z");
   await store.put(prior);
   const priorRef = buildSnapshotSourceRef(prior), currentRef = buildSnapshotSourceRef(current);
   const first = await runFieldwork({
@@ -849,6 +852,61 @@ test("a recheck round says what changed, and shows it in the document", async ({
       // No sha256, no percent-encoded url, no fetchedAt.
       expect(entry.text).not.toMatch(/[0-9a-f]{32,}|%3A|sha256/);
     }
+  } finally {
+    await server.close();
+  }
+});
+
+/* When the new extraction states one field twice, the field path alone cannot
+   say which span a recheck card's proposed value came from. Before fieldwork#138
+   every card for the field linked to the field's last span, so the 52500 cards
+   jumped to the historical 48000 line while their label read the header's
+   locator. Each card has to link to its own proposed candidate's span. */
+test("a recheck card links to its own proposed span when the field has two", async ({ page }) => {
+  const brief = await readFile("examples/vendor-obligations/source.txt", "utf8");
+  // Enough filler that the historical line lands in a later Traverse chunk,
+  // where the deterministic provider proposes the fee a second time.
+  const filler = "Filler paragraph for chunking.\n".repeat(600);
+  const { runDirectory } = await recheckedRun("browser-recheck-two-spans", {
+    prior: `${brief}${filler}`,
+    current: `${brief.replace("Annual renewal fee USD: 48000", "Annual renewal fee USD: 52500")}${filler}Historical note. Annual renewal fee USD: 48000\n`,
+  });
+  const server = await openRun(runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const cards = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[data-testid="review-field"]')]
+      .filter((card) => card.dataset.field === "commercial.annualFeeUsd")
+      .map((card) => {
+        const from = card.querySelector('[data-testid="proposed-excerpt"] .from');
+        const id = from?.querySelector("a")?.getAttribute("href")?.slice(1) ?? "";
+        return {
+          itemName: card.dataset.itemName ?? "",
+          locator: /chars:\d+-\d+/.exec(from?.textContent ?? "")?.[0],
+          linked: id ? document.querySelector(`mark[data-highlight-return-to~="${id}"]`)?.textContent ?? "" : "",
+        };
+      }));
+    // The value change and provenance change propose the header's 52500; the
+    // added item proposes the historical 48000.
+    expect(cards.map((card) => card.linked).sort()).toEqual([
+      "Annual renewal fee USD: 48000",
+      "Annual renewal fee USD: 52500",
+      "Annual renewal fee USD: 52500",
+    ]);
+    const spanOf = (text: string) => {
+      const start = `${brief.replace("48000", "52500")}${filler}Historical note. Annual renewal fee USD: 48000\n`.indexOf(text);
+      return `chars:${start}-${start + text.length}`;
+    };
+    for (const card of cards) {
+      // The link lands where the card's own label says it does.
+      expect(card.locator).toBe(card.linked.endsWith("52500")
+        ? spanOf("Annual renewal fee USD: 52500")
+        : spanOf("Annual renewal fee USD: 48000"));
+      // Following the link selects that same span, not the field's other one.
+      await page.locator(`[data-testid="review-field"][data-item-name="${card.itemName}"] .excerpt .from a`).click();
+      await expect(page.locator("mark[data-fw-active]")).toHaveText(card.linked);
+    }
+    await page.close();
   } finally {
     await server.close();
   }

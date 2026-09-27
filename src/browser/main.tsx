@@ -137,6 +137,36 @@ function readableInstant(value: string): string {
   return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+/**
+ * The inspector highlight each queued item's proposed value came from, keyed by
+ * review item name.
+ *
+ * A first round's items are the inspector's own, so review-item identity joins
+ * them. A recheck round's items are Lookout's (`lookout-semantic.…`) while the
+ * inspector's candidates are the new extraction's (`extraction-envelope.…`), so
+ * there the join is the proposed candidate's identity: its field, `chars:`
+ * locator and excerpt against the inspector candidate's field, span and
+ * excerpt. Joining on the field path alone picked one of the field's spans
+ * whenever the new extraction stated the field twice, so a card could label
+ * one locator and jump to another (fieldwork#138). An item with no matching
+ * span gets no link rather than a guess.
+ */
+function highlightIdsByItem(
+  items: readonly ReviewItem[],
+  candidates: ExtractionInspectorModel["candidates"],
+): ReadonlyMap<string, string> {
+  const ids = new Map<string, string>();
+  for (const item of items) {
+    const own = candidates.find((candidate) => candidate.reviewItemName === item.metadata.name);
+    const proposed = item.spec.candidates.find((candidate) => candidate.role === "proposed")?.locator;
+    const match = own ?? (proposed ? candidates.find((candidate) => candidate.field === item.spec.target
+      && `chars:${candidate.start}-${candidate.end}` === proposed.locator
+      && candidate.excerpt === proposed.excerpt) : undefined);
+    if (match?.highlightElementId) ids.set(item.metadata.name, match.highlightElementId);
+  }
+  return ids;
+}
+
 /** Elements that own their own click. Selecting a card must not swallow these. */
 const CARD_CONTROLS = "button, a, input, textarea, select, label, summary, [contenteditable]";
 
@@ -145,6 +175,7 @@ function linkDocumentAndQueue(
   inspectorHost: HTMLElement,
   workbenchHost: HTMLElement,
   candidates: ExtractionInspectorModel["candidates"],
+  highlightByItem: ReadonlyMap<string, string>,
   recheck: RecheckRound | undefined,
 ): () => void {
   const itemByHighlight = new Map(candidates.flatMap((candidate) =>
@@ -153,16 +184,8 @@ function linkDocumentAndQueue(
 
   const cardFor = (itemName: string) =>
     workbenchHost.querySelector<HTMLElement>(`[data-testid="review-field"][data-item-name="${itemName}"]`);
-  /* A recheck round's items are Lookout's (`lookout-semantic.…`) while the
-     inspector's candidates are the new extraction's (`extraction-envelope.…`),
-     so review-item identity does not join the two surfaces there. The field path
-     does, and it is the same join Survey's own card header uses. */
-  const highlightIdFor = (itemName: string) => {
-    const field = cardFor(itemName)?.dataset.field;
-    const candidate = candidates.find((entry) => entry.reviewItemName === itemName)
-      ?? (field ? candidates.find((entry) => entry.field === field) : undefined);
-    return candidate?.highlightElementId;
-  };
+  // The same join the card's provenance link uses, so a jump lands where the link says.
+  const highlightIdFor = (itemName: string) => highlightByItem.get(itemName);
   /* The painted `<mark class="source-highlight">` is the visible, focusable
      return control (survey 2.3.0); `data-highlight-return-to` is its published
      reverse binding, a space-separated list of the `highlightElementId`s it
@@ -347,11 +370,7 @@ function App() {
     // `highlightElementId` is Survey's published id for each candidate's source
     // anchor (2.3.0); the server builds the model with
     // `buildExtractionInspectorModel`, which always supplies it.
-    const candidateByItem = new Map(inspectorModel.candidates.map((candidate) => [candidate.reviewItemName, candidate.highlightElementId]));
-    // Recheck items are Lookout's, the inspector's candidates are the new
-    // extraction's; only the field path joins them. Without this the provenance
-    // link silently degraded to a raw ref on every recheck round.
-    const candidateByField = new Map(inspectorModel.candidates.map((candidate) => [candidate.field, candidate.highlightElementId]));
+    const highlightByItem = highlightIdsByItem(queueItems, inspectorModel.candidates);
     // "Where did this come from" is the reviewer's question. Answer it on the
     // face of the card — readable source name plus the exact locator — and make
     // the answer a jump to the highlighted sentence. The 64-hex source digest
@@ -361,8 +380,7 @@ function App() {
       labelForTarget: (target) => humanizeFieldPath(target),
       linkForSource: (sourceRef, context) => {
         if (context.candidate.role !== "proposed") return undefined;
-        const highlightElementId = candidateByItem.get(context.item.metadata.name)
-          ?? candidateByField.get(context.item.spec.target);
+        const highlightElementId = highlightByItem.get(context.item.metadata.name);
         if (!highlightElementId || !sourceRef) return undefined;
         const locator = context.candidate.locator?.locator;
         const name = readableRefName(sourceRef);
@@ -388,9 +406,9 @@ function App() {
       }
     } });
     mountReviewWorkbench(workbenchHost, state.review.snapshot as unknown as ReviewQueueSessionState, { eventStore: store, presentationAdapter });
-    const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates, recheck);
+    const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates, highlightByItem, recheck);
     return () => { disposeLinking(); disposeInspector(); workbenchHost.replaceChildren(); };
-  }, [state, inspectorModel, recheck]);
+  }, [state, inspectorModel, queueItems, recheck]);
   const sources = inspectorModel?.sources ?? [];
   const inspectorCount = inspectorModel?.candidates.length ?? 0;
   const singleSource = sources.length === 1 ? sources[0] : undefined;
