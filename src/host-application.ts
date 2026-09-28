@@ -4,6 +4,7 @@ import {
   type FieldworkLifecycleEventType,
   type FieldworkLifecycleEventV1,
   type FieldworkLifecycleListener,
+  type FieldworkReviewerIdentity,
   type OpenRunService,
   type ReviewedExportV1,
   type RunOptions,
@@ -19,6 +20,8 @@ export interface FieldworkApplicationOpenOptions {
   readonly port?: number;
   readonly presentation?: FieldworkHostPresentationV1;
   readonly embeddingOrigin?: string;
+  /** Host-vouched reviewer stamped on every decision this session accepts. */
+  readonly reviewer?: FieldworkReviewerIdentity;
 }
 export interface FieldworkApplicationOptions {
   readonly reviewedWebSourceOwner?: ReviewedWebSourceOwner;
@@ -84,6 +87,7 @@ export function createFieldworkApplication(options: FieldworkApplicationOptions 
         ...(options.port === undefined ? {} : { port: options.port }),
         ...(options.presentation === undefined ? {} : { presentation: options.presentation }),
         ...(options.embeddingOrigin === undefined ? {} : { embeddingOrigin: options.embeddingOrigin }),
+        ...(options.reviewer === undefined ? {} : { reviewer: options.reviewer }),
         onLifecycleEvent: forward,
       });
       const service: OpenRunService = {

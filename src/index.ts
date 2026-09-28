@@ -100,7 +100,7 @@ export type {
   FieldworkImageExtractedText, FieldworkPdfBoundingBox, FieldworkPdfExtractedText,
   FieldworkPdfLayout, FieldworkPdfPageGeometry, FieldworkPdfTable,
   FieldworkPdfTableCell, FieldworkPdfTextElement, FieldworkPdfTextRange,
-  FieldworkRunViewV1, FieldworkSourceAdapters, FieldworkTask,
+  FieldworkReviewerIdentity, FieldworkRunViewV1, FieldworkSourceAdapters, FieldworkTask,
   JsonObject, JsonPrimitive, JsonValue, OpenRunOptions, OpenRunService, PreparedArtifactViewV1,
   ReviewedExportV1, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
 } from "./api-contracts.js";

@@ -10,6 +10,8 @@ import { persistedReviewSnapshotSchema } from "../src/survey-persistence.js";
 import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { canonicalJson } from "../src/contracts.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+import { REVIEW_ATTRIBUTION_PRODUCER, UNATTRIBUTED_ACTOR_ID, withoutServerStamp } from "../src/review-attribution.js";
+import type { ReviewSessionEvent } from "@kontourai/survey";
 import { buildReviewSessionEvents, type ReviewQueueSessionState, type ReviewWorkbenchDecision } from "@kontourai/survey/review-workbench";
 import { lstat, mkdir, readFile, rmdir, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -108,10 +110,11 @@ test("consecutive decisions append without a spurious review conflict", async ()
     assert.equal((await submit(first, 0, 0)).ok, true);
 
     // The hazard this guards is real: the stored history is not byte-identical
-    // to what was posted, only content-identical.
-    const stored = (await view(server)).review.events;
+    // to what was posted, only content-identical once the server's actor and
+    // time stamp is set aside.
+    const stored = (await view(server)).review.events as unknown as ReviewSessionEvent[];
     assert.notEqual(JSON.stringify(stored), JSON.stringify(first));
-    assert.equal(canonicalJson(stored), canonicalJson(first));
+    assert.equal(canonicalJson(stored.map(withoutServerStamp)), canonicalJson(first.map(withoutServerStamp)));
 
     const second = await submit(eventsAfter(2), first.length, 1);
     assert.equal(second.ok, true, JSON.stringify(second));
@@ -202,9 +205,12 @@ test("two server instances and path aliases serialize one append-only winner", a
     assert.equal([left, right].filter((result) => result.ok).length, 1);
     assert.equal([left, right].filter((result) => !result.ok && result.error.code === "REVIEW_CONFLICT").length, 1);
     const stored = await view(leftServer);
-    const actors = new Set(stored.review.events.map((event) => event.spec.actor?.id).filter(Boolean));
-    assert.equal(actors.size, 1);
-    assert.ok(actors.has("left-reviewer") || actors.has("right-reviewer"));
+    // The winner's client-claimed actor is kept aside; the server's own stamp is the actor.
+    const claimed = new Set(stored.review.events.map((event) =>
+      (event.metadata.producer as Record<string, { clientClaimedActorId?: string }>)[REVIEW_ATTRIBUTION_PRODUCER]?.clientClaimedActorId));
+    assert.equal(claimed.size, 1);
+    assert.ok(claimed.has("left-reviewer") || claimed.has("right-reviewer"));
+    assert.deepEqual(new Set(stored.review.events.map((event) => event.spec.actor?.id)), new Set([UNATTRIBUTED_ACTOR_ID]));
   } finally { await Promise.all([leftServer.close(), rightServer.close()]); }
 });
 
