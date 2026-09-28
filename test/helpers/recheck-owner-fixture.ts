@@ -36,8 +36,19 @@ function modelResult(value: string) {
  * use Forage's injected Response transport at a generic HTTPS URL so today's
  * independent HTTP receipt rejection does not mask their failure sites.
  * Neither fixture changes a production policy or substitutes CheckResults.
+ *
+ * `distinctRepeats` gives every 200 response its own Last-Modified, so a
+ * same-byte response is still a new capture. Lookout 0.6 stops storing a
+ * capture that repeats the prior one exactly (same body and validators), so a
+ * test whose subject is an acquisition advance over unchanged bytes needs a
+ * validator that moves, as a real server's would.
  */
-export async function ownerFixture(t: TestContext, transport: "http" | "response" = "response", legacy = false) {
+export async function ownerFixture(
+  t: TestContext,
+  transport: "http" | "response" = "response",
+  legacy = false,
+  { distinctRepeats = false }: { readonly distinctRepeats?: boolean } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "fieldwork-recheck-owner-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   let mode: "same" | "304" | "changed" | "error" = "same";
@@ -47,7 +58,10 @@ export async function ownerFixture(t: TestContext, transport: "http" | "response
     const status = mode === "304" ? 304 : mode === "error" ? 503 : 200;
     requests.push({ validator: headers.get("if-none-match"), status });
     return new Response(status === 304 ? null : mode === "changed" ? "Status: Pending" : "Status: Active", {
-      status, headers: { "content-type": "text/plain; charset=utf-8", etag: mode === "changed" ? '"v2"' : '"v1"' },
+      status, headers: {
+        "content-type": "text/plain; charset=utf-8", etag: mode === "changed" ? '"v2"' : '"v1"',
+        ...(distinctRepeats && status === 200 ? { "last-modified": new Date(Date.UTC(2026, 7, 26, 9, 0, tick)).toUTCString() } : {}),
+      },
     });
   };
   let origin = "https://example.invalid";

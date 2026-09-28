@@ -55,6 +55,12 @@ export interface BuildReviewedEvidenceEnrichmentOptions {
   readonly isRecheckItem: (item: ReviewItem) => boolean;
   /** The already-computed canonical claim id a candidate's decision resolved onto. */
   readonly claimIdForCandidate: (candidateId: string) => string | undefined;
+  /**
+   * The claims this export states, from the canonical review projection. They
+   * set which claims the grounding policy requires and bind each claim's value
+   * to its reviewed candidate.
+   */
+  readonly claims: readonly { readonly id: string; readonly value: unknown }[];
 }
 
 /**
@@ -73,7 +79,7 @@ export interface BuildReviewedEvidenceEnrichmentOptions {
  * this is a whole-round decision, not a per-item one.
  */
 export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEnrichmentOptions): ReviewedEvidenceEnrichment {
-  const { imported, items, results, isRecheckItem, claimIdForCandidate } = options;
+  const { imported, items, results, isRecheckItem, claimIdForCandidate, claims } = options;
   if (items.some(isRecheckItem)) {
     return {
       additionalEvidence: [],
@@ -138,16 +144,37 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
   // defaults unchecked source states to "unknown", so "allowed" here means
   // locator/artifact/review/structure requirements passed — it says nothing
   // about whether the source has drifted since extraction.
+  //
+  // The required claims are the claims this export states, taken from the
+  // canonical projection rather than from the evidence just built: a claim
+  // whose reviewed evidence went missing then fails as
+  // `missing-reviewed-evidence` instead of silently dropping out of the policy.
+  const requiredClaimIds = [...new Set(claims.map((claim) => claim.id))];
+  // An empty requirement set certifies nothing. Surface 4 refuses it with a
+  // `no-required-claims` gap and earlier releases allowed it vacuously, so
+  // refuse the export here instead of depending on which Surface is installed.
+  // `projectAttestedReviewedProjection` already refuses a round with nothing
+  // exportable, so this is a guard, not a reachable export outcome.
+  if (requiredClaimIds.length === 0) {
+    throw Object.assign(
+      new Error("Export refused: this review round states no claims, so there is nothing to evaluate reviewed grounding over."),
+      { code: "EXPORT_NOT_PROJECTABLE" },
+    );
+  }
   const policy: ReviewedGroundingPolicy = {
     id: REVIEWED_GROUNDING_POLICY_ID,
     action: REVIEWED_GROUNDING_ACTION,
-    requiredClaimIds: [...new Set(additionalEvidence.map((evidence) => evidence.claimId))],
+    requiredClaimIds,
     requireExactLocator: true,
     requirePreparedArtifact: true,
     requireAcceptedReview: true,
     requireValidatedStructure: true,
   };
-  const decision = evaluateReviewedGroundingPolicy({ policy, evidence: additionalEvidence });
+  // Surface 4 binds each claim's value to its reviewed candidate and refuses a
+  // call without `claims`; Surface 3 ignores the field. Passed through a
+  // variable so the call compiles against both declarations.
+  const input = { policy, evidence: additionalEvidence, claims };
+  const decision = evaluateReviewedGroundingPolicy(input);
 
   return {
     additionalEvidence,

@@ -246,7 +246,10 @@ export async function reviewedExport(
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = {
-    ...withReviewedGroundingEvidence(bundle, projection.enrichment),
+    apiVersion: "fieldwork.kontourai.io/v1",
+    kind: "ReviewedExport",
+    bundle: withReviewedGroundingEvidence(bundle, projection.enrichment),
+    reviewedGrounding: projection.enrichment.grounding,
     reviewRound: reviewRoundScope(stored, projection),
   };
   assertPortableOutput(output);
@@ -419,6 +422,7 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
     imported, items, results,
     isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
     claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
+    claims: canonical.surveyInput.claims.map((claim) => ({ id: claim.id, value: claim.value })),
   });
   const attribution = results.map((result) => {
     const entry = attributed.attribution.find((candidate) => candidate.reviewItemName === result.reviewItemName);
@@ -564,23 +568,26 @@ function nothingExportable(excluded: readonly ReviewedExportExclusion[], errors:
 
 /**
  * Enrich a validated trust bundle with surface's reviewed-extraction-evidence
- * projection and reviewed-grounding-policy evaluation (kontourai/fieldwork#88,
- * first consumer of the surface 2.13 contract). New evidence is prepended
+ * projection (kontourai/fieldwork#88, first consumer of the surface 2.13
+ * contract). New evidence is prepended
  * ahead of the bundle's own evidence so a caller reading "the" evidence per
  * claim by last-write-wins (as Survey's own citation evidence has always been
  * read) keeps seeing Survey's original entry; the new profile-tagged entry is
  * additive and is found by its own `metadata.reviewedExtraction` marker.
  * Re-running `validateTrustBundle` over the enriched bundle proves surface
  * still accepts it as a well-formed TrustBundle.
+ *
+ * The grounding evaluation is not added to the bundle: `reviewedExport`
+ * carries it beside the bundle (kontourai/fieldwork#155), so the bundle stays
+ * valid under a Surface that rejects unknown top-level keys.
  */
 function withReviewedGroundingEvidence(
   bundle: ReturnType<typeof validateTrustBundle>,
   enrichment: ReturnType<typeof buildReviewedEvidenceEnrichment>,
-): Record<string, unknown> {
-  const enrichedBundle = enrichment.additionalEvidence.length === 0
+): ReturnType<typeof validateTrustBundle> {
+  return enrichment.additionalEvidence.length === 0
     ? bundle
     : validateTrustBundle({ ...bundle, evidence: [...enrichment.additionalEvidence, ...bundle.evidence] });
-  return { ...enrichedBundle, reviewedGrounding: enrichment.grounding };
 }
 
 /**

@@ -289,12 +289,12 @@ test("a complete runtime-bound run still exports allowed grounding over every fi
 
   await acceptEveryItem(result.runDirectory);
   const exported = await reviewedExport(result.runDirectory) as unknown as {
-    claims: { fieldOrBehavior: string; status: string }[];
+    bundle: { claims: { fieldOrBehavior: string; status: string }[] };
     reviewedGrounding: { outcome: string };
   };
   assert.equal(exported.reviewedGrounding.outcome, "allowed");
   assert.deepEqual(
-    exported.claims.map((claim) => [claim.fieldOrBehavior, claim.status]).sort(),
+    exported.bundle.claims.map((claim) => [claim.fieldOrBehavior, claim.status]).sort(),
     markers.map((marker) => [marker.fieldPath, "verified"]),
   );
 });

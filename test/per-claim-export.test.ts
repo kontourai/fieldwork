@@ -20,7 +20,7 @@ const exec = promisify(execFile);
  */
 
 interface ExportedBundle {
-  claims: { fieldOrBehavior: string; value: unknown; status: string }[];
+  bundle: { claims: { fieldOrBehavior: string; value: unknown; status: string }[] };
   reviewRound: {
     kind: string;
     revision: number;
@@ -39,7 +39,7 @@ test("seven items over six fields with one conflicting field export five claims 
   await decide(run, Object.fromEntries(items.map((item) => [item.name, "accept-proposed"])));
 
   const exported = await reviewedExport(run) as unknown as ExportedBundle;
-  assert.deepEqual(exported.claims.map((claim) => [claim.fieldOrBehavior, claim.status]).sort(),
+  assert.deepEqual(exported.bundle.claims.map((claim) => [claim.fieldOrBehavior, claim.status]).sort(),
     fields.map((field) => [`record.${field}`, "verified"]));
   const status = items.filter((item) => item.fieldPath === "record.status").map((item) => item.name).sort();
   assert.equal(status.length, 2);
@@ -49,7 +49,7 @@ test("seven items over six fields with one conflicting field export five claims 
   assert.equal(exported.reviewRound.complete, false);
   assert.equal(exported.reviewRound.revision, 1);
   assert.equal(exported.reviewRound.decisions.length, 5);
-  assert.doesNotMatch(JSON.stringify(exported.claims), /Active|Paused/);
+  assert.doesNotMatch(JSON.stringify(exported.bundle.claims), /Active|Paused/);
 });
 
 test("an undecided item is listed as EXPORT_UNDECIDED and never becomes a claim, while the others export", async () => {
@@ -63,8 +63,8 @@ test("an undecided item is listed as EXPORT_UNDECIDED and never becomes a claim,
 
   const exported = await reviewedExport(run) as unknown as ExportedBundle;
   assert.deepEqual(exported.reviewRound.excluded, [{ fieldPath: "record.echo", itemNames: [left.name], code: "EXPORT_UNDECIDED" }]);
-  assert.equal(exported.claims.some((claim) => claim.fieldOrBehavior === "record.echo"), false);
-  assert.equal(exported.claims.length, 6);
+  assert.equal(exported.bundle.claims.some((claim) => claim.fieldOrBehavior === "record.echo"), false);
+  assert.equal(exported.bundle.claims.length, 6);
   assert.equal(exported.reviewRound.complete, false);
 });
 
@@ -76,8 +76,8 @@ test("a field with a decided item and an undecided sibling exports no value for 
   await decide(run, Object.fromEntries(items.filter((item) => item !== paused).map((item) => [item.name, "accept-proposed"])));
 
   const exported = await reviewedExport(run) as unknown as ExportedBundle;
-  assert.equal(exported.claims.some((claim) => claim.fieldOrBehavior === "record.status"), false);
-  assert.equal(exported.claims.length, 5);
+  assert.equal(exported.bundle.claims.some((claim) => claim.fieldOrBehavior === "record.status"), false);
+  assert.equal(exported.bundle.claims.length, 5);
   assert.deepEqual(exported.reviewRound.excluded, [
     { fieldPath: "record.status", itemNames: [paused.name], code: "EXPORT_UNDECIDED" },
     { fieldPath: "record.status", itemNames: [active.name], code: "EXPORT_FIELD_UNSETTLED" },
@@ -90,7 +90,7 @@ test("excluded is empty and the export complete exactly when every item exported
   const items = await queue(run);
   await decide(run, Object.fromEntries(items.map((item) => [item.name, item.value === "Paused" ? "reject-proposed" : "accept-proposed"])));
   const exported = await reviewedExport(run) as unknown as ExportedBundle;
-  assert.equal(exported.claims.length, items.length);
+  assert.equal(exported.bundle.claims.length, items.length);
   assert.deepEqual(exported.reviewRound.excluded, []);
   assert.equal(exported.reviewRound.complete, true);
 });
@@ -110,7 +110,7 @@ test("the CLI writes a partial export but reports what it left out and exits non
       return true;
     },
   );
-  assert.equal((JSON.parse(await readFile(outputPath, "utf8")) as ExportedBundle).claims.length, 5);
+  assert.equal((JSON.parse(await readFile(outputPath, "utf8")) as ExportedBundle).bundle.claims.length, 5);
 });
 
 async function sixFieldRun(label: string): Promise<string> {

@@ -24,8 +24,10 @@ import { apiFetch, tempRoot } from "./helpers.js";
  */
 
 interface ExportedBundle {
-  claims: { id: string; updatedAt: string; fieldOrBehavior: string }[];
-  events: { claimId: string; actor?: string; verifiedAt?: string }[];
+  bundle: {
+    claims: { id: string; updatedAt: string; fieldOrBehavior: string }[];
+    events: { claimId: string; actor?: string; verifiedAt?: string }[];
+  };
   reviewRound: {
     decisions: { reviewItemName: string; claimId: string; actor: { id: string; kind: string }; decidedAt: string; mode?: string }[];
   };
@@ -45,9 +47,9 @@ test("a decision posted through the API exports under the configured reviewer at
   assert.equal(decision.metadata.producer[REVIEW_ATTRIBUTION_PRODUCER]?.clientClaimedActorId, "mallory");
 
   const exported = await reviewedExport(run.runDirectory) as unknown as ExportedBundle;
-  assert.equal(exported.claims.length, 1);
-  const [claim] = exported.claims;
-  const [verified] = exported.events.filter((event) => event.claimId === claim!.id);
+  assert.equal(exported.bundle.claims.length, 1);
+  const [claim] = exported.bundle.claims;
+  const [verified] = exported.bundle.events.filter((event) => event.claimId === claim!.id);
   assert.equal(verified!.actor, "alice");
   assert.ok(Date.parse(verified!.verifiedAt!) > Date.parse(createdAt), `${verified!.verifiedAt} must be after ${createdAt}`);
   assert.equal(claim!.updatedAt, verified!.verifiedAt);
@@ -83,7 +85,7 @@ test("without a configured reviewer the actor kind is unattributed, never the sy
   assert.deepEqual(exported.reviewRound.decisions.map(({ actor, mode }) => ({ actor, mode })), [
     { actor: { id: UNATTRIBUTED_ACTOR_ID, kind: "unattributed" }, mode: "individual" },
   ]);
-  assert.deepEqual(exported.events.map((event) => event.actor), [UNATTRIBUTED_ACTOR_ID]);
+  assert.deepEqual(exported.bundle.events.map((event) => event.actor), [UNATTRIBUTED_ACTOR_ID]);
   assert.doesNotMatch(JSON.stringify(exported), /review-workbench-operator|2026-06-04/);
 });
 

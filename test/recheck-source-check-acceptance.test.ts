@@ -42,7 +42,7 @@ function recoveryFailure(error: unknown, code = "RECHECK_OBSERVATION_FAILED") {
 }
 
 test("real guarded HTTP fixture proves 200 A -> same-byte B -> conditional304 B -> same-byte C -> changed D", async (t) => {
-  const f = await ownerFixture(t, "http");
+  const f = await ownerFixture(t, "http", false, { distinctRepeats: true });
   const refs = [f.initialRef];
   for (const [mode, kind] of [["same", "unchanged-hash"], ["304", "unchanged-304"], ["same", "unchanged-hash"], ["changed", "changed"]] as const) {
     f.setMode(mode);
@@ -230,7 +230,7 @@ test("an actual owner error remains a failed acquisition, not a fabricated succe
 });
 
 test("an external acquisition advance while the check result is deferred cannot publish currentness", async (t) => {
-  const f = await ownerFixture(t);
+  const f = await ownerFixture(t, "response", false, { distinctRepeats: true });
   await assert.rejects(recheckFieldwork({ ...f.options, acquisition: { async check() {
     const requested = await f.check();
     // A distinct public acquisition writer advances B to C before the older

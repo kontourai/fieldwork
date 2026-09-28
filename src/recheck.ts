@@ -10,7 +10,6 @@ import {
   type LookoutSource,
   type CheckResult,
   type SemanticReviewChange,
-  type StoredProposalObservationV1,
 } from "@kontourai/lookout";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
 import { buildSnapshotSourceRef, resolveSnapshotSourceRef } from "@kontourai/forage/fetch";
@@ -527,7 +526,11 @@ export async function recheckFieldwork(
 }
 
 type ObservationStore = ReturnType<typeof createObservationStore>;
-type StoredObservation = StoredProposalObservationV1;
+// Whatever record version the store returns: Lookout 0.6 writes version 2
+// records and reads either version.
+type StoredObservation = NonNullable<
+  Extract<Awaited<ReturnType<ObservationStore["loadLatest"]>>, { ok: true }>["value"]
+>;
 
 function receiptCompletion(
   outcome:

@@ -165,7 +165,7 @@ test("owner-head currentness projects old reviewed evidence through Surface with
   const descriptor = await app.describeReviewedWebSource(refs.refs[0]!);
   assert.equal(descriptor.status, "available");
   assert.ok(descriptor.status === "available");
-  const exported = await app.reviewedOutput(f.prior.runDirectory) as { evidence: any[] };
+  const exported = (await app.reviewedOutput(f.prior.runDirectory)).bundle as { evidence: any[] };
   const evidence = exported.evidence.find((entry) => entry.id === result.evidenceId);
   assert.ok(evidence);
   assert.equal(buildReviewedExtractionSourceState(evidence, result.sourceObservation as any, result.checkedAt).status, "current");
@@ -229,7 +229,7 @@ test("published filesystem owners preserve an accepted A review while HTTP B/304
   // This is deliberately one continuous owner journey.  It uses the published
   // Forage 0.7.0 and Lookout 0.5.2 filesystem owners behind the real guarded
   // HTTP fixture, not a fabricated CheckResult or an in-memory head.
-  const f = await ownerFixture(t, "http");
+  const f = await ownerFixture(t, "http", false, { distinctRepeats: true });
   const acceptedP = await f.establishProposal();
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   assert.equal(manifest.dependencies["@kontourai/forage"], "0.7.0");
@@ -260,7 +260,7 @@ test("published filesystem owners preserve an accepted A review while HTTP B/304
   assert.equal(before.status, "available");
   assert.ok(before.status === "available");
   const oldEnvelope = await readFile(join(f.prior.runDirectory, "extraction-envelope.json"), "utf8");
-  const exported = await app.reviewedOutput(f.prior.runDirectory) as { evidence: any[] };
+  const exported = (await app.reviewedOutput(f.prior.runDirectory)).bundle as { evidence: any[] };
   const oldEvidence = exported.evidence.find((entry) => entry.id === before.evidence.id);
   assert.ok(oldEvidence, "the historical Surface evidence is the comparison expectation");
 

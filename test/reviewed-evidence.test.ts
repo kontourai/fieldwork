@@ -21,7 +21,9 @@ import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import type { LookoutSource, CheckResult } from "@kontourai/lookout";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
-import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
+import { projectAttestedReviewedProjection, reviewedExport, runFieldwork, SEMANTIC_TRANSITION_PRODUCER } from "../src/fieldwork.js";
+import { buildReviewedEvidenceEnrichment } from "../src/reviewed-evidence.js";
+import { readRunMetadata } from "../src/run-store.js";
 import { recheckFieldwork } from "../src/recheck.js";
 import { openRun } from "../src/server.js";
 import { apiFetch, tempRoot } from "./helpers.js";
@@ -38,6 +40,9 @@ interface ExportedBundle {
   readonly source: string;
   readonly claims: readonly { readonly id: string; readonly fieldOrBehavior: string }[];
   readonly evidence: readonly ExportedEvidence[];
+}
+interface ExportedReview {
+  readonly bundle: ExportedBundle;
   readonly reviewedGrounding: Record<string, unknown> & { readonly outcome: string };
 }
 
@@ -90,10 +95,11 @@ test("a policy-satisfying first-round export projects reviewed evidence and an a
     root: await tempRoot("reviewed-evidence-allowed"),
   });
   await acceptAll(run.runDirectory);
-  const bundle = await reviewedExport(run.runDirectory) as unknown as ExportedBundle;
+  const exported = await reviewedExport(run.runDirectory) as unknown as ExportedReview;
+  const { bundle } = exported;
 
-  assert.equal(bundle.reviewedGrounding.outcome, "allowed");
-  assert.deepEqual((bundle.reviewedGrounding as { gaps: unknown[] }).gaps, []);
+  assert.equal(exported.reviewedGrounding.outcome, "allowed");
+  assert.deepEqual((exported.reviewedGrounding as { gaps: unknown[] }).gaps, []);
 
   const reviewed = reviewedEvidenceOf(bundle);
   assert.equal(reviewed.length, bundle.claims.length, "one reviewed-extraction-evidence entry per exported claim");
@@ -121,11 +127,14 @@ test("a policy-satisfying first-round export projects reviewed evidence and an a
     assert.equal(restored.structuralTrust, "validated");
   }
 
-  // Backward compat (c): the core TrustBundle shape (everything but fieldwork's
-  // own `reviewedGrounding` extension) must still validate as a standalone
-  // TrustBundle on its own, unmodified from what a pre-#88 consumer expected.
-  const { reviewedGrounding: _reviewedGrounding, ...coreBundle } = bundle as unknown as Record<string, unknown>;
-  assert.doesNotThrow(() => validateTrustBundle(coreBundle));
+  // kontourai/fieldwork#155: the exported bundle is a trust bundle on its own,
+  // with the grounding evaluation beside it. Surface 4 throws on an unknown
+  // top-level key; Surface 3 drops it from what it returns, so comparing key
+  // sets rejects an unknown key under either release.
+  assert.equal("reviewedGrounding" in bundle, false);
+  assert.equal("reviewRound" in bundle, false);
+  const validated = validateTrustBundle(bundle);
+  assert.deepEqual(Object.keys(bundle).sort(), Object.keys(validated).sort());
 });
 
 test("a rejected decision's export carries a typed grounding refusal, not a fabricated pass", async () => {
@@ -135,10 +144,11 @@ test("a rejected decision's export carries a typed grounding refusal, not a fabr
     root: await tempRoot("reviewed-evidence-refused"),
   });
   await decideMixed(run.runDirectory, true);
-  const bundle = await reviewedExport(run.runDirectory) as unknown as ExportedBundle;
+  const exported = await reviewedExport(run.runDirectory) as unknown as ExportedReview;
+  const { bundle } = exported;
 
-  assert.equal(bundle.reviewedGrounding.outcome, "refused");
-  const gaps = (bundle.reviewedGrounding as { gaps: Array<{ kind: string; claimId: string }> }).gaps;
+  assert.equal(exported.reviewedGrounding.outcome, "refused");
+  const gaps = (exported.reviewedGrounding as { gaps: Array<{ kind: string; claimId: string }> }).gaps;
   assert.ok(gaps.length > 0, "a refused evaluation must disclose at least one typed gap");
   assert.ok(gaps.some((gap) => gap.kind === "review-not-accepted"));
   assert.ok(gaps.some((gap) => gap.kind === "evidence-not-entailing"));
@@ -199,11 +209,73 @@ test("a recheck round's grounding is reported not-evaluated, never fabricated as
   });
   assert.ok(recheck.run, "recheck must produce a decidable round");
   await acceptAll(recheck.run!.runDirectory);
-  const bundle = await reviewedExport(recheck.run!.runDirectory) as unknown as ExportedBundle;
+  const exported = await reviewedExport(recheck.run!.runDirectory) as unknown as ExportedReview;
+  const { bundle } = exported;
 
-  assert.equal(bundle.reviewedGrounding.outcome, "not-evaluated");
-  assert.equal((bundle.reviewedGrounding as { reason: string }).reason, "unsupported-review-shape");
+  assert.equal(exported.reviewedGrounding.outcome, "not-evaluated");
+  assert.equal((exported.reviewedGrounding as { reason: string }).reason, "unsupported-review-shape");
   assert.equal(reviewedEvidenceOf(bundle).length, 0, "no reviewed-extraction evidence is fabricated for an unsupported shape");
   // Survey's own (pre-#88) evidence for the recheck round is untouched.
   assert.ok(bundle.evidence.length > 0);
+});
+
+/**
+ * Rebuild the enrichment for a decided first round with the claims an export
+ * would state, optionally changed, so the grounding policy's required claims
+ * can be checked against evidence the claims did not come from.
+ */
+async function enrichmentWithClaims(
+  runDirectory: string,
+  claims: (stated: readonly { id: string; value: unknown }[]) => readonly { id: string; value: unknown }[],
+) {
+  const projection = projectAttestedReviewedProjection(await readRunMetadata(runDirectory));
+  const stated = projection.canonical.surveyInput.claims.map((claim) => ({ id: claim.id, value: claim.value }));
+  const claimIdByCandidateId = new Map(
+    projection.canonical.surveyInput.claims.flatMap((claim) => claim.candidateId === undefined ? [] : [[claim.candidateId, claim.id] as const]),
+  );
+  return buildReviewedEvidenceEnrichment({
+    imported: projection.imported,
+    items: projection.items,
+    results: projection.results,
+    isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
+    claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
+    claims: claims(stated),
+  });
+}
+
+test("grounding requires every stated claim, so a claim with no reviewed evidence is a typed refusal", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("reviewed-evidence-required-claims"),
+  });
+  await acceptAll(run.runDirectory);
+  const stated = await enrichmentWithClaims(run.runDirectory, (claims) => claims);
+  assert.equal(stated.grounding.outcome, "allowed");
+
+  // A claim the export states but no reviewed evidence covers. Deriving the
+  // required claims from the evidence would never require it.
+  const orphan = await enrichmentWithClaims(run.runDirectory, (claims) => [...claims, { id: "claim.orphan", value: "x" }]);
+  assert.equal(orphan.grounding.outcome, "refused");
+  const gaps = (orphan.grounding as { gaps: { kind: string; claimId?: string }[] }).gaps;
+  assert.deepEqual(gaps.filter((gap) => gap.claimId === "claim.orphan").map((gap) => gap.kind), ["missing-reviewed-evidence"]);
+});
+
+test("an export that states no claims is refused before grounding is evaluated, whatever Surface would decide", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("reviewed-evidence-no-claims"),
+  });
+  await acceptAll(run.runDirectory);
+  // Surface 3 allowed an empty requirement set and Surface 4 refuses it with
+  // `no-required-claims`; neither may become this export's receipt.
+  await assert.rejects(
+    () => enrichmentWithClaims(run.runDirectory, () => []),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "EXPORT_NOT_PROJECTABLE");
+      assert.match(error.message, /states no claims/);
+      return true;
+    },
+  );
 });
