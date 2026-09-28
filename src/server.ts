@@ -17,7 +17,10 @@ import {
   type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
-import { FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionRecord } from "./fieldwork.js";
+import {
+  extractionCoverageSummary, FIELDWORK_SOURCE_KIND, importNameFor, reviewQueueFromOlderFieldwork, reviewSessionRecord,
+  RUN_FROM_OLDER_FIELDWORK_MESSAGE,
+} from "./fieldwork.js";
 import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
 
 const reviewRequestSchema = z.object({
@@ -201,10 +204,15 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
   const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
   const apply = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
   const snapshot = stored.run.review.snapshot;
+  const coverage = extractionCoverageSummary(stored.envelope);
   return parseFieldworkRunView({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunView", ok: true,
     run: { resource: stored.run.runResource, revision: stored.run.review.revision },
     inspector,
+    extraction: { outcome: stored.envelope.result.outcome, ...(coverage === undefined ? {} : { coverage }) },
+    ...(reviewQueueFromOlderFieldwork(snapshot.items) ? {
+      reviewBlocked: { reason: "created-by-older-fieldwork", message: RUN_FROM_OLDER_FIELDWORK_MESSAGE },
+    } : {}),
     review: {
       snapshot,
       items: imported.reviewItems,
@@ -218,6 +226,10 @@ async function submit(directory: string, input: unknown, reviewer: FieldworkRevi
   const parsed = reviewRequestSchema.safeParse(input);
   if (!parsed.success) return failure("INVALID_REVIEW", "Bounded Survey events, event count, and revision are required");
   return withRunReviewLock(directory, async (stored) => {
+    // Decisions on a queue that can never be exported would be recorded for nothing.
+    if (reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items)) {
+      return failure("RUN_FROM_OLDER_FIELDWORK", RUN_FROM_OLDER_FIELDWORK_MESSAGE);
+    }
     const { events, expectedEventCount, expectedRevision } = parsed.data;
     // The append-only check compares CONTENT, not key order. The submitted
     // prefix and the persisted history describe the same events but are

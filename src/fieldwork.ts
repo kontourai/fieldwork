@@ -523,7 +523,7 @@ export interface ReviewedExportExclusion {
  * that cannot, per claim target rather than per round. The checks and their
  * messages are the ones that used to refuse the whole round.
  */
-function partitionExportableClaims(
+export function partitionExportableClaims(
   runResource: string,
   queue: readonly ReviewItem[],
   decided: readonly ReviewWorkbenchResult[],
@@ -704,6 +704,7 @@ function assertReviewedQueueIsAttested(
     throw unattested("the queue mixes imported extraction items with recheck-round items, so neither set can attest it");
   }
   if (recheckItems.length === 0) {
+    if (reviewQueueFromOlderFieldwork(items)) throw runFromOlderFieldwork();
     try {
       assertReviewQueueAgainstExtractionImport(items, imported);
     } catch (cause) {
@@ -719,6 +720,45 @@ function assertReviewedQueueIsAttested(
     proposalsByField.set(proposal.fieldPath, [...proposalsByField.get(proposal.fieldPath) ?? [], proposal]);
   }
   for (const item of recheckItems) assertRecheckItemIsAttested(item, proposalsByField);
+}
+
+const SURVEY_EXTRACTION_ENVELOPE_PRODUCER = "survey.kontourai.io/extraction-envelope";
+
+/**
+ * Whether a first round's queue was built by a Fieldwork release that predates
+ * Survey 5's one-item-per-claim grouping. Survey 5 names each envelope item
+ * after its claim slot and records the proposals it stands for as
+ * `proposalIndices`; earlier items carry neither, so their names can never
+ * match what Survey derives now and the run cannot be exported. Read off the
+ * items Survey itself wrote, not off a stored label. A recheck round's items are
+ * Lookout's and are attested separately, so they are never "older".
+ */
+export function reviewQueueFromOlderFieldwork(items: readonly ReviewItem[]): boolean {
+  const imported = items.filter((item) => !item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]);
+  return imported.length > 0 && imported.every((item) => {
+    const producer = item.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndices?: unknown } | undefined;
+    return !Array.isArray(producer?.proposalIndices);
+  });
+}
+
+/**
+ * How many prepared-text chunks Traverse recorded, and how many of them were
+ * not read and answered in full. Traverse emits coverage only on a partial
+ * outcome, so this is undefined for a run that read everything.
+ */
+export function extractionCoverageSummary(envelope: PortableExtractionResultEnvelope): { chunkCount: number; incompleteChunkCount: number } | undefined {
+  const { coverage } = envelope.result;
+  if (coverage === undefined || coverage.length === 0) return undefined;
+  const chunks = new Set(coverage.map((entry) => entry.chunk));
+  const incomplete = new Set(coverage.filter((entry) => entry.status !== "complete").map((entry) => entry.chunk));
+  return { chunkCount: chunks.size, incompleteChunkCount: incomplete.size };
+}
+
+export const RUN_FROM_OLDER_FIELDWORK_MESSAGE = "This run was created by an older Fieldwork, whose review queue the current "
+  + "release cannot export. Its decisions cannot become a reviewed export; re-run the source to review it again.";
+
+function runFromOlderFieldwork(): Error {
+  return Object.assign(new Error(`Export refused: ${RUN_FROM_OLDER_FIELDWORK_MESSAGE}`), { code: "EXPORT_RUN_FROM_OLDER_FIELDWORK" });
 }
 
 /**

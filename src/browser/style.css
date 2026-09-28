@@ -307,6 +307,21 @@ body { margin: 0; overflow-x: hidden; }
 .fieldwork-recheck-lede { font-size: .86rem; font-weight: 650; line-height: 1.35; }
 .fieldwork-recheck-when { margin-top: .2rem; color: var(--k-text-muted); font-size: .72rem; line-height: 1.45; }
 
+/* An extraction that stopped short, or a run whose review cannot be exported.
+   Caution, not error: the run is real and still inspectable. */
+.fieldwork-notice {
+  margin-block: .9rem 0;
+  padding: .55rem .7rem;
+  border: 1px solid color-mix(in srgb, var(--k-caution) 45%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--k-radius-sm);
+  background: var(--k-caution-soft);
+}
+.fieldwork-notice p { margin: 0; }
+.fieldwork-notice-lede { font-size: .86rem; font-weight: 650; line-height: 1.35; color: var(--k-caution); }
+.fieldwork-notice-detail { margin-top: .2rem; color: var(--k-text-muted); font-size: .76rem; line-height: 1.45; }
+.fieldwork-empty-queue { margin: .4rem 0; color: var(--k-text-muted); font-size: .86rem; line-height: 1.45; }
+
 /* The two spans that moved have to be findable among the five that did not.
    Only a recheck round dims anything: on a first round every span is news. */
 .fieldwork-shell.fw-recheck .survey-workbench-embed .inspector-source mark:not([data-fw-changed]) {

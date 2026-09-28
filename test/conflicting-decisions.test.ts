@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
+import {
+  buildReviewSessionEvents, buildReviewWorkbenchResultsFromSession, type ReviewQueueSessionState,
+} from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
-import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
+import { partitionExportableClaims, reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { openRun } from "../src/server.js";
 import { apiFetch, tempRoot } from "./helpers.js";
 
@@ -67,6 +69,29 @@ test("could-not-confirm on a conflict exports one disputed claim with no value",
   assert.notEqual(exported.reviewedGrounding.outcome, "allowed");
 });
 
+test("a decision that selects no candidate is never checked as if it had selected the first one", async () => {
+  // The exported claim is Survey's projection, so `value: null` alone cannot
+  // show which candidate Fieldwork's own checks treated as selected. Make the
+  // first candidate one that cites no span: a check that fell back to it would
+  // exclude the claim as an ungrounded selection.
+  const run = await twoValueRun("no-fallback");
+  const snapshot = await queueSnapshot(run);
+  const [conflict] = snapshot.items;
+  const first = conflict!.spec.candidates[0]!;
+  const { locator: _locator, ...uncited } = first;
+  const items = [{ ...conflict!, spec: { ...conflict!.spec, candidates: [uncited, ...conflict!.spec.candidates.slice(1)] } }];
+  for (const decision of ["reject-proposed", "could-not-confirm"]) {
+    const results = buildReviewWorkbenchResultsFromSession({
+      ...snapshot, items, decisionsByItemName: { [conflict!.metadata.name]: decision },
+      notesByItemName: { [conflict!.metadata.name]: "Neither value can be confirmed." },
+    } as Parameters<typeof buildReviewWorkbenchResultsFromSession>[0]);
+    assert.equal(results[0]!.selectedCandidateId, undefined, decision);
+    const partition = partitionExportableClaims("fieldwork-run:v1:generic-record:0000000000000000", items, results);
+    assert.equal(partition.excluded.some((entry) => entry.code === "EXPORT_UNGROUNDED_SELECTION"), false,
+      `${decision}: ${JSON.stringify(partition.excluded)}`);
+  }
+});
+
 test("accepting a value of a conflict set cannot be recorded, so nothing reads as verified", async () => {
   const run = await twoValueRun("accept");
   await assert.rejects(() => decideTheConflict(run, "accept-proposed"), /cannot choose between them/);
@@ -95,10 +120,14 @@ async function twoValueRun(label: string): Promise<string> {
 }
 
 async function queue(runDirectory: string): Promise<ReviewQueueSessionState["items"]> {
+  return (await queueSnapshot(runDirectory)).items;
+}
+
+async function queueSnapshot(runDirectory: string): Promise<ReviewQueueSessionState> {
   const server = await openRun(runDirectory);
   try {
     const view = await apiFetch(server, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
-    return (view.review.snapshot as unknown as ReviewQueueSessionState).items;
+    return view.review.snapshot as unknown as ReviewQueueSessionState;
   } finally { await server.close(); }
 }
 

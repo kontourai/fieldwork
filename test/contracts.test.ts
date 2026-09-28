@@ -13,6 +13,7 @@ const runView = {
   ok: true,
   run: { resource: "fieldwork-run:v1:generic:0123456789abcdef", revision: 0 },
   inspector: { sources: [], candidates: [] },
+  extraction: { outcome: { status: "success" } },
   review: { snapshot: { items: [] }, items: [], events: [], apply: { ok: true, results: [] } }
 };
 
@@ -34,8 +35,17 @@ test("Fieldwork response schemas validate the complete advertised JSON transport
     { ...runView, review: { ...runView.review, snapshot: [] } },
     { ...runView, review: { ...runView.review, events: ["not-an-object"] } },
     { ...runView, review: { ...runView.review, apply: null } },
-    { ...runView, unexpected: true }
+    { ...runView, unexpected: true },
+    // A view that does not say what its extraction covered cannot be rendered honestly.
+    { ...runView, extraction: undefined },
+    { ...runView, extraction: { outcome: { status: "partial", reason: "provider-failure" }, coverage: { chunkCount: 2, incompleteChunkCount: 3 } } },
+    { ...runView, reviewBlocked: { reason: "tampered", message: "x" } },
   ]) assert.equal(fieldworkRunViewSchema.safeParse(malformed).success, false);
+  assert.equal(fieldworkRunViewSchema.safeParse({
+    ...runView,
+    extraction: { outcome: { status: "partial", reason: "provider-failure" }, coverage: { chunkCount: 2, incompleteChunkCount: 1 } },
+    reviewBlocked: { reason: "created-by-older-fieldwork", message: "Re-run the source." },
+  }).success, true);
 
   assert.equal(reviewMutationResponseSchema.safeParse({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewMutationResult", ok: true,

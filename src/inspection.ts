@@ -4,7 +4,9 @@ import {
   importExtractionEnvelope,
 } from "@kontourai/survey";
 import { canonicalJson } from "./contracts.js";
-import { FIELDWORK_SOURCE_KIND, importNameFor } from "./fieldwork.js";
+import {
+  FIELDWORK_SOURCE_KIND, importNameFor, reviewQueueFromOlderFieldwork, RUN_FROM_OLDER_FIELDWORK_MESSAGE,
+} from "./fieldwork.js";
 import { assertPortableOutput, readRun } from "./run-store.js";
 
 export interface FieldworkInspectionExportOptions {
@@ -60,6 +62,10 @@ export async function inspectionExport(
         // emits it only on a partial outcome; it holds offsets, never text.
         ...(stored.envelope.result.coverage === undefined ? {} : { coverage: stored.envelope.result.coverage }),
       },
+      // The extraction still inspects, but its review can never be exported.
+      ...(reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items) ? {
+        reviewBlocked: { reason: "created-by-older-fieldwork", message: RUN_FROM_OLDER_FIELDWORK_MESSAGE },
+      } : {}),
     },
   };
   assertPortableOutput(withExtractionOutcome);
