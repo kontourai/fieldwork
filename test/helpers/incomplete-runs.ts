@@ -21,6 +21,22 @@ export async function partialRunWithProposals(label: string): Promise<string> {
   return run.runDirectory;
 }
 
+/**
+ * A three-chunk run whose first answer is complete and whose other two stop at
+ * the output cap: coverage [complete, output-truncated, output-truncated].
+ * Nothing is unread, but two chunks' answers may be missing values.
+ */
+export async function outputTruncatedRun(label: string): Promise<string> {
+  const root = await tempRoot(`output-truncated-${label}`);
+  const sourcePath = join(root, "source.txt");
+  await writeFile(sourcePath, `Status: Active\n${"filler line of text.\n".repeat(1_300)}`);
+  const run = await runFieldwork({
+    taskPath: TASK, sourcePath, root,
+    runtime: statusOnlyRuntime({ withoutStatus: "output-truncated" }),
+  });
+  return run.runDirectory;
+}
+
 /** A run cancelled before any provider call: Traverse's `cancelled` partial outcome with nothing proposed. */
 export async function zeroProposalPartialRun(label: string): Promise<string> {
   const root = await tempRoot(`zero-proposal-${label}`);
@@ -33,7 +49,8 @@ export async function zeroProposalPartialRun(label: string): Promise<string> {
 }
 
 /**
- * A first-round run whose queue has the shape a release before Survey 5 wrote:
+ * A first-round run whose queue has the shape earlier Fieldwork releases wrote
+ * (Survey 3 or older; Survey 5 introduced one item per claim slot):
  * item metadata without `proposalIndices`. The queue is re-bound with the same
  * digest rule the run store checks, so only the queue's age is wrong.
  */
@@ -53,7 +70,12 @@ export async function runFromOlderFieldwork(label: string): Promise<string> {
   return run.runDirectory;
 }
 
-function statusOnlyRuntime(): FieldworkRuntimeBinding {
+/**
+ * Proposes the status its chunk states. A chunk that states none fails at the
+ * provider, or, with `withoutStatus: "output-truncated"`, answers with no
+ * proposals and stops at the output cap.
+ */
+function statusOnlyRuntime(options: { withoutStatus?: "provider-failure" | "output-truncated" } = {}): FieldworkRuntimeBinding {
   const runtime: ModelRuntime = {
     id: "fake:incomplete-run",
     capabilities: () => ({
@@ -62,6 +84,13 @@ function statusOnlyRuntime(): FieldworkRuntimeBinding {
     }),
     invoke: async (request) => {
       const match = /Status: (\w+)/.exec(JSON.stringify(request.messages));
+      if (!match && options.withoutStatus === "output-truncated") {
+        return {
+          provider: "fixture-runtime", model: "fixture-model", outputText: "",
+          toolCalls: [{ id: "tool-status", name: "submit_extraction_proposals", input: { proposals: [] } }],
+          usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1, stopReason: "max_tokens",
+        };
+      }
       if (!match) throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false);
       return {
         provider: "fixture-runtime", model: "fixture-model", outputText: "",

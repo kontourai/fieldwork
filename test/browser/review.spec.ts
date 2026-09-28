@@ -997,6 +997,8 @@ test("a partial run that proposed values says what it did not read before anythi
     // The values it did propose are still reviewable.
     await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
     await expect(page.getByTestId("review-field")).toHaveCount(1);
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Extraction incomplete");
+    await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(notice).toBeVisible();
     const box = await notice.boundingBox();
@@ -1012,6 +1014,7 @@ test("a complete run shows no extraction notice", async ({ page }) => {
     await page.goto(server.url);
     await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
     await expect(page.getByTestId("extraction-incomplete")).toHaveCount(0);
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Review ready");
   } finally { await server.close(); }
 });
 
@@ -1024,6 +1027,8 @@ test("a run that stopped short before proposing anything says so, not that a fil
     await expect(page.getByTestId("no-values-proposed")).toHaveText("No values were proposed: extraction stopped short (the run was cancelled).");
     await expect(page.getByText("No review fields match")).toHaveCount(0);
     await expect(page.getByTestId("review-workbench-shell")).toHaveCount(0);
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Extraction incomplete");
+    await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
   } finally { await server.close(); }
 });
 
@@ -1038,5 +1043,9 @@ test("a run from an older Fieldwork opens with a blocking notice instead of a re
     await expect(blocked).toContainText("re-run the source");
     await expect(page.getByTestId("review-workbench-shell")).toHaveCount(0);
     await expect(page.getByTestId("use-proposed")).toHaveCount(0);
+    // Nothing on the page may count facts left to decide on a closed review.
+    await expect(page.locator(".fieldwork-column-review .panel-head > span")).toHaveText("0");
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Review closed");
+    await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
   } finally { await server.close(); }
 });

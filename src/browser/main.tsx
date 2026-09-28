@@ -350,7 +350,7 @@ function linkDocumentAndQueue(
 }
 
 function App() {
-  const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("Review ready");
+  const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("");
   const [presentation, setPresentation] = useState<FieldworkHostPresentationV1>({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
     eyebrow: "Fieldwork", title: "Grounded review", theme: "dark", navigation: [],
@@ -450,6 +450,12 @@ function App() {
     const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates, highlightByItem, recheck);
     return () => { disposeLinking(); disposeInspector(); workbenchHost.replaceChildren(); };
   }, [state, inspectorModel, queueItems, recheck, reviewable]);
+  // The footer is derived from the run, not only from the last save: a closed
+  // review or an extraction that lost content never reads as "ready".
+  const footer = !state ? notice || "Loading"
+    : state.reviewBlocked ? "Review closed"
+    : stoppedShort ? `Extraction incomplete${notice ? ` · ${notice}` : ""}`
+    : notice || "Review ready";
   const sources = inspectorModel?.sources ?? [];
   const inspectorCount = inspectorModel?.candidates.length ?? 0;
   const singleSource = sources.length === 1 ? sources[0] : undefined;
@@ -496,7 +502,7 @@ function App() {
           data-fw-sources={sources.length} ref={inspector}/>
       </Panel>
       <Panel className="fieldwork-column fieldwork-column-review"
-        title={recheck ? "What changed" : "Facts to decide"} count={queueItems.length}
+        title={recheck ? "What changed" : "Facts to decide"} count={state?.reviewBlocked ? 0 : queueItems.length}
         actions={filterToggle(queueFiltersOpen, () => setQueueFiltersOpen((open) => !open), "Find fields")}>
         {recheck && <aside className="fieldwork-recheck" data-testid="recheck-summary">
           <p className="fieldwork-recheck-lede">
@@ -517,7 +523,7 @@ function App() {
         {reviewable && <div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={workbench}/>}
       </Panel>
     </div>
-    <StatusBar ariaLabel="Fieldwork status" start="Local server authority" items={[{ label: "Review", value: notice || "ready" }]}/>
+    <StatusBar ariaLabel="Fieldwork status" start="Local server authority" items={[{ label: "Review", value: footer }]}/>
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);

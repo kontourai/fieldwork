@@ -52,6 +52,19 @@ test("CLI run says whether the run read its whole source, keeping ok and exit 0 
   assert.deepEqual(partial.outcome, { status: "partial", reason: "max-chunks" });
 });
 
+test("CLI batch is complete only when every source read its whole source", async () => {
+  const root = await tempRoot("cli-batch-partial");
+  const longPath = join(root, "long.txt");
+  // Past Traverse's default ceiling of 40 chunks, so this source stops short with max-chunks.
+  await writeFile(longPath, `Status: Active\n${"filler line of text.\n".repeat(26_000)}`);
+  const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--source", longPath, "--root", root, "--json"]);
+  const batch = JSON.parse(stdout);
+  assert.equal(batch.ok, true);
+  assert.deepEqual(batch.items.map((item: { ok: boolean }) => item.ok), [true, true]);
+  assert.deepEqual(batch.items.map((item: { run: { outcome: { status: string } } }) => item.run.outcome.status), ["success", "partial"]);
+  assert.equal(batch.complete, false);
+});
+
 test("CLI writes a portable redacted static inspection artifact", async () => {
   const root = await tempRoot("cli-inspect");
   const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", root, "--json"]);

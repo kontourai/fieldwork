@@ -725,8 +725,9 @@ function assertReviewedQueueIsAttested(
 const SURVEY_EXTRACTION_ENVELOPE_PRODUCER = "survey.kontourai.io/extraction-envelope";
 
 /**
- * Whether a first round's queue was built by a Fieldwork release that predates
- * Survey 5's one-item-per-claim grouping. Survey 5 names each envelope item
+ * Whether a first round's queue was built by an earlier Fieldwork release.
+ * Every earlier release used Survey 3 or older (none used Survey 4 or 5), which raised
+ * one item per proposal. Survey 5 introduced one item per claim slot: it names each envelope item
  * after its claim slot and records the proposals it stands for as
  * `proposalIndices`; earlier items carry neither, so their names can never
  * match what Survey derives now and the run cannot be exported. Read off the
