@@ -4,7 +4,7 @@ import { mkdir, readdir, readFile, realpath, rename, symlink, writeFile } from "
 import { join } from "node:path";
 import { FIELDWORK_LIMITS, parseFieldworkTask } from "../src/contracts.js";
 import {
-  canonicalReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, reviewedExport, reviewSessionRecord, runFieldwork,
+  FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, reviewedExport, reviewSessionRecord, runFieldwork,
 } from "../src/fieldwork.js";
 import { importExtractionEnvelope } from "@kontourai/survey";
 import { tempRoot } from "./helpers.js";
@@ -234,7 +234,7 @@ test("an envelope excerpt the prepared text does not contain cannot be exported"
   });
   const runPath = join(run.runDirectory, "run.json");
   const stored = JSON.parse(await readFile(runPath, "utf8"));
-  stored.review = newReviewRound(canonicalReviewItems(imported.reviewItems, envelope));
+  stored.review = newReviewRound(imported.reviewItems);
   await writeFile(runPath, JSON.stringify(stored, null, 2));
   assert.equal(
     (await readRun(run.runDirectory)).preparedText.slice(...fee.provenance.locator.slice("chars:".length).split("-").map(Number)),

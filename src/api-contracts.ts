@@ -229,6 +229,18 @@ export interface FieldworkRunViewV1 {
   readonly run: { readonly resource: string; readonly revision: number };
   /** Survey-owned inspector payload, transported as validated JSON. */
   readonly inspector: JsonObject;
+  /**
+   * What the extraction behind this review covered. `outcome` is Traverse's own;
+   * `coverage` counts its per-chunk coverage and is present exactly when
+   * Traverse recorded it (a partial outcome), so the workbench can say how much
+   * of the source went unread before anyone reviews it.
+   */
+  readonly extraction: {
+    readonly outcome: FieldworkRunOutcome;
+    readonly coverage?: { readonly chunkCount: number; readonly incompleteChunkCount: number };
+  };
+  /** Present when the run can be opened but its review can never be exported. */
+  readonly reviewBlocked?: { readonly reason: "created-by-older-fieldwork"; readonly message: string };
   readonly review: {
     /** Survey-owned snapshot, transported as validated JSON and validated semantically before serving. */
     readonly snapshot: JsonObject;
@@ -351,7 +363,14 @@ export const fieldworkRunOutcomeSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("success") }).strict(),
   z.object({
     status: z.literal("partial"),
-    reason: z.enum(["cancelled", "max-provider-calls", "max-total-tokens", "max-chunks"]),
+    // The first four are early stops; the last three are content lost on a
+    // dispatched chunk (Traverse 3). `fieldwork.ts` checks this list against
+    // Traverse's exported `ExtractionPartialReason` in both directions, so a
+    // reason added or removed upstream fails the build rather than a parse.
+    reason: z.enum([
+      "cancelled", "max-provider-calls", "max-total-tokens", "max-chunks",
+      "provider-failure", "content-truncated", "output-truncated",
+    ]),
   }).strict(),
   z.object({
     status: z.literal("failure"),
@@ -404,6 +423,17 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
   ok: z.literal(true),
   run: z.object({ resource: z.string(), revision: z.number().int().nonnegative() }).strict(),
   inspector: jsonObjectSchema,
+  extraction: z.object({
+    outcome: fieldworkRunOutcomeSchema,
+    coverage: z.object({
+      chunkCount: z.number().int().positive(),
+      incompleteChunkCount: z.number().int().nonnegative(),
+    }).strict().refine((value) => value.incompleteChunkCount <= value.chunkCount).optional(),
+  }).strict(),
+  reviewBlocked: z.object({
+    reason: z.literal("created-by-older-fieldwork"),
+    message: z.string().min(1).max(512),
+  }).strict().optional(),
   review: z.object({
     snapshot: jsonObjectSchema,
     items: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.reviewItems),

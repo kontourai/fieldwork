@@ -64,8 +64,8 @@ const injections = [
   {
     label: "whole-extraction cross-check handed the extraction's own items (self-agreement)",
     file: "src/fieldwork.ts",
-    from: "      assertReviewQueueAgainstExtractionImport(withoutCompatExtractedAt(items, envelope), imported);",
-    to: "      assertReviewQueueAgainstExtractionImport(withoutCompatExtractedAt(canonicalReviewItems(imported.reviewItems, envelope), envelope), imported);",
+    from: "      assertReviewQueueAgainstExtractionImport(items, imported);",
+    to: "      assertReviewQueueAgainstExtractionImport(imported.reviewItems, imported);",
     suite: "test/core.test.ts",
   },
   {
@@ -100,7 +100,7 @@ const injections = [
     label: "export projects a fresh envelope import again (fieldwork#59)",
     file: "src/fieldwork.ts",
     from: "  const canonical = projectCanonicalReview(stored.run.runResource, items, results);",
-    to: "  const canonical = projectCanonicalReview(stored.run.runResource, canonicalReviewItems(imported.reviewItems, stored.envelope), results);",
+    to: "  const canonical = projectCanonicalReview(stored.run.runResource, imported.reviewItems, results);",
     suite: "test/recheck.test.ts",
   },
 ];

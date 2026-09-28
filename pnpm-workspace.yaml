@@ -8,11 +8,15 @@ allowBuilds:
 # A newly published version must be at least 24 hours old before it can be
 # resolved into this lockfile. Blunts the most common supply-chain shape (a
 # compromised maintainer publishes and the ecosystem installs within hours).
-# Does not affect installs from an existing lockfile. An urgent security patch
-# is opted in explicitly, by name and version, with the reason in the commit:
-#   minimumReleaseAgeExclude:
-#     - some-package@1.2.3
+# pnpm also checks entries already in the lockfile, so a frozen install
+# enforces it too.
+# First-party @kontourai packages are exempt: they are published from CI with
+# npm provenance, and each release is verified before a consumer bumps to it.
+# An urgent third-party security patch is opted in explicitly, by name and
+# version, with the reason in the commit.
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@kontourai/*'
 
 # mise supplies node and pnpm on developer machines; CI installs the exact
 # version pinned in package.json. Do not reject a same-major pnpm from mise.

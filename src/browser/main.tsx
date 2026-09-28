@@ -167,6 +167,39 @@ function highlightIdsByItem(
   return ids;
 }
 
+/* --- Extraction coverage ---------------------------------------------------
+   A run that lost content is still reviewable, but it must never look complete.
+   Survey only raises an import diagnostic when nothing was proposed, so the
+   host says it for every non-success outcome, before anyone decides a field. */
+const PARTIAL_REASONS: Record<string, string> = {
+  "cancelled": "the run was cancelled",
+  "max-provider-calls": "the provider-call limit was reached",
+  "max-total-tokens": "the token limit was reached",
+  "max-chunks": "the source has more chunks than the chunk limit",
+  "provider-failure": "a provider call failed",
+  "content-truncated": "a chunk was cut at the content limit",
+  "output-truncated": "an answer stopped at the output limit",
+};
+
+function stoppedShortReason(outcome: FieldworkRunViewV1["extraction"]["outcome"]): string | undefined {
+  if (outcome.status === "success") return undefined;
+  if (outcome.status === "partial") return PARTIAL_REASONS[outcome.reason] ?? outcome.reason;
+  return `extraction failed (${outcome.category}/${outcome.code})`;
+}
+
+function ExtractionNotice({ extraction }: { readonly extraction: FieldworkRunViewV1["extraction"] }) {
+  const reason = stoppedShortReason(extraction.outcome);
+  if (!reason) return null;
+  const { coverage } = extraction;
+  return <aside className="fieldwork-notice fieldwork-notice-caution" data-testid="extraction-incomplete" role="status">
+    <p className="fieldwork-notice-lede">Extraction incomplete: {reason}.</p>
+    <p className="fieldwork-notice-detail">
+      {coverage ? <>{coverage.incompleteChunkCount} of {coverage.chunkCount} {coverage.chunkCount === 1 ? "chunk" : "chunks"} not read in full. </> : undefined}
+      Values in the unread text have no review item, so this run cannot be exported as reviewed. Re-run the source to cover it.
+    </p>
+  </aside>;
+}
+
 /** Elements that own their own click. Selecting a card must not swallow these. */
 const CARD_CONTROLS = "button, a, input, textarea, select, label, summary, [contenteditable]";
 
@@ -317,7 +350,7 @@ function linkDocumentAndQueue(
 }
 
 function App() {
-  const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("Review ready");
+  const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("");
   const [presentation, setPresentation] = useState<FieldworkHostPresentationV1>({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
     eyebrow: "Fieldwork", title: "Grounded review", theme: "dark", navigation: [],
@@ -362,11 +395,19 @@ function App() {
     setEvidenceFiltersOpen(inspectorModel.candidates.length > FILTER_DISCLOSURE_THRESHOLD);
     setQueueFiltersOpen(queueItems.length > FILTER_DISCLOSURE_THRESHOLD);
   }, [state, inspectorModel, queueItems]);
+  // The workbench is not mounted for a queue that can never be exported, or
+  // for a run that stopped short before proposing anything: Survey's empty
+  // queue would read as a filter result, not as an incomplete extraction.
+  const stoppedShort = state ? stoppedShortReason(state.extraction.outcome) : undefined;
+  const reviewable = Boolean(state && !state.reviewBlocked && !(queueItems.length === 0 && stoppedShort));
   useEffect(() => {
-    if (!state || !inspectorModel || !inspector.current || !workbench.current) return;
-    const inspectorHost = inspector.current, workbenchHost = workbench.current;
-    inspectorHost.replaceChildren(); workbenchHost.replaceChildren();
+    if (!state || !inspectorModel || !inspector.current) return;
+    const inspectorHost = inspector.current;
+    inspectorHost.replaceChildren();
     const disposeInspector = mountExtractionInspector(inspectorHost, inspectorModel);
+    if (!reviewable || !workbench.current) return () => { disposeInspector(); };
+    const workbenchHost = workbench.current;
+    workbenchHost.replaceChildren();
     // `highlightElementId` is Survey's published id for each candidate's source
     // anchor (2.3.0); the server builds the model with
     // `buildExtractionInspectorModel`, which always supplies it.
@@ -408,7 +449,13 @@ function App() {
     mountReviewWorkbench(workbenchHost, state.review.snapshot as unknown as ReviewQueueSessionState, { eventStore: store, presentationAdapter });
     const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates, highlightByItem, recheck);
     return () => { disposeLinking(); disposeInspector(); workbenchHost.replaceChildren(); };
-  }, [state, inspectorModel, queueItems, recheck]);
+  }, [state, inspectorModel, queueItems, recheck, reviewable]);
+  // The footer is derived from the run, not only from the last save: a closed
+  // review or an extraction that lost content never reads as "ready".
+  const footer = !state ? notice || "Loading"
+    : state.reviewBlocked ? "Review closed"
+    : stoppedShort ? `Extraction incomplete${notice ? ` · ${notice}` : ""}`
+    : notice || "Review ready";
   const sources = inspectorModel?.sources ?? [];
   const inspectorCount = inspectorModel?.candidates.length ?? 0;
   const singleSource = sources.length === 1 ? sources[0] : undefined;
@@ -431,6 +478,12 @@ function App() {
     <Topbar eyebrow={presentation.eyebrow} title={presentation.title}
       meta={[{ label: "Run", value: state?.run.resource ?? "loading" }]}/>
     {navigation.length > 0 && <nav className="fieldwork-host-navigation" aria-label="Host navigation">{navigation.map((item) => <a key={`${item.label}:${item.href}`} href={item.href}>{item.label}</a>)}</nav>}
+    {/* Blocking, so it comes before everything else on every width. */}
+    {state?.reviewBlocked && <aside className="fieldwork-notice fieldwork-notice-caution" data-testid="review-blocked" role="alert">
+      <p className="fieldwork-notice-lede">This run cannot be reviewed.</p>
+      <p className="fieldwork-notice-detail">{state.reviewBlocked.message}</p>
+    </aside>}
+    {state && <ExtractionNotice extraction={state.extraction}/>}
     <div className="fieldwork-review">
       <Panel className="fieldwork-column fieldwork-column-source" title="Source document" count={inspectorCount}
         actions={filterToggle(evidenceFiltersOpen, () => setEvidenceFiltersOpen((open) => !open), "Filter evidence")}>
@@ -449,7 +502,7 @@ function App() {
           data-fw-sources={sources.length} ref={inspector}/>
       </Panel>
       <Panel className="fieldwork-column fieldwork-column-review"
-        title={recheck ? "What changed" : "Facts to decide"} count={queueItems.length}
+        title={recheck ? "What changed" : "Facts to decide"} count={state?.reviewBlocked ? 0 : queueItems.length}
         actions={filterToggle(queueFiltersOpen, () => setQueueFiltersOpen((open) => !open), "Find fields")}>
         {recheck && <aside className="fieldwork-recheck" data-testid="recheck-summary">
           <p className="fieldwork-recheck-lede">
@@ -463,10 +516,14 @@ function App() {
             Everything else is unchanged, and the run you already reviewed is untouched.
           </p>
         </aside>}
-        <div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={workbench}/>
+        {state?.reviewBlocked && <p className="fieldwork-empty-queue" data-testid="review-closed">Review is closed for this run.</p>}
+        {state && !state.reviewBlocked && queueItems.length === 0 && stoppedShort && <p className="fieldwork-empty-queue" data-testid="no-values-proposed">
+          No values were proposed: extraction stopped short ({stoppedShort}).
+        </p>}
+        {reviewable && <div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={workbench}/>}
       </Panel>
     </div>
-    <StatusBar ariaLabel="Fieldwork status" start="Local server authority" items={[{ label: "Review", value: notice || "ready" }]}/>
+    <StatusBar ariaLabel="Fieldwork status" start="Local server authority" items={[{ label: "Review", value: footer }]}/>
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);

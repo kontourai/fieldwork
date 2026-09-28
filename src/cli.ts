@@ -25,33 +25,34 @@ async function main(argv: string[]): Promise<void> {
       }
       const runtime = runtimeBinding(args);
       if (sources.length > 1) {
-        return output({
-          ok: true,
-          ...(await runFieldworkBatch({
-            taskPath,
-            root,
-            sources: sources.map((source, index) => ({
-              id: `source-${index + 1}`,
-              ...(source.kind === "path"
-                ? { sourcePath: source.value }
-                : { snapshotRef: source.value, ...(snapshotRoot ? { snapshotRoot } : {}) }),
-            })),
-            ...(runtime ? { runtime } : {}),
-          })),
-        }, has(args, "--json"));
-      }
-      const source = sources[0]!;
-      return output({
-        ok: true,
-        ...(await runFieldwork({
+        const batch = await runFieldworkBatch({
           taskPath,
           root,
-          ...(source.kind === "path"
-            ? { sourcePath: source.value }
-            : { snapshotRef: source.value, ...(snapshotRoot ? { snapshotRoot } : {}) }),
+          sources: sources.map((source, index) => ({
+            id: `source-${index + 1}`,
+            ...(source.kind === "path"
+              ? { sourcePath: source.value }
+              : { snapshotRef: source.value, ...(snapshotRoot ? { snapshotRoot } : {}) }),
+          })),
           ...(runtime ? { runtime } : {}),
-        })),
-      }, has(args, "--json"));
+        });
+        // Complete only when every source ran and read its whole source.
+        const complete = batch.items.every((item) => item.ok && item.run.outcome.status === "success");
+        return output({ ok: true, complete, ...batch }, has(args, "--json"));
+      }
+      const source = sources[0]!;
+      // `ok` says the run was extracted and persisted; `complete` says whether
+      // it read the whole source. A partial run is a real, reviewable run, so
+      // it is not a failure, but it must never read as complete.
+      const result = await runFieldwork({
+        taskPath,
+        root,
+        ...(source.kind === "path"
+          ? { sourcePath: source.value }
+          : { snapshotRef: source.value, ...(snapshotRoot ? { snapshotRoot } : {}) }),
+        ...(runtime ? { runtime } : {}),
+      });
+      return output({ ok: true, complete: result.outcome.status === "success", ...result }, has(args, "--json"));
     }
     if (command === "acquire") {
       const url = flag(args, "--url");
@@ -150,7 +151,8 @@ async function main(argv: string[]): Promise<void> {
       });
       await mkdir(dirname(resolve(outputPath)), { recursive: true });
       await writeFile(resolve(outputPath), `${artifact}\n`, "utf8");
-      return output({ ok: true, output: outputPath }, has(args, "--json"));
+      const blocked = (JSON.parse(artifact) as { spec?: { reviewBlocked?: unknown } }).spec?.reviewBlocked;
+      return output({ ok: true, output: outputPath, ...(blocked === undefined ? {} : { reviewBlocked: blocked }) }, has(args, "--json"));
     }
     output(failure("USAGE", "fieldwork acquire|run|recheck|open|inspect|export; use README.md for the public contract"), true); process.exitCode = 2;
   } catch (error) {

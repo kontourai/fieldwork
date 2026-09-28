@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { promisify } from "node:util";
 import { tempRoot } from "./helpers.js";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 const exec = promisify(execFile);
 
@@ -35,6 +35,34 @@ async function startFixtureServer(): Promise<{ origin: string; close: () => Prom
 test("CLI returns a typed JSON run contract", async () => {
   const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", await tempRoot("cli"), "--json"]);
   const result = JSON.parse(stdout); assert.equal(result.ok, true); assert.match(result.runResource, /^fieldwork-run:v1:/);
+});
+
+test("CLI run says whether the run read its whole source, keeping ok and exit 0 for a partial run", async () => {
+  const root = await tempRoot("cli-partial");
+  const complete = JSON.parse((await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", root, "--json"])).stdout);
+  assert.equal(complete.ok, true);
+  assert.equal(complete.complete, true);
+  // More prepared chunks than Traverse's default ceiling of 40, so the run stops short with max-chunks.
+  const sourcePath = join(root, "long.txt");
+  await writeFile(sourcePath, `Status: Active\n${"filler line of text.\n".repeat(26_000)}`);
+  const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", sourcePath, "--root", root, "--json"]);
+  const partial = JSON.parse(stdout);
+  assert.equal(partial.ok, true);
+  assert.equal(partial.complete, false);
+  assert.deepEqual(partial.outcome, { status: "partial", reason: "max-chunks" });
+});
+
+test("CLI batch is complete only when every source read its whole source", async () => {
+  const root = await tempRoot("cli-batch-partial");
+  const longPath = join(root, "long.txt");
+  // Past Traverse's default ceiling of 40 chunks, so this source stops short with max-chunks.
+  await writeFile(longPath, `Status: Active\n${"filler line of text.\n".repeat(26_000)}`);
+  const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--source", longPath, "--root", root, "--json"]);
+  const batch = JSON.parse(stdout);
+  assert.equal(batch.ok, true);
+  assert.deepEqual(batch.items.map((item: { ok: boolean }) => item.ok), [true, true]);
+  assert.deepEqual(batch.items.map((item: { run: { outcome: { status: string } } }) => item.run.outcome.status), ["success", "partial"]);
+  assert.equal(batch.complete, false);
 });
 
 test("CLI writes a portable redacted static inspection artifact", async () => {

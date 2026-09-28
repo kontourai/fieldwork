@@ -82,6 +82,24 @@ test("a stored run whose attempt receipts carry Dispatch's served model loads; a
   await assert.rejects(() => readRun(result.runDirectory), /modelSource/);
 });
 
+test("a live run records the served model and its source on the receipt and the proposal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "fieldwork-runtime-model-source-"));
+  const result = await runFieldwork({
+    taskPath: join(fixture, "task.json"),
+    sourcePath: join(fixture, "source.txt"),
+    root,
+    runtime: binding([{ id: "primary", runtime: new FakeModelRuntime([{ ...modelResult, modelSource: "provider-reported" }], "fake:model-source") }]),
+  });
+  const loaded = await readRun(result.runDirectory);
+  const attempt = loaded.run.execution.receipts[0]?.attempts[0];
+  assert.equal(attempt?.model, "fixture-model");
+  assert.equal(attempt?.modelSource, "provider-reported");
+  assert.deepEqual(
+    loaded.envelope.result.proposals.map((proposal) => [proposal.producedBy?.model, proposal.producedBy?.modelSource]),
+    [["fixture-model", "provider-reported"]],
+  );
+});
+
 test("retryable runtime failure falls back in declared order and remains receipt-visible", async () => {
   const root = await mkdtemp(join(tmpdir(), "fieldwork-runtime-fallback-"));
   const failed: ModelRuntime = {

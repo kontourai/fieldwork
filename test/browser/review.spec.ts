@@ -11,6 +11,7 @@ import { reviewedExport, runFieldwork } from "../../src/fieldwork.js";
 import { recheckFieldwork } from "../../src/recheck.js";
 import { openRun } from "../../src/server.js";
 import { tempRoot } from "../helpers.js";
+import { partialRunWithProposals, runFromOlderFieldwork, zeroProposalPartialRun } from "../helpers/incomplete-runs.js";
 import {
   formatImageBytes,
   formatPdfBytes,
@@ -981,4 +982,70 @@ test("a first round is not dressed as a recheck", async ({ page }) => {
   } finally {
     await server.close();
   }
+});
+
+test("a partial run that proposed values says what it did not read before anything is decided", async ({ page }) => {
+  const run = await partialRunWithProposals("browser");
+  const server = await openRun(run);
+  try {
+    await page.goto(server.url);
+    const notice = page.getByTestId("extraction-incomplete");
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("Extraction incomplete: a provider call failed.");
+    await expect(notice).toContainText("1 of 2 chunks not read in full.");
+    await expect(notice).toContainText("cannot be exported as reviewed");
+    // The values it did propose are still reviewable.
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    await expect(page.getByTestId("review-field")).toHaveCount(1);
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Extraction incomplete");
+    await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(notice).toBeVisible();
+    const box = await notice.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  } finally { await server.close(); }
+});
+
+test("a complete run shows no extraction notice", async ({ page }) => {
+  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-complete-notice") });
+  const server = await openRun(run.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    await expect(page.getByTestId("extraction-incomplete")).toHaveCount(0);
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Review ready");
+  } finally { await server.close(); }
+});
+
+test("a run that stopped short before proposing anything says so, not that a filter matched nothing", async ({ page }) => {
+  const run = await zeroProposalPartialRun("browser");
+  const server = await openRun(run);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("extraction-incomplete")).toContainText("Extraction incomplete: the run was cancelled.");
+    await expect(page.getByTestId("no-values-proposed")).toHaveText("No values were proposed: extraction stopped short (the run was cancelled).");
+    await expect(page.getByText("No review fields match")).toHaveCount(0);
+    await expect(page.getByTestId("review-workbench-shell")).toHaveCount(0);
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Extraction incomplete");
+    await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
+  } finally { await server.close(); }
+});
+
+test("a run from an older Fieldwork opens with a blocking notice instead of a review queue", async ({ page }) => {
+  const run = await runFromOlderFieldwork("browser");
+  const server = await openRun(run);
+  try {
+    await page.goto(server.url);
+    const blocked = page.getByTestId("review-blocked");
+    await expect(blocked).toBeVisible();
+    await expect(blocked).toContainText("created by an older Fieldwork");
+    await expect(blocked).toContainText("re-run the source");
+    await expect(page.getByTestId("review-workbench-shell")).toHaveCount(0);
+    await expect(page.getByTestId("use-proposed")).toHaveCount(0);
+    // Nothing on the page may count facts left to decide on a closed review.
+    await expect(page.locator(".fieldwork-column-review .panel-head > span")).toHaveText("0");
+    await expect(page.getByLabel("Fieldwork status")).toContainText("Review closed");
+    await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
+  } finally { await server.close(); }
 });

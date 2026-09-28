@@ -3,7 +3,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   createInMemoryPreparedArtifactStore, extract, resolvePreparedArtifact, serializePortableExtractionResult,
-  type ExtractionProposal, type PortableExtractionResultEnvelope
+  type ExtractionProposal, type PortableExtractionOutcome, type PortableExtractionResultEnvelope
 } from "@kontourai/traverse";
 import {
   importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle,
@@ -13,6 +13,7 @@ import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
 import {
   assertReviewQueueAgainstExtractionImport,
   bindReviewQueue,
+  decisionSelectsNoCandidate,
   hashReviewQueueSnapshot,
   initialReviewQueueSessionState,
   UnattestedExtractionQueueError,
@@ -24,6 +25,7 @@ import {
   parseReviewedExport,
   type FieldworkBatchOptions,
   type FieldworkBatchRunResult,
+  type FieldworkRunOutcome,
   type FieldworkRunResult,
   type ReviewedExportV1,
   type RunOptions,
@@ -46,6 +48,17 @@ import { attributeReviewResults, UNATTRIBUTED_ACTOR_ID, type ReviewDecisionAttri
 export const FIELDWORK_SOURCE_KIND: FieldworkSourceKind = "uploaded-document";
 
 export type FieldworkSourceKind = NonNullable<ReviewCandidate["source"]["kind"]>;
+
+/**
+ * `FieldworkRunOutcome` mirrors Traverse's `PortableExtractionOutcome` rather
+ * than importing it (see api-contracts.ts). Requiring assignability in both
+ * directions here, where Traverse's types are already in scope, makes a
+ * reason Traverse adds or removes a compile error instead of a run that
+ * cannot report its own outcome.
+ */
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const runOutcomeMirrorsTraverse: MutuallyAssignable<FieldworkRunOutcome, PortableExtractionOutcome> = true;
+void runOutcomeMirrorsTraverse;
 
 export async function runFieldwork(options: RunOptions): Promise<FieldworkRunResult> {
   const taskText = await boundedInput(options.taskPath, FIELDWORK_LIMITS.taskBytes, "task");
@@ -107,13 +120,13 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
       return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
     }
   });
-  if (imported.record.status.state !== "grounded") throw new Error("Survey refused ungrounded extraction envelope");
+  assertImportRecordsItsOwnOutcome(imported);
   const createdAt = new Date().toISOString();
   const run: StoredRun = {
     schemaVersion: 1, runResource, createdAt, taskName: task.metadata.name, task,
     execution: runtimeSession?.execution ?? fixtureExecution(),
     preparedArtifact: { ref: result.preparedArtifact.ref, digest: result.preparedArtifact.digest, contentLength: result.preparedArtifact.contentLength, file: "prepared.txt" },
-    envelopeFile: "extraction-envelope.json", review: newReviewRound(canonicalReviewItems(imported.reviewItems, envelope), createdAt)
+    envelopeFile: "extraction-envelope.json", review: newReviewRound(imported.reviewItems, createdAt)
   };
   const persistedDirectory = await writeRun(root, run, envelope, resolution.text);
   return {
@@ -121,6 +134,24 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length,
     outcome: envelope.result.outcome,
   };
+}
+
+/**
+ * Survey imports a grounded extraction, or one that is unresolved because the
+ * extraction itself says it is incomplete: a partial run that proposed nothing
+ * (`extraction-incomplete`). That run is persisted with an empty review queue
+ * and its typed partial outcome, so it reads as incomplete rather than as a
+ * complete run that found nothing, and export refuses it on coverage. Every
+ * other unresolved import (an unavailable or mismatched artifact, an excerpt
+ * that is not in the source) is refused here as before. A `failure` outcome
+ * never reaches this point: Traverse reports it with `result.error`, which
+ * `runFieldwork` refuses before import.
+ */
+function assertImportRecordsItsOwnOutcome(imported: ExtractionEnvelopeImportResult): void {
+  const { state, diagnostics } = imported.record.status;
+  if (state === "grounded") return;
+  if (diagnostics.length > 0 && diagnostics.every((diagnostic) => diagnostic.kind === "extraction-incomplete")) return;
+  throw new Error("Survey refused ungrounded extraction envelope");
 }
 
 export async function runFieldworkBatch(options: FieldworkBatchOptions): Promise<FieldworkBatchRunResult> {
@@ -412,25 +443,67 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
   const { items, results, excluded } = exportable;
   if (items.length === 0) throw nothingExportable(excluded, exportable.errors);
   const canonical = projectCanonicalReview(stored.run.runResource, items, results);
-  const claimIdByCandidateId = new Map<string, string>();
-  for (const claim of canonical.surveyInput.claims) {
-    if (claim.candidateId === undefined) continue;
-    if (claimIdByCandidateId.has(claim.candidateId)) throw new Error(`Two claims reference candidate ${claim.candidateId}; cannot attribute reviewed evidence`);
-    claimIdByCandidateId.set(claim.candidateId, claim.id);
-  }
+  const claimIdByCandidateId = claimIdsByCandidate(canonical.surveyInput);
   const enrichment = buildReviewedEvidenceEnrichment({
     imported, items, results,
     isRecheckItem: (item) => Boolean(item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]),
     claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
     claims: canonical.surveyInput.claims.map((claim) => ({ id: claim.id, value: claim.value })),
   });
+  const itemsByName = new Map(items.map((item) => [item.metadata.name, item]));
   const attribution = results.map((result) => {
     const entry = attributed.attribution.find((candidate) => candidate.reviewItemName === result.reviewItemName);
-    const claimId = claimIdByCandidateId.get(result.selectedCandidate.projection?.candidateId ?? result.selectedCandidateId);
+    const item = itemsByName.get(result.reviewItemName);
+    const claimId = item === undefined ? undefined : claimIdForItem(item, claimIdByCandidateId);
     if (!entry || !claimId) throw new Error(`Cannot attribute the reviewed claim decided by ${result.reviewItemName}`);
     return { ...entry, claimId };
   });
   return { imported, items, results, canonical, enrichment, excluded, attribution };
+}
+
+/**
+ * Which claim each projected candidate belongs to, through the candidate set
+ * the claim names. A decision that selects no candidate (reject-all or
+ * could-not-confirm on a conflict set) yields a claim with no `candidateId`,
+ * so keying on the selected candidate alone would lose it; every candidate in
+ * the claim's set belongs to it whether or not it was selected.
+ */
+function claimIdsByCandidate(input: ReturnType<typeof buildCanonicalReviewedTrustInput>["surveyInput"]): Map<string, string> {
+  const candidateSets = new Map(input.candidateSets.map((set) => [set.id, set]));
+  const claimIdByCandidateId = new Map<string, string>();
+  for (const claim of input.claims) {
+    const set = candidateSets.get(claim.candidateSetId);
+    if (!set) throw new Error(`Claim ${claim.id} names candidate set ${claim.candidateSetId}, which the projection does not carry`);
+    for (const candidate of set.candidates) {
+      if (claimIdByCandidateId.has(candidate.id)) throw new Error(`Two claims reference candidate ${candidate.id}; cannot attribute reviewed evidence`);
+      claimIdByCandidateId.set(candidate.id, claim.id);
+    }
+  }
+  return claimIdByCandidateId;
+}
+
+/** The one claim every candidate of `item` was projected into, by identity rather than by which one was selected. */
+function claimIdForItem(item: ReviewItem, claimIdByCandidateId: ReadonlyMap<string, string>): string | undefined {
+  const claimIds = new Set(item.spec.candidates.map((candidate) => claimIdByCandidateId.get(candidate.projection?.candidateId ?? candidate.id)));
+  const [claimId] = claimIds;
+  return claimIds.size === 1 ? claimId : undefined;
+}
+
+/**
+ * The candidate a decided result selected, or `undefined` when the decision
+ * selects none: Survey's reject-all and could-not-confirm on a conflict set
+ * name no candidate and state no value. Survey decides which decisions those
+ * are, and a result that names no candidate for any other decision is refused
+ * rather than read as the item's first candidate.
+ */
+function selectedCandidateOf(item: ReviewItem, result: ReviewWorkbenchResult): ReviewItem["spec"]["candidates"][number] | undefined {
+  if (result.selectedCandidateId === undefined) {
+    if (decisionSelectsNoCandidate(item, result.decision)) return undefined;
+    throw unresolvableDecision(result.reviewItemName, undefined);
+  }
+  const selected = item.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
+  if (!selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+  return selected;
 }
 
 /**
@@ -450,7 +523,7 @@ export interface ReviewedExportExclusion {
  * that cannot, per claim target rather than per round. The checks and their
  * messages are the ones that used to refuse the whole round.
  */
-function partitionExportableClaims(
+export function partitionExportableClaims(
   runResource: string,
   queue: readonly ReviewItem[],
   decided: readonly ReviewWorkbenchResult[],
@@ -476,9 +549,12 @@ function partitionExportableClaims(
   }
   for (const result of decided) {
     const item = itemsByName.get(result.reviewItemName);
-    const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
     // Skipping what cannot be resolved is how a check stops noticing removals.
-    if (!item || !selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    if (!item) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    const selected = selectedCandidateOf(item, result);
+    // A decision that selects no candidate states no value, so there is no
+    // span for it to cite; its claim carries no value (see conflictingClaimTargets).
+    if (selected === undefined) continue;
     const ungrounded = ungroundedSelection(item, selected, result);
     if (ungrounded) exclude({ fieldPath: fieldPathOf(item), itemNames: [item.metadata.name], code: "EXPORT_UNGROUNDED_SELECTION" }, ungrounded);
   }
@@ -628,8 +704,9 @@ function assertReviewedQueueIsAttested(
     throw unattested("the queue mixes imported extraction items with recheck-round items, so neither set can attest it");
   }
   if (recheckItems.length === 0) {
+    if (reviewQueueFromOlderFieldwork(items)) throw runFromOlderFieldwork();
     try {
-      assertReviewQueueAgainstExtractionImport(withoutCompatExtractedAt(items, envelope), imported);
+      assertReviewQueueAgainstExtractionImport(items, imported);
     } catch (cause) {
       if (cause instanceof UnattestedExtractionQueueError) {
         throw unattested(cause.issues.map((issue) => issue.message).join(" "), cause);
@@ -645,33 +722,44 @@ function assertReviewedQueueIsAttested(
   for (const item of recheckItems) assertRecheckItemIsAttested(item, proposalsByField);
 }
 
+const SURVEY_EXTRACTION_ENVELOPE_PRODUCER = "survey.kontourai.io/extraction-envelope";
+
 /**
- * Inverse of `canonicalReviewItems`, for handing the stored queue back to
- * Survey's extraction cross-check: the queue was persisted through the Survey
- * #187 compatibility adapter, which stamps `extraction.extractedAt` onto every
- * candidate, while `assertReviewQueueAgainstExtractionImport` compares against
- * items re-derived through the import boundary, which does not supply it yet.
- *
- * Only a value equal to the envelope's own `result.extractedAt` — the exact
- * stamp the adapter applied — is removed. An edited timestamp is left in place
- * and fails the byte comparison; a deleted one leaves the candidate matching
- * the importer's shape here, but its queue no longer matches the digest bound
- * at round open, and a coordinated re-bind still cannot project (Survey's
- * canonical projection requires `extractedAt`, which is why the adapter
- * exists). Remove alongside `canonicalReviewItems` once Survey #187 lands.
+ * Whether a first round's queue was built by an earlier Fieldwork release.
+ * Every earlier release used Survey 3 or older (none used Survey 4 or 5), which raised
+ * one item per proposal. Survey 5 introduced one item per claim slot: it names each envelope item
+ * after its claim slot and records the proposals it stands for as
+ * `proposalIndices`; earlier items carry neither, so their names can never
+ * match what Survey derives now and the run cannot be exported. Read off the
+ * items Survey itself wrote, not off a stored label. A recheck round's items are
+ * Lookout's and are attested separately, so they are never "older".
  */
-function withoutCompatExtractedAt(items: readonly ReviewItem[], envelope: PortableExtractionResultEnvelope): ReviewItem[] {
-  return items.map((item) => ({
-    ...item,
-    spec: {
-      ...item.spec,
-      candidates: item.spec.candidates.map((candidate) => {
-        if (candidate.extraction.extractedAt !== envelope.result.extractedAt) return candidate;
-        const { extractedAt: _extractedAt, ...extraction } = candidate.extraction;
-        return { ...candidate, extraction };
-      }),
-    },
-  }));
+export function reviewQueueFromOlderFieldwork(items: readonly ReviewItem[]): boolean {
+  const imported = items.filter((item) => !item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]);
+  return imported.length > 0 && imported.every((item) => {
+    const producer = item.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndices?: unknown } | undefined;
+    return !Array.isArray(producer?.proposalIndices);
+  });
+}
+
+/**
+ * How many prepared-text chunks Traverse recorded, and how many of them were
+ * not read and answered in full. Traverse emits coverage only on a partial
+ * outcome, so this is undefined for a run that read everything.
+ */
+export function extractionCoverageSummary(envelope: PortableExtractionResultEnvelope): { chunkCount: number; incompleteChunkCount: number } | undefined {
+  const { coverage } = envelope.result;
+  if (coverage === undefined || coverage.length === 0) return undefined;
+  const chunks = new Set(coverage.map((entry) => entry.chunk));
+  const incomplete = new Set(coverage.filter((entry) => entry.status !== "complete").map((entry) => entry.chunk));
+  return { chunkCount: chunks.size, incompleteChunkCount: incomplete.size };
+}
+
+export const RUN_FROM_OLDER_FIELDWORK_MESSAGE = "This run was created by an older Fieldwork, whose review queue the current "
+  + "release cannot export. Its decisions cannot become a reviewed export; re-run the source to review it again.";
+
+function runFromOlderFieldwork(): Error {
+  return Object.assign(new Error(`Export refused: ${RUN_FROM_OLDER_FIELDWORK_MESSAGE}`), { code: "EXPORT_RUN_FROM_OLDER_FIELDWORK" });
 }
 
 /**
@@ -740,10 +828,11 @@ function assertRecheckItemIsAttested(item: ReviewItem, proposalsByField: Readonl
  * exactly why it must refuse rather than `continue`: a guard that walks past
  * what it cannot resolve stops being a guard the moment that assumption breaks.
  */
-function unresolvableDecision(reviewItemName: string, candidateId: string): Error {
+function unresolvableDecision(reviewItemName: string, candidateId: string | undefined): Error {
   return Object.assign(
-    new Error(
-      `Export refused: decision on ${reviewItemName} selects candidate ${candidateId}, which is not in this run's reviewed queue.`
+    new Error(candidateId === undefined
+      ? `Export refused: decision on ${reviewItemName} selects no candidate, but that decision on this item has to select one.`
+      : `Export refused: decision on ${reviewItemName} selects candidate ${candidateId}, which is not in this run's reviewed queue.`
     ),
     { code: "EXPORT_UNRESOLVABLE_DECISION" }
   );
@@ -837,7 +926,10 @@ function groundedAdvice(item: ReviewItem): string {
  * results still carry their candidate's value as `effectiveValue`, but their
  * claim status (`rejected`, `proposed`) keeps them from asserting it, so
  * comparing them would make every multi-value round unexportable whatever the
- * reviewer decided (fieldwork#137).
+ * reviewer decided (fieldwork#137). A decision that selects no candidate
+ * (reject-all or could-not-confirm on a conflict set) asserts no value at all;
+ * its item still counts toward the field, by the claim target every candidate
+ * of the item shares.
  */
 function conflictingClaimTargets(
   items: readonly ReviewItem[],
@@ -847,9 +939,12 @@ function conflictingClaimTargets(
   const byTarget = new Map<string, { fieldPath: string; itemNames: string[]; accepted: { itemName: string; value: string }[] }>();
   for (const result of results) {
     const item = itemsByName.get(result.reviewItemName);
-    const selected = item?.spec.candidates.find((candidate) => candidate.id === result.selectedCandidateId);
-    if (!selected) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
-    const { claimId: _claimId, ...target } = selected.claimTarget;
+    if (!item) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    // Only the claim target is read from an unselected candidate, never a
+    // value: every candidate of one item names the same claim target.
+    const claimTarget = (selectedCandidateOf(item, result) ?? item.spec.candidates[0])?.claimTarget;
+    if (!claimTarget) throw unresolvableDecision(result.reviewItemName, result.selectedCandidateId);
+    const { claimId: _claimId, ...target } = claimTarget;
     const key = canonicalJson(target);
     const entry = byTarget.get(key) ?? { fieldPath: target.fieldOrBehavior, itemNames: [], accepted: [] };
     byTarget.set(key, entry);
@@ -966,7 +1061,7 @@ export interface RecheckRoundBinding {
  *   which extractor observed nothing there.
  *
  * The durable home for all three is Lookout (kontourai/lookout#35): this is a
- * narrow composition adapter, in the same spirit as `canonicalReviewItems`.
+ * narrow composition adapter.
  *
  * `RECHECK_ROUND_PRODUCER` rides the candidate producer channel because that is
  * the only path from a ReviewItem into exported Evidence metadata, so a receipt
@@ -1015,23 +1110,6 @@ export function canonicalSemanticReviewItems(items: readonly ReviewItem[], round
       },
     };
   });
-}
-
-/**
- * Temporary Survey #187 compatibility adapter; remove once the envelope importer
- * supplies `extraction.extractedAt`.
- */
-export function canonicalReviewItems(items: readonly ReviewItem[], envelope: PortableExtractionResultEnvelope): ReviewItem[] {
-  return items.map((item) => ({
-    ...item,
-    spec: {
-      ...item.spec,
-      candidates: item.spec.candidates.map((candidate) => ({
-        ...candidate,
-        extraction: { ...candidate.extraction, extractedAt: envelope.result.extractedAt },
-      })),
-    },
-  }));
 }
 
 async function boundedInput(path: string, maxBytes: number, label: string): Promise<string> {
