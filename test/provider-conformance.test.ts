@@ -11,7 +11,7 @@ import {
   type ModelRuntime,
 } from "@kontourai/relay";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
-import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
+import { fieldworkRunResultSchema, type FieldworkRunViewV1 } from "../src/api-contracts.js";
 import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
 import { openRun } from "../src/server.js";
@@ -189,7 +189,20 @@ test("one failed concurrent chunk remains typed and reserved while successful ch
     stored.envelope.result.proposals.map((proposal: { fieldPath: string }) => proposal.fieldPath),
     ["record.first", "record.third"],
   );
-  assert.equal(stored.envelope.result.outcome.status, "success");
+  // Traverse 3 reports a chunk lost to its provider as a typed partial
+  // outcome, with the per-chunk coverage saying which range went unread.
+  assert.deepEqual(stored.envelope.result.outcome, { status: "partial", reason: "provider-failure" });
+  assert.deepEqual(result.outcome, { status: "partial", reason: "provider-failure" });
+  // The published run-result contract carries the new reason rather than refusing it.
+  assert.equal(fieldworkRunResultSchema.safeParse(result).success, true);
+  const inspected = JSON.parse(await inspectionExport(result.runDirectory)) as {
+    spec: { extraction: { outcome: unknown; coverage?: { status: string; reason?: string }[] } };
+  };
+  assert.deepEqual(inspected.spec.extraction.outcome, { status: "partial", reason: "provider-failure" });
+  assert.ok(inspected.spec.extraction.coverage?.some((entry) => entry.status === "unread" && entry.reason === "provider-failure"));
+  assert.ok(stored.envelope.result.coverage.some(
+    (entry: { status: string; reason?: string }) => entry.status === "unread" && entry.reason === "provider-failure",
+  ));
   assert.equal(stored.envelope.result.providerFailures[0].kind, "unavailable");
   assert.doesNotMatch(JSON.stringify(stored.run.execution), /private provider detail/);
   const failed = stored.run.execution.receipts.find(
@@ -199,12 +212,12 @@ test("one failed concurrent chunk remains typed and reserved while successful ch
   assert.equal(failed.attempts[0].reservationState, "reserved");
   assert.equal(failed.authorization.outcome, "reserved");
 
-  // The envelope still says `success`, so only providerFailures records that
-  // record.second's chunk was never read. Accepting every surviving item must
-  // not export as allowed grounding over the unread chunk (fieldwork#136).
+  // Accepting every surviving item must not export as allowed grounding over
+  // the unread chunk (fieldwork#136).
   await acceptEveryItem(result.runDirectory);
   await assert.rejects(() => reviewedExport(result.runDirectory), (error: Error & { code?: string }) => {
     assert.equal(error.code, "EXPORT_COVERAGE_INCOMPLETE");
+    assert.match(error.message, /partial: provider-failure/);
     assert.match(error.message, /provider \S+ failed \(unavailable\)/);
     return true;
   });

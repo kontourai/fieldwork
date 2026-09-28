@@ -25,6 +25,7 @@ import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
 export const REVIEWED_EVIDENCE_COLLECTED_BY = "fieldwork.kontourai.io/reviewed-export";
 export const REVIEWED_GROUNDING_POLICY_ID = "fieldwork.kontourai.io/reviewed-export-grounding/v1";
 export const REVIEWED_GROUNDING_ACTION = "fieldwork.kontourai.io/reviewed-export";
+const SURVEY_EXTRACTION_ENVELOPE_PRODUCER = "survey.kontourai.io/extraction-envelope";
 
 export type FieldworkReviewedGroundingReceipt =
   | (Omit<ReviewedGroundingPolicyDecision, "outcome"> & {
@@ -96,23 +97,32 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
     };
   }
 
-  const proposalIndexByReviewItemName = new Map(
-    imported.reviewItems.map((reviewItem, index) => [reviewItem.metadata.name, index] as const),
-  );
+  const importedItemNames = new Set(imported.reviewItems.map((reviewItem) => reviewItem.metadata.name));
   const resultsByItemName = new Map(results.map((result) => [result.reviewItemName, result] as const));
 
   const additionalEvidence: Evidence[] = [];
   for (const item of items) {
     const result = resultsByItemName.get(item.metadata.name);
     if (!result) throw new Error(`Reviewed grounding projection has no decided result for ${item.metadata.name}`);
-    const proposalIndex = proposalIndexByReviewItemName.get(item.metadata.name);
-    if (proposalIndex === undefined) {
+    if (!importedItemNames.has(item.metadata.name)) {
       throw new Error(`Reviewed grounding projection cannot locate the extraction proposal for ${item.metadata.name}`);
     }
+    // A decision that selects no candidate (reject-all or could-not-confirm on
+    // a conflict set) states no value, so there is no reviewed value to ground.
+    // Its claim stays in `requiredClaimIds` below, so the evaluation reports it
+    // as missing reviewed evidence instead of reading as allowed.
+    if (result.selectedCandidateId === undefined) continue;
     if (item.spec.candidates.length !== 1) {
       throw new Error(`Reviewed grounding projection expects exactly one candidate on ${item.metadata.name}`);
     }
     const candidate = item.spec.candidates[0]!;
+    // Survey groups proposals by claim slot (Survey 5), so an item's position
+    // in the import no longer equals its proposal's index; the candidate
+    // records the index of the proposal it stands for.
+    const proposalIndex = (candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndex?: unknown } | undefined)?.proposalIndex;
+    if (typeof proposalIndex !== "number" || !Number.isSafeInteger(proposalIndex)) {
+      throw new Error(`Reviewed grounding projection cannot locate the extraction proposal for ${item.metadata.name}`);
+    }
     const claimId = claimIdForCandidate(candidate.id);
     if (!claimId) throw new Error(`Reviewed grounding projection cannot resolve the claim decided by ${item.metadata.name}`);
 

@@ -63,6 +63,15 @@ test("Fieldwork response schemas validate the complete advertised JSON transport
     outcome: { status: "success" },
   };
   assert.equal(fieldworkRunResultSchema.safeParse(run).success, true);
+  // Every Traverse 3 partial reason, pinned here independently of the schema:
+  // a run that lost content has to be reportable as partial, never refused
+  // into a result that could only read as success.
+  for (const reason of [
+    "cancelled", "max-provider-calls", "max-total-tokens", "max-chunks",
+    "provider-failure", "content-truncated", "output-truncated",
+  ]) {
+    assert.equal(fieldworkRunResultSchema.safeParse({ ...run, outcome: { status: "partial", reason } }).success, true, reason);
+  }
   for (const malformedOutcome of [
     { status: "partial" },
     { status: "partial", reason: "not-a-real-reason" },

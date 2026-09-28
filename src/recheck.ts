@@ -736,12 +736,31 @@ function observationFor(
       "Stored extraction is missing snapshot identity",
     );
   }
+  const { proposals } = envelope.result;
+  // Lookout 0.7.0 is built against Traverse 0.25.1, whose proposals always
+  // carry a confidence, and its observation store refuses one that does not.
+  // Traverse 3 makes confidence an optional provider self-report and Fieldwork
+  // never invents one, so a run with an unreported confidence cannot be
+  // recorded as a Lookout observation yet: say so here, with the reason,
+  // instead of surfacing Lookout's generic malformed-observation refusal.
+  if (!proposals.every(hasReportedConfidence)) {
+    throw withCode(
+      "RECHECK_OBSERVATION_FAILED",
+      "Stored extraction has a proposal without a reported confidence, which Lookout cannot record as an observation yet",
+    );
+  }
   return {
     sourceId,
     snapshotRef: envelope.source.snapshotRef,
     observedAt: envelope.result.extractedAt,
-    proposals: envelope.result.proposals,
+    proposals,
   };
+}
+
+function hasReportedConfidence<T extends { readonly confidence?: number }>(
+  proposal: T,
+): proposal is T & { readonly confidence: number } {
+  return typeof proposal.confidence === "number";
 }
 
 function evidence(observation: {

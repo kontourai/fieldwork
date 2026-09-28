@@ -17,7 +17,7 @@ import {
   type ReviewMutationResponseV1
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
-import { canonicalReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionRecord } from "./fieldwork.js";
+import { FIELDWORK_SOURCE_KIND, importNameFor, reviewSessionRecord } from "./fieldwork.js";
 import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
 
 const reviewRequestSchema = z.object({
@@ -207,7 +207,7 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
     inspector,
     review: {
       snapshot,
-      items: canonicalReviewItems(imported.reviewItems, stored.envelope),
+      items: imported.reviewItems,
       events: stored.run.review.events,
       apply
     }

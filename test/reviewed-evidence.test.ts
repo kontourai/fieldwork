@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -135,6 +135,36 @@ test("a policy-satisfying first-round export projects reviewed evidence and an a
   assert.equal("reviewRound" in bundle, false);
   const validated = validateTrustBundle(bundle);
   assert.deepEqual(Object.keys(bundle).sort(), Object.keys(validated).sort());
+});
+
+test("a value stated twice before another field grounds each claim against its own proposal", async () => {
+  // Survey groups proposals by claim slot, so the repeated status is one item
+  // standing for proposals 0 and 1, and the next field's item is second in the
+  // queue but stands for proposal 2. Reading the proposal index off the queue
+  // position would ground that field against the status proposal.
+  const root = await tempRoot("reviewed-evidence-slot-index");
+  const taskPath = join(root, "task.json");
+  const sourcePath = join(root, "source.txt");
+  const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));
+  const [statusProjection] = task.spec.projections;
+  task.spec.traverse.targetSchema.push({ path: "record.owner", type: "string", inferenceType: "explicit" });
+  task.spec.projections.push({ ...statusProjection, fieldPath: "record.owner", pattern: "Owner: ([^\\n]+)" });
+  await writeFile(taskPath, JSON.stringify(task));
+  await writeFile(sourcePath, `Status: Active\n${"filler line of text.\n".repeat(700)}Status: Active\nOwner: Ops\n`);
+  const run = await runFieldwork({ taskPath, sourcePath, root });
+  const stored = await readRunMetadata(run.runDirectory);
+  assert.deepEqual(stored.envelope.result.proposals.map((proposal) => proposal.fieldPath),
+    ["record.status", "record.status", "record.owner"]);
+  assert.equal(stored.run.review.snapshot.items.length, 2);
+
+  await acceptAll(run.runDirectory);
+  const exported = await reviewedExport(run.runDirectory) as unknown as ExportedReview;
+  assert.equal(exported.reviewedGrounding.outcome, "allowed");
+  const owner = exported.bundle.claims.find((claim) => claim.fieldOrBehavior === "record.owner")!;
+  const evidence = reviewedEvidenceOf(exported.bundle).find((entry) => entry.claimId === owner.id);
+  assert.ok(evidence);
+  const restored = restoreReviewedExtractionEvidence(evidence as unknown as Parameters<typeof restoreReviewedExtractionEvidence>[0]);
+  assert.equal(restored.proposalIndex, 2);
 });
 
 test("a rejected decision's export carries a typed grounding refusal, not a fabricated pass", async () => {

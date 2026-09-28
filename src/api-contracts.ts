@@ -351,7 +351,14 @@ export const fieldworkRunOutcomeSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("success") }).strict(),
   z.object({
     status: z.literal("partial"),
-    reason: z.enum(["cancelled", "max-provider-calls", "max-total-tokens", "max-chunks"]),
+    // The first four are early stops; the last three are content lost on a
+    // dispatched chunk (Traverse 3). `fieldwork.ts` checks this list against
+    // Traverse's exported `ExtractionPartialReason` in both directions, so a
+    // reason added or removed upstream fails the build rather than a parse.
+    reason: z.enum([
+      "cancelled", "max-provider-calls", "max-total-tokens", "max-chunks",
+      "provider-failure", "content-truncated", "output-truncated",
+    ]),
   }).strict(),
   z.object({
     status: z.literal("failure"),

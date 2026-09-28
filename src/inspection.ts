@@ -56,6 +56,9 @@ export async function inspectionExport(
       extraction: {
         outcome: stored.envelope.result.outcome,
         warningClassifications: stored.envelope.result.warningClassifications ?? [],
+        // Which prepared-text ranges were read, and why any were not. Traverse
+        // emits it only on a partial outcome; it holds offsets, never text.
+        ...(stored.envelope.result.coverage === undefined ? {} : { coverage: stored.envelope.result.coverage }),
       },
     },
   };

@@ -480,6 +480,19 @@ test("an added proposal is told to accept it, not to keep a value that was never
   assert.deepEqual(exported.claims.map((claim) => claim.value), ["Active"]);
 });
 
+test("a recheck field with one item decided and its sibling undecided exports no value for it", async () => {
+  // Survey groups a first round's values into one item per claim, so two
+  // items on one field now come from a recheck round (lookout#34).
+  const split = await roundFor("capture-both-unsettled", "Status: Paused");
+  const items = (await readRun(split.run!.runDirectory)).run.review.snapshot.items;
+  assert.equal(items.length, 2);
+  await decideRound(split.run!.runDirectory, (_name, index) => (index === 0 ? "accept-proposed" : undefined) as string);
+  await assert.rejects(() => reviewedExport(split.run!.runDirectory), (error: Error & { code?: string; excluded?: { code: string }[] }) => {
+    assert.deepEqual(error.excluded?.map((entry) => entry.code).sort(), ["EXPORT_FIELD_UNSETTLED", "EXPORT_UNDECIDED"]);
+    return true;
+  });
+});
+
 test("a round that decides one field two ways is refused rather than exported as two claims", async () => {
   // A changed value also changes its excerpt, so Lookout raises both a
   // value-changed and a provenance-changed item for the one field.
@@ -560,9 +573,9 @@ test("a runtime-bound recheck refuses an unsupported field type up front, naming
 
 test("a recheck round whose extraction did not cover the whole source is refused at export (fieldwork#136)", async () => {
   // The changed value is read from the first chunk, but a later chunk fails at
-  // the provider, so the envelope still says `success` while part of the
-  // current source was never read. Accepting the change must not export as a
-  // complete receipt.
+  // the provider, so part of the current source was never read. Traverse 3
+  // reports that as a `provider-failure` partial outcome. Accepting the change
+  // must not export as a complete receipt.
   const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
   const setup = await baseline(`Status: Active${filler}`);
   const current = snapshot("capture-unread", `Status: Pending${filler}`, "2026-07-23T17:00:00.000Z");
@@ -573,13 +586,43 @@ test("a recheck round whose extraction did not cover the whole source is refused
   });
   assert.equal(result.classification, "semantic-drift");
   const stored = await readRun(result.run!.runDirectory);
-  assert.equal(stored.envelope.result.outcome.status, "success");
+  assert.deepEqual(stored.envelope.result.outcome, { status: "partial", reason: "provider-failure" });
   assert.ok((stored.envelope.result.providerFailures?.length ?? 0) >= 1);
   await decideRound(result.run!.runDirectory, () => "accept-proposed");
   await assert.rejects(() => reviewedExport(result.run!.runDirectory), (error: Error & { code?: string }) => {
     assert.equal(error.code, "EXPORT_COVERAGE_INCOMPLETE");
+    assert.match(error.message, /partial: provider-failure/);
     return true;
   });
+});
+
+test("a run whose proposals report no confidence is never given one: export and recheck refuse it", async () => {
+  // Traverse 3 omits confidence when the provider does not report one, and
+  // Lookout 0.7.0 (built on Traverse 0.25.1) cannot record such a proposal.
+  const unreported = statusOnlyRuntimeBinding(null);
+  const setup = await baseline("Status: Active", join(fixture, "task.json"), unreported);
+  const prior = await readRun(setup.prior.runDirectory);
+  assert.equal(prior.envelope.result.proposals.length, 1);
+  assert.equal("confidence" in prior.envelope.result.proposals[0]!, false);
+  // Surface 4.1 accepts a proposal without confidence, but Survey 6.1.0's
+  // reviewed-extraction adapter still refuses one, so the export fails closed
+  // rather than grounding a value with an invented confidence.
+  await decideRound(setup.prior.runDirectory, () => "accept-proposed");
+  await assert.rejects(() => reviewedExport(setup.prior.runDirectory), /requires a proposer confidence/);
+  let checks = 0;
+  await assert.rejects(
+    () => recheckFieldwork({
+      ...setup.options,
+      runtime: unreported,
+      acquisition: { check: async () => { checks += 1; throw new Error("the refusal comes before any acquisition"); } },
+    }),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "RECHECK_OBSERVATION_FAILED");
+      assert.match(error.message, /without a reported confidence/);
+      return true;
+    },
+  );
+  assert.equal(checks, 0);
 });
 
 function failingRuntimeBinding(): FieldworkRuntimeBinding {
@@ -587,7 +630,7 @@ function failingRuntimeBinding(): FieldworkRuntimeBinding {
 }
 
 /** Proposes the status its chunk states, and fails any chunk that states none. */
-function statusOnlyRuntimeBinding(): FieldworkRuntimeBinding {
+function statusOnlyRuntimeBinding(confidence: number | null = 0.98): FieldworkRuntimeBinding {
   return runtimeBinding(async (request) => {
     const match = /Status: (\w+)/.exec(JSON.stringify(request.messages));
     if (!match) throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false);
@@ -595,7 +638,7 @@ function statusOnlyRuntimeBinding(): FieldworkRuntimeBinding {
       provider: "fixture-runtime", model: "fixture-model", outputText: "",
       toolCalls: [{
         id: "tool-status", name: "submit_extraction_proposals",
-        input: { proposals: [{ fieldPath: "record.status", value: match[1], confidence: 0.98, excerpt: match[0], locator: null, occurrenceHint: null }] },
+        input: { proposals: [{ fieldPath: "record.status", value: match[1], confidence, excerpt: match[0], locator: null, occurrenceHint: null }] },
       }],
       usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1, stopReason: "tool_use",
     };
@@ -683,7 +726,7 @@ async function semanticPair() {
   });
 }
 
-async function baseline(body: string, taskPath = join(fixture, "task.json")) {
+async function baseline(body: string, taskPath = join(fixture, "task.json"), runtime?: FieldworkRuntimeBinding) {
   const root = await mkdtemp(join(tmpdir(), "fieldwork-recheck-"));
   const snapshotRoot = join(root, "snapshots");
   const runRoot = join(root, "runs");
@@ -697,6 +740,7 @@ async function baseline(body: string, taskPath = join(fixture, "task.json")) {
     snapshotRef: priorRef,
     snapshotRoot,
     root: runRoot,
+    ...(runtime === undefined ? {} : { runtime }),
   });
   return {
     root,
