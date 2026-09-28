@@ -82,7 +82,7 @@ test("a reviewer can decide every field, including typed ones, and export", asyn
     await page.reload();
     await expect(page.getByTestId("decided-chip").first()).toHaveText("Accepted");
     await expect(page.getByTestId("decided-chip")).toHaveCount(fields.length);
-    const exported = await reviewedExport(run.runDirectory);
+    const { bundle: exported } = await reviewedExport(run.runDirectory);
     expect(exported.claims.map((claim) => claim.fieldOrBehavior).sort()).toEqual([...fields].sort());
   } finally { await server.close(); }
 });
@@ -941,7 +941,7 @@ test("a decided recheck round exports a receipt of the round", async ({ page }) 
     await page.reload();
     await expect(page.getByTestId("decided-chip")).toHaveCount(itemCount);
 
-    const exported = await reviewedExport(runDirectory) as unknown as {
+    const exported = (await reviewedExport(runDirectory)).bundle as unknown as {
       claims: { id: string; fieldOrBehavior: string; value: unknown }[];
       evidence: { claimId: string; excerptOrSummary?: string; metadata?: { producer?: Record<string, Record<string, string>> } }[];
     };

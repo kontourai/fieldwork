@@ -10,6 +10,8 @@ import { z } from "zod";
 
 export const MAX_RUNTIME_CANDIDATES = 16;
 export const MAX_RUNTIME_RECEIPTS = 1_024;
+/** SDK retries per invocation in direct SDK mode (`createDatumRuntimeBinding`). */
+const DIRECT_SDK_MAX_RETRIES = 2;
 const boundedId = z.string().min(1).max(256);
 const finitePositive = z.number().finite().positive();
 
@@ -120,6 +122,10 @@ const attemptSchema = z.object({
   retryable: z.boolean().optional(),
   reservationId: boundedId.optional(),
   reservationState: z.enum(["reserved", "settled"]).optional(),
+  // Dispatch records the model a successful attempt reported (kontourai/dispatch#65).
+  // Accepted before the Dispatch bump so stored runs that carry it still load.
+  model: boundedId.optional(),
+  modelSource: z.enum(["provider-reported", "configured"]).optional(),
 }).strict();
 
 export const fieldworkStoredExecutionSchema = z.object({
@@ -238,12 +244,21 @@ export function createDatumRuntimeBinding(options: DatumRuntimeBindingOptions): 
     }),
   });
   const credentialOption: "apiKey" = ["api", "Key"].join("") as "apiKey";
-  const created = createModelRuntimeProfile({
-    profile: "anthropic",
+  // Relay's Anthropic runtime stopped letting the SDK retry by default
+  // (kontourai/relay#68); this mode has one candidate, so there is no Dispatch
+  // fallback to take over. Keep the SDK's previous two retries explicitly
+  // until Dispatch owns retrying (kontourai/dispatch#62). Relay releases before
+  // that change ignore the option and retry twice by default, so behaviour is
+  // the same on either. Built as a variable so it compiles against both
+  // releases' option types.
+  const profileOptions = {
+    profile: "anthropic" as const,
     model: target.model,
     [credentialOption]: target.apiKey,
     ...(target.baseUrl ? { baseUrl: target.baseUrl } : {}),
-  });
+    maxRetries: DIRECT_SDK_MAX_RETRIES,
+  };
+  const created = createModelRuntimeProfile(profileOptions);
   const runtime: ModelRuntime = {
     id: datum.target.runtimeId,
     capabilities: () => created.capabilities(),

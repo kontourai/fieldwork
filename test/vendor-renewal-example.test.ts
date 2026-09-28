@@ -164,7 +164,7 @@ test("vendor renewal example proves typed grounding, Survey review, export, and 
   );
 
   await acceptEveryProposal(run.runDirectory);
-  const bundle = await reviewedExport(run.runDirectory);
+  const { bundle } = await reviewedExport(run.runDirectory);
   const evidenceByClaim = new Map(bundle.evidence.map((entry) => [entry.claimId, entry]));
   assert.deepEqual(
     bundle.claims.map((claim) => ({

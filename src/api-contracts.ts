@@ -259,7 +259,18 @@ export interface PreparedArtifactViewV1 {
     readonly file: "prepared.txt";
   };
 }
-export type ReviewedExportV1 = JsonObject;
+/**
+ * A reviewed export. `bundle` is a Surface trust bundle that validates on its
+ * own; Fieldwork's grounding evaluation and round scope travel beside it
+ * rather than as extra top-level bundle keys, which Surface 4 refuses.
+ */
+export interface ReviewedExportV1 {
+  readonly apiVersion: "fieldwork.kontourai.io/v1";
+  readonly kind: "ReviewedExport";
+  readonly bundle: JsonObject;
+  readonly reviewedGrounding: JsonObject;
+  readonly reviewRound: JsonObject;
+}
 
 export interface FieldworkTask {
   readonly apiVersion: "fieldwork.kontourai.io/v1alpha1";
@@ -425,7 +436,13 @@ export const preparedArtifactViewSchema: z.ZodType<PreparedArtifactViewV1> = z.o
     file: z.literal("prepared.txt")
   }).strict()
 }).strict();
-export const reviewedExportSchema: z.ZodType<ReviewedExportV1> = jsonObjectSchema;
+export const reviewedExportSchema: z.ZodType<ReviewedExportV1> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v1"),
+  kind: z.literal("ReviewedExport"),
+  bundle: jsonObjectSchema,
+  reviewedGrounding: jsonObjectSchema,
+  reviewRound: jsonObjectSchema,
+}).strict();
 
 export function parseReviewMutationSuccess(value: unknown): ReviewMutationSuccessV1 {
   return reviewMutationSuccessSchema.parse(toWireJson(value));

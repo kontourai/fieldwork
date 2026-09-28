@@ -51,7 +51,7 @@ test("accepting two different values for one field is still refused, with advice
 });
 
 async function statusClaims(runDirectory: string): Promise<[unknown, string][]> {
-  const exported = await reviewedExport(runDirectory) as unknown as { claims: ExportedClaim[] };
+  const exported = (await reviewedExport(runDirectory)).bundle as unknown as { claims: ExportedClaim[] };
   return exported.claims
     .filter((claim) => claim.fieldOrBehavior === "record.status")
     .map((claim): [unknown, string] => [claim.value, claim.status])

@@ -130,8 +130,10 @@ test("replayable document formats preserve exact grounding, inspection, review, 
 
   for (const run of successful.values()) {
     const output = await acceptAndExport(run) as unknown as {
-      claims: Array<{ id: string; fieldOrBehavior: string }>;
-      evidence: Array<{ claimId: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
+      bundle: {
+        claims: Array<{ id: string; fieldOrBehavior: string }>;
+        evidence: Array<{ claimId: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
+      };
       reviewedGrounding: { outcome: string; gaps: unknown[] };
     };
     assertPortableOutput(output);
@@ -146,10 +148,10 @@ test("replayable document formats preserve exact grounding, inspection, review, 
     assert.equal(output.reviewedGrounding.outcome, "allowed", `${run.runResource} must be an allowed grounding evaluation`);
     assert.deepEqual(output.reviewedGrounding.gaps, []);
     const reviewedEvidenceByClaim = new Map(
-      output.evidence.filter((entry) => entry.metadata?.reviewedExtraction !== undefined)
+      output.bundle.evidence.filter((entry) => entry.metadata?.reviewedExtraction !== undefined)
         .map((entry) => [entry.claimId, entry])
     );
-    for (const claim of output.claims) {
+    for (const claim of output.bundle.claims) {
       const entry = reviewedEvidenceByClaim.get(claim.id);
       assert.ok(entry, `${run.runResource} ${claim.fieldOrBehavior} must carry projected reviewed-extraction evidence`);
       assert.equal(entry!.supportStrength, "entails");
@@ -190,7 +192,7 @@ async function acceptAndExport(run: FieldworkRunResult): Promise<Record<string, 
   } finally {
     await server.close();
   }
-  return await reviewedExport(run.runDirectory) as Record<string, unknown>;
+  return await reviewedExport(run.runDirectory) as unknown as Record<string, unknown>;
 }
 
 function snapshot(

@@ -80,7 +80,7 @@ test("the application contract launches, presents, observes, and returns one rev
     }).then((response) => response.json());
     assert.equal(saved.ok, true);
     const output = await application.reviewedOutput(run.runDirectory);
-    assert.ok(Array.isArray(output.claims));
+    assert.ok(Array.isArray(output.bundle.claims));
     assert.deepEqual(sessionLifecycle.map((event) => event.type), ["review-event-persisted"]);
   } finally {
     await service.close();
@@ -145,7 +145,7 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
     assert.ok(described.captureRef.length > 512, "an owner-supported exact capture ref is not constrained like an internal ID");
     assert.deepEqual(Object.keys(described.preparedArtifact).sort(), ["contentLength", "digest", "ref"]);
     assert.equal("file" in described.preparedArtifact, false, "storage filenames are never part of the public DTO");
-    const exported = await initial.reviewedOutput(run.runDirectory) as { evidence: Parameters<typeof restoreReviewedExtractionEvidence>[0][] };
+    const exported = (await initial.reviewedOutput(run.runDirectory)).bundle as unknown as { evidence: Parameters<typeof restoreReviewedExtractionEvidence>[0][] };
     const ownerEvidence = exported.evidence
       .filter((entry) => (entry as { metadata?: { reviewedExtraction?: unknown } }).metadata?.reviewedExtraction)
       .map((entry) => ({ entry, restored: restoreReviewedExtractionEvidence(entry) }))

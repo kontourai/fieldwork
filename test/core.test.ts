@@ -132,7 +132,7 @@ test("a review queue edited after its decisions cannot be exported", async () =>
   } finally { await server.close(); }
 
   // The honest export first, so a refusal below cannot be a refusal of everything.
-  const honest = await reviewedExport(run.runDirectory) as { claims: { value: unknown }[] };
+  const honest = (await reviewedExport(run.runDirectory)).bundle as { claims: { value: unknown }[] };
   assert.equal(honest.claims[0]?.value, "Active");
 
   const runPath = join(run.runDirectory, "run.json");
@@ -196,9 +196,9 @@ test("a reviewed export estimated above the size ceiling is refused before any e
 
   await decideEveryItem(run.runDirectory);
   await assert.rejects(() => reviewedExport(run.runDirectory, { maxEstimatedBytes: estimate - 1 }), tooLarge(estimate - 1));
-  const atCeiling = await reviewedExport(run.runDirectory, { maxEstimatedBytes: estimate }) as { claims: unknown[] };
+  const atCeiling = (await reviewedExport(run.runDirectory, { maxEstimatedBytes: estimate })).bundle as { claims: unknown[] };
   assert.equal(atCeiling.claims.length, 7);
-  const byDefault = await reviewedExport(run.runDirectory) as { claims: unknown[] };
+  const byDefault = (await reviewedExport(run.runDirectory)).bundle as { claims: unknown[] };
   assert.equal(byDefault.claims.length, 7);
 });
 
@@ -214,7 +214,7 @@ test("an envelope excerpt the prepared text does not contain cannot be exported"
   });
   const honest = await readRun(run.runDirectory);
   await decideEveryItem(run.runDirectory);
-  const untouched = await reviewedExport(run.runDirectory) as { claims: { fieldOrBehavior: string; value: unknown }[] };
+  const untouched = (await reviewedExport(run.runDirectory)).bundle as { claims: { fieldOrBehavior: string; value: unknown }[] };
   assert.equal(untouched.claims.find((claim) => claim.fieldOrBehavior === "commercial.annualFeeUsd")?.value, 48000);
 
   const envelopePath = join(run.runDirectory, "extraction-envelope.json");
@@ -263,7 +263,7 @@ test("a first round's reviewed queue has to be the whole extraction", async () =
     root: await tempRoot("queue-set-integrity"),
   });
   await decideEveryItem(run.runDirectory);
-  const honest = await reviewedExport(run.runDirectory) as { claims: unknown[] };
+  const honest = (await reviewedExport(run.runDirectory)).bundle as { claims: unknown[] };
   assert.equal(honest.claims.length, 7);
 
   const runPath = join(run.runDirectory, "run.json");

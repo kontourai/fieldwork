@@ -71,11 +71,14 @@ test("long-input corpus keeps exact reviewed grounding across default chunk over
     await server.close();
   }
 
-  const bundle = await reviewedExport(run.runDirectory) as unknown as {
-    claims: Array<{ id: string; fieldOrBehavior: string; value: unknown }>;
-    evidence: Array<{ claimId: string; excerptOrSummary: string; sourceLocator?: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
+  const exported = await reviewedExport(run.runDirectory) as unknown as {
+    bundle: {
+      claims: Array<{ id: string; fieldOrBehavior: string; value: unknown }>;
+      evidence: Array<{ claimId: string; excerptOrSummary: string; sourceLocator?: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
+    };
     reviewedGrounding: { outcome: string; gaps: unknown[] };
   };
+  const { bundle, reviewedGrounding } = exported;
   const evidenceByClaim = new Map(bundle.evidence.map((evidence) => [evidence.claimId, evidence]));
   const reviewedEvidenceByClaim = new Map(
     bundle.evidence.filter((evidence) => evidence.metadata?.reviewedExtraction !== undefined)
@@ -123,8 +126,8 @@ test("long-input corpus keeps exact reviewed grounding across default chunk over
     // and reviewed-grounding-policy evaluation, pinned by field path (stable)
     // rather than by the opaque per-run claim/evidence id (hash-derived).
     reviewedGrounding: {
-      outcome: bundle.reviewedGrounding.outcome,
-      gapCount: bundle.reviewedGrounding.gaps.length
+      outcome: reviewedGrounding.outcome,
+      gapCount: reviewedGrounding.gaps.length
     },
     projectedReviewedEvidence: bundle.claims.map((claim) => {
       const projected = reviewedEvidenceByClaim.get(claim.id);

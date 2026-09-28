@@ -71,7 +71,7 @@ interface CorpusEnvelope {
 function normalizeCorpusResult(
   fixture: string,
   envelope: CorpusEnvelope,
-  bundle: Awaited<ReturnType<typeof reviewedExport>>
+  bundle: Awaited<ReturnType<typeof reviewedExport>>["bundle"]
 ): unknown {
   const evidenceByClaim = new Map(bundle.evidence.map((evidence) => [evidence.claimId, evidence]));
   const spans = envelope.result.proposals.map((proposal) => {
@@ -180,7 +180,7 @@ for (const [name, count] of examples) {
       }).then((response) => response.json()) as { ok: boolean };
       assert.equal(saved.ok, true);
     } finally { await server.close(); }
-    const bundle = await reviewedExport(result.runDirectory);
+    const { bundle } = await reviewedExport(result.runDirectory);
     const task = JSON.parse(await readFile(taskPath, "utf8"));
     for (const projection of task.spec.projections) {
       assert.ok(bundle.claims.some((claim) =>
@@ -306,7 +306,7 @@ test("deterministic fixture values retain declared runtime types through reviewe
   } finally {
     await server.close();
   }
-  const bundle = await reviewedExport(result.runDirectory);
+  const { bundle } = await reviewedExport(result.runDirectory);
   assert.deepEqual(
     Object.fromEntries(bundle.claims.map((claim) => [claim.fieldOrBehavior, claim.value])),
     {

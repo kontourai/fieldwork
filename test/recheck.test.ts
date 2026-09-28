@@ -260,7 +260,7 @@ test("a decided recheck round exports as a receipt of that round", async () => {
   assert.equal(stored.run.review.snapshot.items.length, result.review.itemCount);
 
   await decideRound(runDirectory, () => "accept-proposed");
-  const exported = await reviewedExport(runDirectory) as ExportedBundle;
+  const exported = await exportedBundle(runDirectory);
   assert.equal(exported.source, stored.run.runResource);
   assert.equal(exported.claims.length, stored.run.review.snapshot.items.length);
   for (const claim of exported.claims) {
@@ -279,7 +279,7 @@ test("a carried-forward decision is distinguishable from one affirmed against th
   const result = await semanticPair();
   const runDirectory = result.run!.runDirectory;
   await decideRound(runDirectory, () => "keep-current");
-  const exported = await reviewedExport(runDirectory) as ExportedBundle;
+  const exported = await exportedBundle(runDirectory);
   for (const claim of exported.claims) {
     assert.equal(claim.value, "Active");
     const round = roundOf(exported, claim.id);
@@ -310,7 +310,7 @@ test("a recheck round resolved onto an absent proposal is refused, and keeping t
   // The refusal's advice has to be true, not merely reassuring.
   const kept = await roundFor("capture-gone-b", "No status is present");
   await decideRound(kept.run!.runDirectory, () => "keep-current");
-  const exported = await reviewedExport(kept.run!.runDirectory) as ExportedBundle;
+  const exported = await exportedBundle(kept.run!.runDirectory);
   assert.equal(exported.claims.length, 1);
   assert.equal(exported.claims[0]!.value, "Active");
   assert.equal(roundOf(exported, exported.claims[0]!.id).evidenceObservation, "prior");
@@ -319,7 +319,7 @@ test("a recheck round resolved onto an absent proposal is refused, and keeping t
 test("a round's new-source side is attested by this run's own extraction", async () => {
   const round = await roundFor("capture-attest", "Status: Pending");
   await decideRound(round.run!.runDirectory, () => "accept-proposed");
-  assert.equal((await reviewedExport(round.run!.runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+  assert.equal((await exportedBundle(round.run!.runDirectory)).claims[0]?.value, "Pending");
 
   // Edit the value the round proposes AND refresh the queue binding, so the
   // only thing left to disagree is an artifact the editor did not write.
@@ -369,7 +369,7 @@ test("a recheck candidate cannot be relabelled onto the side nothing attests", a
     const round = await roundFor(`capture-relabel-${alsoMoveObservationId}`, "Status: Pending");
     const runDirectory = round.run!.runDirectory;
     await decideRound(runDirectory, () => "accept-proposed");
-    assert.equal((await reviewedExport(runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+    assert.equal((await exportedBundle(runDirectory)).claims[0]?.value, "Pending");
 
     const runPath = join(runDirectory, "run.json");
     const stored = JSON.parse(await readFile(runPath, "utf8"));
@@ -404,7 +404,7 @@ test("a decision cannot be walked onto the unattested side by swapping the roles
   const round = await roundFor("capture-roleswap", "Status: Pending");
   const runDirectory = round.run!.runDirectory;
   await decideRound(runDirectory, () => "accept-proposed");
-  assert.equal((await reviewedExport(runDirectory) as ExportedBundle).claims[0]?.value, "Pending");
+  assert.equal((await exportedBundle(runDirectory)).claims[0]?.value, "Pending");
 
   const runPath = join(runDirectory, "run.json");
   const stored = JSON.parse(await readFile(runPath, "utf8"));
@@ -476,7 +476,7 @@ test("an added proposal is told to accept it, not to keep a value that was never
 
   const accepted = await roundFor("capture-added-b", "Status: Active", "Nothing recorded yet");
   await decideRound(accepted.run!.runDirectory, () => "accept-proposed");
-  const exported = await reviewedExport(accepted.run!.runDirectory) as ExportedBundle;
+  const exported = await exportedBundle(accepted.run!.runDirectory);
   assert.deepEqual(exported.claims.map((claim) => claim.value), ["Active"]);
 });
 
@@ -501,16 +501,20 @@ test("a round that decides one field two ways is refused rather than exported as
   // Rejecting one side of the pair asserts only the accepted value (fieldwork#137).
   const rejectedOne = await roundFor("capture-both-c", "Status: Paused");
   await decideRound(rejectedOne.run!.runDirectory, (_name, index) => index === 0 ? "accept-proposed" : "reject-proposed");
-  const oneAccepted = await reviewedExport(rejectedOne.run!.runDirectory) as unknown as {
+  const oneAccepted = (await reviewedExport(rejectedOne.run!.runDirectory)).bundle as unknown as {
     claims: { value: unknown; status: string }[];
   };
   assert.deepEqual(oneAccepted.claims.map((claim) => [claim.value, claim.status]), [["Paused", "verified"], ["Paused", "rejected"]]);
 
   const agreed = await roundFor("capture-both-b", "Status: Paused");
   await decideRound(agreed.run!.runDirectory, () => "accept-proposed");
-  const exported = await reviewedExport(agreed.run!.runDirectory) as ExportedBundle;
+  const exported = await exportedBundle(agreed.run!.runDirectory);
   assert.deepEqual(exported.claims.map((claim) => claim.value), ["Paused", "Paused"]);
 });
+
+async function exportedBundle(runDirectory: string): Promise<ExportedBundle> {
+  return (await reviewedExport(runDirectory)).bundle as unknown as ExportedBundle;
+}
 
 interface ExportedBundle {
   readonly source: string;

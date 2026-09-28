@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { FakeModelRuntime, ModelInvocationError, type ModelRuntime } from "@kontourai/relay";
 import { runFieldwork, runFieldworkBatch } from "../src/fieldwork.js";
 import { createDatumRuntimeBinding, type FieldworkRuntimeBinding } from "../src/runtime-contracts.js";
 import { createFieldworkRuntimeSession } from "../src/runtime-session.js";
+import { readRun } from "../src/run-store.js";
 
 const fixture = resolve("examples/generic");
 const modelResult = {
@@ -48,6 +51,35 @@ test("a Relay runtime uses the same task and stores a Dispatch receipt without r
   assert.equal(stored.execution.receipts[0].outcome, "succeeded");
   assert.equal(stored.execution.receipts[0].attempts[0].totalTokens, 12);
   assert.doesNotMatch(JSON.stringify(stored.execution), /Status: Active|submit_extraction_proposals|api[_-]?key/i);
+});
+
+test("a stored run whose attempt receipts carry Dispatch's served model loads; an unknown modelSource is refused", async () => {
+  const root = await mkdtemp(join(tmpdir(), "fieldwork-runtime-served-model-"));
+  const result = await runFieldwork({
+    taskPath: join(fixture, "task.json"),
+    sourcePath: join(fixture, "source.txt"),
+    root,
+    runtime: binding([{ id: "primary", runtime: new FakeModelRuntime([modelResult], "fake:served-model") }]),
+  });
+  const runPath = join(result.runDirectory, "run.json");
+  const original = JSON.parse(await readFile(runPath, "utf8"));
+  // The shape Dispatch writes on a successful attempt (kontourai/dispatch#65).
+  const withServedModel = (modelSource: string) => {
+    const stored = structuredClone(original);
+    const attempt = stored.execution.receipts[0].attempts[0];
+    assert.equal(attempt.outcome, "succeeded");
+    attempt.model = "fixture-model";
+    attempt.modelSource = modelSource;
+    return `${JSON.stringify(stored, null, 2)}\n`;
+  };
+
+  await writeFile(runPath, withServedModel("provider-reported"));
+  const loaded = await readRun(result.runDirectory);
+  assert.equal(loaded.run.execution.receipts[0]?.attempts[0]?.model, "fixture-model");
+  assert.equal(loaded.run.execution.receipts[0]?.attempts[0]?.modelSource, "provider-reported");
+
+  await writeFile(runPath, withServedModel("guessed"));
+  await assert.rejects(() => readRun(result.runDirectory), /modelSource/);
 });
 
 test("retryable runtime failure falls back in declared order and remains receipt-visible", async () => {
@@ -149,6 +181,53 @@ test("Datum materializes a supported SDK target without putting its credential i
   ).execution;
   assert.equal(execution.identity.mode, "runtime");
   assert.doesNotMatch(JSON.stringify(execution), new RegExp(credentialValue));
+});
+
+test("direct SDK mode keeps two SDK retries per invocation, whatever Relay's default", async (t) => {
+  // An Anthropic-compatible endpoint that is overloaded twice, then answers.
+  // Relay releases from kontourai/relay#68 on build the SDK client with no
+  // retries unless told otherwise, so without an explicit maxRetries the first
+  // 529 would end the invocation.
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      requests += 1;
+      if (requests <= 2) {
+        response.writeHead(529, { "content-type": "application/json", "retry-after-ms": "1" });
+        response.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "overloaded" } }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: "msg_1", type: "message", role: "assistant", model: "test-model", stop_reason: "end_turn", stop_sequence: null,
+        content: [{ type: "text", text: "ok" }], usage: { input_tokens: 3, output_tokens: 1 },
+      }));
+    });
+  });
+  await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+  t.after(() => new Promise<void>((closed) => { server.closeAllConnections(); server.close(() => closed()); }));
+  const binding = createDatumRuntimeBinding({
+    role: "extraction-default",
+    budget: { maxAttempts: 1 },
+    resolve: {
+      env: { TEST_PROVIDER_KEY: "test-only-credential-value" },
+      config: {
+        providers: {
+          test: {
+            kind: "anthropic-compatible",
+            auth: { env: "TEST_PROVIDER_KEY" },
+            baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+            models: ["test-model"],
+          },
+        },
+        roles: { "extraction-default": "test-model@test" },
+      },
+    },
+  });
+  const result = await binding.candidates[0]!.runtime.invoke({ messages: [{ role: "user", content: "hello" }] });
+  assert.equal(result.outputText, "ok");
+  assert.equal(requests, 3, "one request and two SDK retries");
 });
 
 test("durable authorization settles successful usage in a private content-free ledger", async () => {
