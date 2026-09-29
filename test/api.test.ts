@@ -7,7 +7,6 @@ import type { FieldworkRunViewV1, ReviewMutationResponseV1 } from "../src/api-co
 import { runFieldwork, reviewedExport } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
 import { persistedReviewSnapshotSchema } from "../src/survey-persistence.js";
-import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { canonicalJson } from "../src/contracts.js";
 import { apiFetch, tempRoot } from "./helpers.js";
 import { REVIEW_ATTRIBUTION_PRODUCER, UNATTRIBUTED_ACTOR_ID, withoutServerStamp } from "../src/review-attribution.js";
@@ -324,23 +323,13 @@ test("static asset serving rejects symlinks even when their target is a regular 
   }
 });
 
-for (const decision of ["accept-proposed", "keep-current", "reject-proposed", "could-not-confirm"] as const) {
+// keep-current needs a `current` candidate, which only a recheck round's items
+// carry: recheck.test.ts decides a recheck round keep-current through this
+// server and exports it. Adding one to a first round's stored queue is an edit
+// that no longer matches its extraction import, and reload refuses it.
+for (const decision of ["accept-proposed", "reject-proposed", "could-not-confirm"] as const) {
   test(`${decision} survives server persistence and reload`, async () => {
     const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot(`decision-${decision}`) });
-    if (decision === "keep-current") {
-      // An envelope-imported item carries only a `proposed` candidate, so this
-      // builds a queue that also has a `current` one. That is round
-      // construction, not an edit to a decided round: the queue binding has to
-      // be taken over the queue actually being installed, exactly as
-      // `newReviewRound` does. Leaving the old digest in place would — rightly
-      // — make this unreadable.
-      const path = join(run.runDirectory, "run.json");
-      const stored = JSON.parse(await readFile(path, "utf8"));
-      const proposed = stored.review.snapshot.items[0].spec.candidates[0];
-      stored.review.snapshot.items[0].spec.candidates.unshift({ ...proposed, id: `${proposed.id}.current`, role: "current" });
-      stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
-      await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
-    }
     const server = await openRun(run.runDirectory);
     try {
       const initial = await view(server);

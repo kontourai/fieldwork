@@ -6,6 +6,7 @@ import {
   admitSourceCheck,
   buildSemanticReviewWork,
   createObservationStore,
+  type ProposalSetIncompleteness,
   type ProposalSetObservation,
   type LookoutSource,
   type CheckResult,
@@ -737,30 +738,31 @@ function observationFor(
     );
   }
   const { proposals } = envelope.result;
-  // Lookout 0.7.0 is built against Traverse 0.25.1, whose proposals always
-  // carry a confidence, and its observation store refuses one that does not.
-  // Traverse 3 makes confidence an optional provider self-report and Fieldwork
-  // never invents one, so a run with an unreported confidence cannot be
-  // recorded as a Lookout observation yet: say so here, with the reason,
-  // instead of surfacing Lookout's generic malformed-observation refusal.
-  if (!proposals.every(hasReportedConfidence)) {
-    throw withCode(
-      "RECHECK_OBSERVATION_FAILED",
-      "Stored extraction has a proposal without a reported confidence, which Lookout cannot record as an observation yet",
-    );
-  }
+  const incomplete = incompletenessOf(envelope.result);
   return {
     sourceId,
     snapshotRef: envelope.source.snapshotRef,
     observedAt: envelope.result.extractedAt,
     proposals,
+    ...(incomplete === undefined ? {} : { incomplete }),
   };
 }
 
-function hasReportedConfidence<T extends { readonly confidence?: number }>(
-  proposal: T,
-): proposal is T & { readonly confidence: number } {
-  return typeof proposal.confidence === "number";
+/**
+ * Lookout's marker for an observation whose extraction did not read and answer
+ * all of its text. A proposal missing from such an observation may sit in text
+ * that was never read, so Lookout reports it as unobserved rather than removed.
+ * Traverse 3 reports every such loss as a partial outcome: a chunk whose
+ * provider call failed is unread coverage, which makes the run partial with
+ * reason `provider-failure`. A failure outcome is refused before a run is
+ * stored, so a stored envelope is either complete or partial.
+ */
+function incompletenessOf(
+  result: Awaited<ReturnType<typeof readRun>>["envelope"]["result"],
+): ProposalSetIncompleteness | undefined {
+  const { outcome, coverage } = result;
+  if (outcome.status !== "partial") return undefined;
+  return { reason: outcome.reason, ...(coverage === undefined ? {} : { coverage }) };
 }
 
 function evidence(observation: {

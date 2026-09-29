@@ -101,7 +101,7 @@ const reviewItemSchema = z.object({
     reviewDecisionName: text.optional()
   }).strict().optional()
 }).strict();
-const decisionSchema = z.enum(["accept-proposed", "keep-current", "reject-proposed", "could-not-confirm"]);
+const decisionSchema = z.enum(["accept-proposed", "select-proposed", "keep-current", "reject-proposed", "could-not-confirm"]);
 
 export const persistedReviewSnapshotSchema = z.object({
   items: z.array(reviewItemSchema).max(FIELDWORK_LIMITS.reviewItems),
@@ -111,7 +111,8 @@ export const persistedReviewSnapshotSchema = z.object({
   reviewedAt: nonempty,
   actorId: nonempty,
   editedValuesByItemName: z.record(text, jsonValueSchema).optional(),
-  attemptEvidenceIdsByItemName: z.record(text, z.array(text).max(FIELDWORK_LIMITS.events)).optional()
+  attemptEvidenceIdsByItemName: z.record(text, z.array(text).max(FIELDWORK_LIMITS.events)).optional(),
+  selectedCandidateIdsByItemName: z.record(text, nonempty).optional()
 }).strict();
 
 export const persistedReviewEventSchema = z.object({
@@ -192,7 +193,10 @@ export function parsePersistedReview(input: {
   if (names.size !== snapshot.items.length || (snapshot.items.length === 0 ? snapshot.activeItemName !== "" : !names.has(snapshot.activeItemName))) {
     throw new Error("Persisted Survey snapshot has invalid item identity");
   }
-  for (const map of [snapshot.notesByItemName, snapshot.decisionsByItemName, snapshot.editedValuesByItemName ?? {}, snapshot.attemptEvidenceIdsByItemName ?? {}]) {
+  for (const map of [
+    snapshot.notesByItemName, snapshot.decisionsByItemName, snapshot.editedValuesByItemName ?? {},
+    snapshot.attemptEvidenceIdsByItemName ?? {}, snapshot.selectedCandidateIdsByItemName ?? {},
+  ]) {
     if (Object.keys(map).some((name) => !names.has(name))) throw new Error("Persisted Survey snapshot map references an unknown item");
   }
   for (const item of snapshot.items as readonly ReviewItem[]) {

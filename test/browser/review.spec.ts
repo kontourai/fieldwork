@@ -609,6 +609,10 @@ test("composed Survey workbench bounds and searches a thousand review items", as
         activeItemName: items[0].metadata.name,
       };
       body.review.items = items;
+      // These items are synthesized for scale, so they cannot match the run's
+      // extraction import, and the workbench rightly refuses a queue checked
+      // against it. Dropping the import leaves the queue unverified instead.
+      delete body.review.extractionImport;
       await route.fulfill({ response, json: body });
     });
     await page.goto(server.url);
@@ -1049,3 +1053,39 @@ test("a run from an older Fieldwork opens with a blocking notice instead of a re
     await expect(page.getByLabel("Fieldwork status")).not.toContainText("ready");
   } finally { await server.close(); }
 });
+
+/* Survey 7: a conflict card lists every proposed value and lets the reviewer
+   choose one. The choice persists through the server, every value stays on the
+   card marked chosen or not, and the queue is checked against its extraction
+   import rather than flagged unverified. */
+for (const viewport of [{ label: "desktop", width: 1280, height: 800 }, { label: "mobile", width: 390, height: 844 }]) {
+  test(`a reviewer chooses one value of a conflict on ${viewport.label}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    const root = await tempRoot(`browser-conflict-choice-${viewport.label}`);
+    const sourcePath = join(root, "source.txt");
+    // Two chunks, each stating a different status: one conflict item.
+    await writeFile(sourcePath, `Status: Active\n${"filler line of text.\n".repeat(700)}Status: Paused\n`);
+    const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath, root });
+    const server = await openRun(run.runDirectory);
+    try {
+      await page.goto(server.url);
+      await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+      await expect(page.getByTestId("queue-attestation")).toHaveCount(0);
+      const card = page.locator('[data-field="record.status"]');
+      await expect(card.getByTestId("conflicting-value")).toHaveCount(2);
+      await card.getByRole("button", { name: /^Use Paused for / }).click();
+      await expect(page.getByLabel("Fieldwork status")).toContainText("Saved");
+      await page.reload();
+      await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+      const reloaded = page.locator('[data-field="record.status"]');
+      await expect(reloaded.getByTestId("decided-chip")).toHaveText("Chose 1 of 2 values");
+      await expect(reloaded.locator('[data-testid="conflicting-value"][data-chosen="true"]')).toContainText("Paused");
+      await expect(reloaded.locator('[data-testid="conflicting-value"][data-chosen="false"]')).toContainText("Active");
+      await expect(page.getByTestId("queue-attestation")).toHaveCount(0);
+      const width = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+      expect(width).toBe(true);
+      const { bundle } = await reviewedExport(run.runDirectory);
+      expect(bundle.claims.map((claim) => [claim.fieldOrBehavior, claim.value])).toEqual([["record.status", "Paused"]]);
+    } finally { await server.close(); }
+  });
+}

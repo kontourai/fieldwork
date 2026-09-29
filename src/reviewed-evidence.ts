@@ -1,6 +1,8 @@
 import {
   evaluateReviewedGroundingPolicy,
   projectReviewedExtractionEvidence,
+  resolverFromBundle,
+  reviewedExtractionEvidenceChoiceProfile,
   type Evidence,
   type ReviewedExtractionEvidenceInput,
   type ReviewedGroundingPolicy,
@@ -112,13 +114,12 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
     // Its claim stays in `requiredClaimIds` below, so the evaluation reports it
     // as missing reviewed evidence instead of reading as allowed.
     if (result.selectedCandidateId === undefined) continue;
-    if (item.spec.candidates.length !== 1) {
-      throw new Error(`Reviewed grounding projection expects exactly one candidate on ${item.metadata.name}`);
-    }
-    const candidate = item.spec.candidates[0]!;
+    const candidate = reviewedCandidate(item, result);
     // Survey groups proposals by claim slot (Survey 5), so an item's position
     // in the import no longer equals its proposal's index; the candidate
-    // records the index of the proposal it stands for.
+    // records the index of the proposal it stands for. On a chosen conflict
+    // this is the chosen candidate's own proposal, so the evidence cites the
+    // chosen value's span and never a rival's.
     const proposalIndex = (candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndex?: unknown } | undefined)?.proposalIndex;
     if (typeof proposalIndex !== "number" || !Number.isSafeInteger(proposalIndex)) {
       throw new Error(`Reviewed grounding projection cannot locate the extraction proposal for ${item.metadata.name}`);
@@ -144,7 +145,15 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
       // validation fieldwork withholds.
       structuralTrust: "validated",
     };
-    additionalEvidence.push(projectReviewedExtractionEvidence(input).evidence);
+    // A single-candidate item keeps the v1 profile. A chosen conflict uses v3,
+    // which binds every candidate of the item and records the rivals the chosen
+    // value was chosen over, so the evidence never reads as an uncontested
+    // value. v3 references the import record by digest; the sidecar keeps each
+    // entry restorable on its own, as a v1 entry is.
+    const chosen = item.spec.candidates.length > 1;
+    additionalEvidence.push(projectReviewedExtractionEvidence(input, chosen
+      ? { profile: reviewedExtractionEvidenceChoiceProfile, includeImportRecord: true }
+      : {}).evidence);
   }
 
   // requireCurrentSource is deliberately unset and no sourceStates are
@@ -181,9 +190,11 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
     requireValidatedStructure: true,
   };
   // Surface 4 binds each claim's value to its reviewed candidate and refuses a
-  // call without `claims`; Surface 3 ignores the field. Passed through a
-  // variable so the call compiles against both declarations.
-  const input = { policy, evidence: additionalEvidence, claims };
+  // call without `claims`. v3 evidence names its import record by digest, and
+  // the resolver reads the record from the sidecar that evidence carries.
+  // `refuseChosenOverRivals` stays off: a value the reviewer chose over rivals
+  // is allowed on its own evidence, and the evaluation records the choice.
+  const input = { policy, evidence: additionalEvidence, claims, resolveImportRecord: resolverFromBundle({ evidence: additionalEvidence }) };
   const decision = evaluateReviewedGroundingPolicy(input);
 
   return {
@@ -195,4 +206,23 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
       outcome: decision.outcome,
     },
   };
+}
+
+/**
+ * The one candidate a decided item's reviewed evidence cites. A single-candidate
+ * item cites its candidate. An item with several candidates is a conflict, and
+ * only Survey's `select-proposed` names one of them: the cited candidate is the
+ * one it chose. Any other decision that names a candidate on a conflict is
+ * refused rather than read as the item's first candidate.
+ */
+function reviewedCandidate(item: ReviewItem, result: ReviewWorkbenchResult): ReviewItem["spec"]["candidates"][number] {
+  const { candidates } = item.spec;
+  if (candidates.length === 1) return candidates[0]!;
+  const chosen = result.decision === "select-proposed"
+    ? candidates.find((candidate) => candidate.id === result.selectedCandidateId && candidate.role === "proposed")
+    : undefined;
+  if (!chosen) {
+    throw new Error(`Reviewed grounding projection cannot tell which of ${candidates.length} candidates on ${item.metadata.name} was chosen`);
+  }
+  return chosen;
 }
