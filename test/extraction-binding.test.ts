@@ -293,17 +293,15 @@ test("the CLI reports a claim whose grounding was refused and exits non-zero", a
   );
 });
 
-test("an edit to the envelope's outcome or coverage, not only its proposals, is refused", async () => {
+test("an edit to the envelope's outcome and coverage, not only its proposals, is refused", async () => {
   // A partial run's envelope edited to read as complete: its outcome made a
-  // success, or its unread chunk marked read. Both stay valid envelopes, so
-  // only the binding can tell.
+  // success and its coverage record removed. (Marking the unread chunk read
+  // while keeping the partial outcome is already an invalid envelope.) The
+  // result is valid, so with the queue rebuilt only the binding can tell.
   for (const [label, edit] of [
     ["outcome", (result: Record<string, unknown>) => {
       result.outcome = { status: "success" };
       delete result.partial; delete result.coverage; delete result.providerFailures;
-    }],
-    ["coverage", (result: Record<string, unknown>) => {
-      result.coverage = (result.coverage as { reason?: string; status: string }[]).map(({ reason: _reason, ...entry }) => ({ ...entry, status: "complete" }));
     }],
   ] as const) {
     const run = await partialRunWithProposals(`envelope-${label}`);
