@@ -195,10 +195,7 @@ export async function recheckFieldwork(
       );
     }
     if (loaded.value && !sameObservation(loaded.value, priorObservation)) {
-      throw withCode(
-        "RECHECK_CONFLICT",
-        "Stored source continuity does not match the selected prior run",
-      );
+      throw priorContinuityConflict(loaded.value, priorObservation);
     }
     return portableResult({
       classification: "task-drift",
@@ -660,10 +657,7 @@ async function establishPrior(
         );
       return loaded.value;
     }
-    throw withCode(
-      "RECHECK_CONFLICT",
-      "Stored source continuity does not match the selected prior run",
-    );
+    throw priorContinuityConflict(loaded.value, observation);
   }
   const anchor = {
     checkedAt: observation.observedAt,
@@ -870,12 +864,43 @@ function assertCheckContinuity(
   }
 }
 
+/**
+ * The stored prior observation is not the selected prior run's. When the only
+ * difference is the incomplete marker, say so: the prior was stored by Lookout
+ * 0.7 from a partial run, and every recheck of this source will hit it until
+ * the source's observation store is replaced. Re-running the source does not
+ * touch that store.
+ */
+function priorContinuityConflict(
+  stored: Parameters<typeof sameObservation>[0],
+  observation: ProposalSetObservation,
+): Error {
+  const unmarked = stored.incomplete === undefined && observation.incomplete !== undefined
+    && sameObservation({ ...stored, incomplete: observation.incomplete }, observation);
+  if (!unmarked) return withCode("RECHECK_CONFLICT", "Stored source continuity does not match the selected prior run");
+  return Object.assign(withCode(
+    "RECHECK_CONFLICT",
+    "The stored prior observation for this source does not record that the selected prior run was incomplete: "
+      + "it was stored by an older Lookout, which did not keep that marker, so reusing it would read values the run never read as added. "
+      + "Recheck this source with a new, empty --observation-root (or move this source's directory out of the current one); "
+      + "the prior is then re-established from the selected run, marker included.",
+  ), { reason: "prior-observation-unmarked-incomplete" });
+}
+
+/**
+ * Whether a stored observation is the one this run records, including Lookout
+ * 0.8's `incomplete` marker. Lookout 0.7 stored no marker, so a prior it wrote
+ * from a partial run reads as complete: values that run never read would show
+ * as added rather than newly observed. A marker that differs is a different
+ * observation, and the stored one is not reused as this run's.
+ */
 function sameObservation(
   stored: {
     sourceId: string;
     snapshotRef: string;
     observedAt: string;
     proposals: readonly ExtractionProposal[];
+    incomplete?: ProposalSetIncompleteness;
   },
   observation: ProposalSetObservation,
 ): boolean {
@@ -883,7 +908,8 @@ function sameObservation(
     stored.sourceId === observation.sourceId &&
     stored.snapshotRef === observation.snapshotRef &&
     stored.observedAt === observation.observedAt &&
-    canonicalJson(stored.proposals) === canonicalJson(observation.proposals)
+    canonicalJson(stored.proposals) === canonicalJson(observation.proposals) &&
+    canonicalJson(stored.incomplete ?? null) === canonicalJson(observation.incomplete ?? null)
   );
 }
 

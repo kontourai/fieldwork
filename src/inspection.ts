@@ -1,12 +1,9 @@
 import {
   buildExtractionInspectorModel,
   exportExtractionInspector,
-  importExtractionEnvelope,
 } from "@kontourai/survey";
 import { canonicalJson } from "./contracts.js";
-import {
-  FIELDWORK_SOURCE_KIND, importNameFor, reviewQueueFromOlderFieldwork, RUN_FROM_OLDER_FIELDWORK_MESSAGE,
-} from "./fieldwork.js";
+import { reviewBlockedFor, storedExtractionImport } from "./fieldwork.js";
 import { assertPortableOutput, readRun } from "./run-store.js";
 
 export interface FieldworkInspectionExportOptions {
@@ -26,18 +23,7 @@ export async function inspectionExport(
   options: FieldworkInspectionExportOptions = {},
 ): Promise<string> {
   const stored = await readRun(runDirectory);
-  const imported = importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run),
-    producerNamespace: "fieldwork",
-    sourceKind: FIELDWORK_SOURCE_KIND,
-    claimTarget: (proposal) => {
-      const projection = stored.run.task.spec.projections.find(
-        (entry) => entry.fieldPath === proposal.fieldPath,
-      );
-      if (!projection) throw new Error("Unknown projection");
-      return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
-    },
-  });
+  const imported = storedExtractionImport(stored);
   const model = buildExtractionInspectorModel({
     importResult: imported,
     artifact: {
@@ -63,9 +49,7 @@ export async function inspectionExport(
         ...(stored.envelope.result.coverage === undefined ? {} : { coverage: stored.envelope.result.coverage }),
       },
       // The extraction still inspects, but its review can never be exported.
-      ...(reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items) ? {
-        reviewBlocked: { reason: "created-by-older-fieldwork", message: RUN_FROM_OLDER_FIELDWORK_MESSAGE },
-      } : {}),
+      ...reviewBlockedFor(stored.run),
     },
   };
   assertPortableOutput(withExtractionOutcome);

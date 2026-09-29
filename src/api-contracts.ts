@@ -240,7 +240,7 @@ export interface FieldworkRunViewV1 {
     readonly coverage?: { readonly chunkCount: number; readonly incompleteChunkCount: number };
   };
   /** Present when the run can be opened but its review can never be exported. */
-  readonly reviewBlocked?: { readonly reason: "created-by-older-fieldwork"; readonly message: string };
+  readonly reviewBlocked?: { readonly reason: "created-by-older-fieldwork" | "unbound-envelope"; readonly message: string };
   readonly review: {
     /** Survey-owned snapshot, transported as validated JSON and validated semantically before serving. */
     readonly snapshot: JsonObject;
@@ -438,7 +438,7 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
     }).strict().refine((value) => value.incompleteChunkCount <= value.chunkCount).optional(),
   }).strict(),
   reviewBlocked: z.object({
-    reason: z.literal("created-by-older-fieldwork"),
+    reason: z.enum(["created-by-older-fieldwork", "unbound-envelope"]),
     message: z.string().min(1).max(512),
   }).strict().optional(),
   review: z.object({

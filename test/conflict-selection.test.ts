@@ -14,7 +14,8 @@ import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import { reviewedExport, runFieldwork, SEMANTIC_TRANSITION_PRODUCER } from "../src/fieldwork.js";
 import { openRun } from "../src/server.js";
 import { parsePersistedReview } from "../src/survey-persistence.js";
-import { apiFetch, tempRoot } from "./helpers.js";
+import { apiFetch } from "./helpers.js";
+import { conflictRun } from "./helpers/conflict-run.js";
 
 /*
  * Survey 7 lets a reviewer choose one value of a conflict set
@@ -163,20 +164,6 @@ test("a queue edited after the run is opened is refused when a decision is appen
     await service.close().catch((error: Error & { code?: string }) => assert.equal(error.code, "REVIEW_QUEUE_UNATTESTED"));
   }
 });
-
-async function conflictRun(label: string): Promise<string> {
-  const root = await tempRoot(`conflict-${label}`);
-  const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));
-  const [statusProjection] = task.spec.projections;
-  task.spec.traverse.targetSchema.push({ path: "record.alpha", type: "string", inferenceType: "explicit" });
-  task.spec.projections.push({ ...statusProjection, fieldPath: "record.alpha", pattern: "alpha: ([^\\n]+)" });
-  const taskPath = join(root, "task.json");
-  const sourcePath = join(root, "source.txt");
-  await writeFile(taskPath, JSON.stringify(task));
-  // Enough filler that Traverse prepares two chunks, each with its own Status line.
-  await writeFile(sourcePath, `alpha: alpha-value\nStatus: Active\n${"filler line of text.\n".repeat(700)}Status: Paused\n`);
-  return (await runFieldwork({ taskPath, sourcePath, root })).runDirectory;
-}
 
 async function snapshotOf(runDirectory: string): Promise<ReviewQueueSessionState> {
   const service = await openRun(runDirectory);

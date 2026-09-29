@@ -5,7 +5,7 @@ import { parseSnapshotSourceRef, resolveSnapshotSourceRef } from "@kontourai/for
 import { createObservationStore } from "@kontourai/lookout";
 import { enumerateExactOccurrences, resolvePreparedArtifact } from "@kontourai/traverse";
 import { canonicalJson } from "./contracts.js";
-import { projectAttestedReviewedProjection } from "./fieldwork.js";
+import { groundingRefusedClaims, projectAttestedReviewedProjection } from "./fieldwork.js";
 import { currentReviewFence, readRun, readRunMetadata } from "./run-store.js";
 import { buildReviewedExtractionSourceState, restoreReviewedExtractionEvidence } from "@kontourai/surface";
 import { FieldworkSourceCheckReceiptStore, type ReceiptV2 } from "./source-check-receipts.js";
@@ -90,7 +90,9 @@ export class ReviewedWebSourceReader {
       apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "available", exactRef,
       runResource: found.run.runResource, captureRef: found.captureRef,
       preparedArtifact: closedPrepared(found.run.preparedArtifact),
-      review: { revision: found.run.review.revision, state: "reviewed" },
+      // A claim the review accepted but its grounding refused (an unresolved
+      // excluded rival) is not described as plainly reviewed.
+      review: { revision: found.run.review.revision, state: found.groundingRefused ? "grounding-refused" : "reviewed" },
       evidence: found.evidence,
       // Metadata binds claims to an artifact but deliberately does not read its bytes.
       integrity: { state: "unchecked" }, inspection: { pageChars: PAGE_CHARS, maxPages: MAX_PAGES },
@@ -215,7 +217,8 @@ export class ReviewedWebSourceReader {
       if (!evidence) return undefined;
       const surfaceEvidence = attested.enrichment.additionalEvidence.find((entry) => entry.id === evidence.id);
       if (!surfaceEvidence) return undefined;
-      return { run: stored.run, captureRef, proposal, proposalIndex: index, candidateId: evidence.candidate.id, evidence, surfaceEvidence };
+      const groundingRefused = groundingRefusedClaims(attested).some((entry) => entry.claimId === evidence.claimId);
+      return { run: stored.run, captureRef, proposal, proposalIndex: index, candidateId: evidence.candidate.id, evidence, surfaceEvidence, groundingRefused };
     }
     return undefined;
   }

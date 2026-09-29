@@ -188,6 +188,15 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
     requirePreparedArtifact: true,
     requireAcceptedReview: true,
     requireValidatedStructure: true,
+    // Survey verifies every excerpt against the prepared text when a run is
+    // created, so evidence that does not record that check is not this run's.
+    requireVerifiedExcerpts: true,
+    // A rival the import left out because its excerpt did not verify is
+    // unverifiable, not disproven, and the reviewer could not choose it: it was
+    // never a candidate. Nothing resolves it, so a claim it contests is not
+    // allowed as grounded. A rival the reviewer saw and chose against is a
+    // different case, below.
+    refuseExcludedRivals: true,
   };
   // Surface 4 binds each claim's value to its reviewed candidate and refuses a
   // call without `claims`. v3 evidence names its import record by digest, and
