@@ -306,13 +306,17 @@ export async function reviewedExport(
     assertExcerptsMatchPreparedText(stored.envelope, stored.preparedText);
   }
   const projection = projectAttestedReviewedProjection(stored);
-  const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
+  const refused = groundingRefusedClaims(projection);
+  const bundle = validateTrustBundle(disputeGroundingRefusedClaims(
+    buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }),
+    refused,
+  ));
   const output = {
     apiVersion: "fieldwork.kontourai.io/v1",
     kind: "ReviewedExport",
     bundle: withReviewedGroundingEvidence(bundle, projection.enrichment),
     reviewedGrounding: projection.enrichment.grounding,
-    reviewRound: reviewRoundScope(stored, projection),
+    reviewRound: reviewRoundScope(stored, projection, refused),
   };
   assertPortableOutput(output);
   return parseReviewedExport(output);
@@ -331,6 +335,7 @@ export async function reviewedExport(
 function reviewRoundScope(
   stored: StoredRunMetadataRead,
   projection: ReturnType<typeof projectAttestedReviewedProjection>,
+  groundingRefused: readonly GroundingRefusedClaim[],
 ): Record<string, unknown> {
   return {
     apiVersion: "fieldwork.kontourai.io/v1",
@@ -339,8 +344,52 @@ function reviewRoundScope(
     eventCount: stored.run.review.events.length,
     complete: projection.excluded.length === 0,
     excluded: projection.excluded,
+    // Present only when a claim the review accepted is not supported by its
+    // grounding, so the receipt never states it as plainly verified.
+    ...(groundingRefused.length === 0 ? {} : { groundingRefused }),
     decisions: projection.attribution,
   };
+}
+
+/** A claim the review accepted whose reviewed grounding was refused, and why. */
+export interface GroundingRefusedClaim {
+  readonly claimId: string;
+  readonly fieldPath: string;
+  readonly gaps: readonly string[];
+}
+
+/**
+ * Claims the review resolved to a verified value whose grounding evaluation
+ * nonetheless refused them, such as a value contested by an excluded rival
+ * whose excerpt did not verify. A rejected or unconfirmed claim already does
+ * not read as verified, so it is not listed.
+ */
+export function groundingRefusedClaims(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment">): GroundingRefusedClaim[] {
+  const { grounding } = projection.enrichment;
+  if (grounding.outcome !== "refused") return [];
+  const gapsByClaim = new Map<string, string[]>();
+  for (const gap of grounding.gaps) {
+    if (!("claimId" in gap)) continue;
+    gapsByClaim.set(gap.claimId, [...new Set([...gapsByClaim.get(gap.claimId) ?? [], gap.kind])]);
+  }
+  return projection.canonical.surveyInput.claims.flatMap((claim) => claim.status === "verified" && gapsByClaim.has(claim.id)
+    ? [{ claimId: claim.id, fieldPath: claim.fieldOrBehavior, gaps: gapsByClaim.get(claim.id)! }] : []);
+}
+
+/**
+ * A verified claim whose grounding was refused because a rival value is
+ * unresolved (excluded at import, hidden from the item, or chosen over under a
+ * policy that refuses that) is contested. Surface's `disputed` status says so
+ * inside the bundle, so a consumer that reads only the bundle does not see a
+ * plain verified claim. Other refusals, such as a structure Surface cannot
+ * validate, are not a dispute; they are named in `reviewRound.groundingRefused`.
+ */
+const RIVAL_GAPS = new Set(["excluded-rival-unresolved", "hidden-conflict", "chosen-over-rival-unresolved"]);
+
+function disputeGroundingRefusedClaims<T extends { claims: { id: string; status?: string }[] }>(bundle: T, refused: readonly GroundingRefusedClaim[]): T {
+  const ids = new Set(refused.filter((entry) => entry.gaps.some((gap) => RIVAL_GAPS.has(gap))).map((entry) => entry.claimId));
+  if (ids.size === 0) return bundle;
+  return { ...bundle, claims: bundle.claims.map((claim) => ids.has(claim.id) ? { ...claim, status: "disputed" } : claim) };
 }
 
 /**
@@ -436,6 +485,33 @@ function assertExcerptsMatchPreparedText(envelope: PortableExtractionResultEnvel
 }
 
 /**
+ * Survey leaves a proposal whose excerpt does not verify out of the queue and
+ * records it on the review item of its claim slot, as an excluded rival. When
+ * every proposal of a slot is excluded there is no item to record it on, so
+ * the field would drop out of the export silently and the round would read as
+ * complete. Refuse instead, naming the field, as export did before Survey
+ * verified excerpts at import.
+ */
+function assertNoFieldLostToExcludedExcerpts(imported: ExtractionEnvelopeImportResult, envelope: PortableExtractionResultEnvelope): void {
+  const recorded = new Set(imported.reviewItems.flatMap((item) => {
+    const producer = item.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { excludedProposals?: { proposalIndex?: unknown }[] } | undefined;
+    return (producer?.excludedProposals ?? []).map((entry) => entry.proposalIndex);
+  }));
+  const lost = imported.record.status.diagnostics.flatMap((diagnostic) => diagnostic.kind === "excerpt-mismatch"
+    && !recorded.has(diagnostic.proposalIndex) ? [diagnostic] : []);
+  if (lost.length === 0) return;
+  const fields = [...new Set(lost.map((diagnostic) => envelope.result.proposals[diagnostic.proposalIndex]?.fieldPath ?? `proposal ${diagnostic.proposalIndex}`))];
+  throw Object.assign(
+    new Error(
+      `Export refused: no proposal for ${fields.join(", ")} cites text the prepared source contains `
+      + `(${lost.map((diagnostic) => diagnostic.locator).join(", ")}), so the field has no reviewable value and would drop out of the export unnoticed. `
+      + "A reviewed claim has to cite text the document actually contains; re-run the source."
+    ),
+    { code: "EXPORT_EXCERPT_MISMATCH", fieldPaths: fields },
+  );
+}
+
+/**
  * Rebuild the one attested Survey-to-Surface projection shared by reviewed
  * export and owner-authorized metadata reads. It accepts the metadata half of
  * a run, so no caller hydrates prepared source bytes just to prove the
@@ -466,6 +542,7 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead 
   const queue = stored.run.review.snapshot.items as readonly ReviewItem[];
   assertReviewedQueueIsAttested(queue, imported, stored.envelope);
   if (stored.run.extraction === undefined) throw unboundEnvelope();
+  assertNoFieldLostToExcludedExcerpts(imported, stored.envelope);
   const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
   const applied = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
   if (!applied.ok || !applied.replayedSession) {
@@ -798,7 +875,8 @@ function unboundEnvelope(): Error {
 
 /**
  * Why a run opens but can never be exported, if it cannot. A run from before
- * the extraction binding is served so its history stays readable, but closed:
+ * the extraction binding is served so its source and extraction can still be
+ * inspected, but its review queue is not shown and review is closed:
  * its envelope could have been edited undetected, and decisions recorded
  * against it could never be exported.
  */

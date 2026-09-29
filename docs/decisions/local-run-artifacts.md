@@ -121,11 +121,33 @@ Runs created before the binding carry no `extraction` field. Verifying the
 excerpts changes the items an import builds, so their stored queues could never
 attest against a verified import. They are not re-bound: binding now would
 bless whatever envelope the run holds today. They open against the unverified
-import they were built from, so their history stays readable, but they are
-served with a `reviewBlocked` notice (`unbound-envelope`). Decisions are
+import they were built from, so the source and its extraction can still be
+inspected, but they are served with a `reviewBlocked` notice
+(`unbound-envelope`) and the review queue is not shown. Decisions are
 refused (`RUN_ENVELOPE_UNBOUND`), and so is export (`EXPORT_UNBOUND_ENVELOPE`).
 Removing the binding from a bound run therefore closes it rather than
 unlocking it.
+
+A field whose every proposal fails the excerpt check has no review item left
+for Survey to record the exclusion on, so it would drop out of the export
+while the round read as complete. Export refuses it instead
+(`EXPORT_EXCERPT_MISMATCH`, naming the field), as it did before Survey verified
+excerpts. A claim the review accepted but whose grounding is refused, such as
+one contested by an excluded rival, is listed under
+`reviewRound.groundingRefused`; when the refusal is an unresolved rival value
+it is also stated as `disputed` in the bundle. The CLI exits 3 for it, as for a
+partial export, and the reviewed-source facade describes it with
+`review.state: "grounding-refused"`.
+
+A Lookout 0.7 prior observation stored from a partial run has no incomplete
+marker, so it no longer matches the selected prior run, and every recheck of
+that source is refused with `RECHECK_CONFLICT` (reason
+`prior-observation-unmarked-incomplete`). Re-running the source does not touch
+the observation store. The recovery is to recheck with a new, empty
+`--observation-root`, or to move the source's directory out of the current one;
+the prior is then re-established from the selected run with its marker.
+Fieldwork does not delete observation history itself, because that store is
+Lookout's continuity record and other checks may depend on it.
 
 What remains: `run.json` and the envelope are both local files. A writer who
 edits the envelope and also rewrites the bound digest, the bound status, the

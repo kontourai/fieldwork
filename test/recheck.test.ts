@@ -19,7 +19,7 @@ import {
 import type { ReviewItem } from "@kontourai/survey";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
-import { canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, reviewedExport, runFieldwork } from "../src/fieldwork.js";
+import { bindExtraction, canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, importNameFor, reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
@@ -669,7 +669,7 @@ test("a partial recheck run records its incompleteness and raises no removal", a
 test("a prior observation stored without the incomplete marker its run records is not reused", async () => {
   const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
   const runtime = unreadableChunkRuntimeBinding();
-  const attempt = async (withMarker: boolean) => {
+  const attempt = async (withMarker: boolean, recover = false) => {
     const setup = await baseline(`Status: Active${filler}UNREADABLE`, join(fixture, "task.json"), runtime);
     const prior = await readRun(setup.prior.runDirectory);
     assert.equal(prior.envelope.result.outcome.status, "partial");
@@ -687,6 +687,12 @@ test("a prior observation stored without the incomplete marker its run records i
     }, null);
     assert.ok(committed.ok, JSON.stringify(committed));
     const current = snapshot("capture-after-partial", `Status: Paused${filler}`, "2026-07-23T18:00:00.000Z");
+    const options = { ...setup.options, runtime, acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } } };
+    if (recover) {
+      await assert.rejects(() => recheckFieldwork(options), { code: "RECHECK_CONFLICT" });
+      // The documented recovery: a new, empty observation root for this source.
+      return recheckFieldwork({ ...options, observationRoot: join(setup.root, "observations-rebuilt") });
+    }
     return recheckFieldwork({
       ...setup.options,
       runtime,
@@ -694,8 +700,52 @@ test("a prior observation stored without the incomplete marker its run records i
     });
   };
   assert.ok((await attempt(true)).run, "the prior stored with its marker is the prior run's observation");
-  await assert.rejects(() => attempt(false), (error: Error & { code?: string }) => {
+  await assert.rejects(() => attempt(false), (error: Error & { code?: string; reason?: string }) => {
     assert.equal(error.code, "RECHECK_CONFLICT");
+    assert.equal(error.reason, "prior-observation-unmarked-incomplete");
+    assert.match(error.message, /older Lookout.*--observation-root/s);
+    return true;
+  });
+  const recovered = await attempt(false, true);
+  assert.ok(recovered.run, "a new observation root re-establishes the prior from the selected run");
+});
+
+/*
+ * A recheck round's new-source candidates are matched against the envelope's
+ * proposals directly, so an excerpt rewritten in both, with the run re-bound,
+ * would be cited. Export compares every span with the prepared text first.
+ */
+test("a recheck round citing an excerpt the prepared text does not contain is refused at export", async () => {
+  // Two chunks state the new value, so the extraction stays grounded when one
+  // of its two proposals no longer verifies.
+  const result = await roundFor("capture-rewritten-excerpt", `Status: Pending\n${"filler line of text.\n".repeat(700)}Status: Pending\n`);
+  const runDirectory = result.run!.runDirectory;
+  const runPath = join(runDirectory, "run.json");
+  const envelopePath = join(runDirectory, "extraction-envelope.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  const envelope = JSON.parse(await readFile(envelopePath, "utf8"));
+  const pending = envelope.result.proposals.find((proposal: { candidateValue: unknown }) => proposal.candidateValue === "Pending");
+  assert.equal(pending.provenance.excerpt, "Status: Pending");
+  pending.provenance.excerpt = "Status: Pendinx";
+  pending.candidateValue = "Pendinx";
+  let cited = 0;
+  for (const item of stored.review.snapshot.items as ReviewItem[]) {
+    for (const candidate of item.spec.candidates) {
+      if (candidate.role !== "proposed" || candidate.locator?.locator !== pending.provenance.locator) continue;
+      cited++;
+      candidate.value = "Pendinx";
+      candidate.locator = { ...candidate.locator!, excerpt: "Status: Pendinx" };
+    }
+  }
+  assert.ok(cited > 0, "the round cites the rewritten proposal");
+  stored.review.snapshotHash = reviewSnapshotHash(stored.review.snapshot);
+  stored.extraction = bindExtraction(stored.task, importNameFor(stored), envelope, (await readRun(runDirectory)).preparedText).extraction;
+  await writeFile(envelopePath, JSON.stringify(envelope, null, 2));
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+  await decideRound(runDirectory, () => "accept-proposed");
+  await assert.rejects(() => reviewedExport(runDirectory), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_EXCERPT_MISMATCH");
+    assert.match(error.message, /is not what the prepared source text contains there/);
     return true;
   });
 });

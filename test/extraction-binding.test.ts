@@ -1,17 +1,27 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
+import { createFilesystemSnapshotStore } from "@kontourai/forage";
+import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import { join } from "node:path";
 import test from "node:test";
 import { importExtractionEnvelope, type ReviewItem } from "@kontourai/survey";
 import { buildReviewSessionEvents, hashReviewQueueSnapshot, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import {
-  bindExtraction, FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, projectAttestedReviewedProjection, reviewedExport,
+  bindExtraction, FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, projectAttestedReviewedProjection, reviewedExport, runFieldwork,
 } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
 import { readRun, readRunMetadata, type StoredRun } from "../src/run-store.js";
 import { openRun } from "../src/server.js";
-import { apiFetch } from "./helpers.js";
+import { apiFetch, tempRoot } from "./helpers.js";
+import { ReviewedWebSourceReader } from "../src/reviewed-web-source.js";
+import { parseReviewedWebSourceDescriptor } from "../src/reviewed-web-source-contract.js";
+
+const exec = promisify(execFile);
 import { conflictRun } from "./helpers/conflict-run.js";
 
 /*
@@ -179,12 +189,16 @@ test("a run created before the binding opens with a notice, refuses decisions an
  * (`bindExtraction`) the run was created with.
  */
 async function runWithExcludedRival(label: string): Promise<string> {
-  const run = await conflictRun(label);
+  return forgeUnverifiedExcerpt(await conflictRun(label), "Active", "Status: Actiff", "Actiff");
+}
+
+/** Replace one proposal's excerpt with same-length text the source does not contain there, and re-bind the run. */
+async function forgeUnverifiedExcerpt(run: string, value: string, excerpt: string, candidateValue: string): Promise<string> {
   const { runPath, envelopePath, run: stored, envelope } = await files(run);
-  const active = envelope.result.proposals.find((proposal) => proposal.candidateValue === "Active")!;
-  assert.equal(active.provenance.excerpt, "Status: Active");
-  active.provenance.excerpt = "Status: Actiff";
-  active.candidateValue = "Actiff";
+  const proposal = envelope.result.proposals.find((entry) => entry.candidateValue === value)!;
+  assert.equal(proposal.provenance.excerpt.length, excerpt.length);
+  proposal.provenance.excerpt = excerpt;
+  proposal.candidateValue = candidateValue;
   const { imported, extraction } = bindExtraction(stored.task, importNameFor(stored), envelope as never, (await readRun(run)).preparedText);
   await writeFile(envelopePath, JSON.stringify(envelope, null, 2));
   await writeFile(runPath, JSON.stringify({ ...stored, extraction, review: newReviewRound(imported.reviewItems, stored.createdAt) }, null, 2));
@@ -208,8 +222,13 @@ test("a proposal whose excerpt does not verify is excluded, shown as an excluded
   assert.equal(saved.ok, true, JSON.stringify(saved));
   const exported = await reviewedExport(run);
   const claims = (exported.bundle as unknown as { claims: { id: string; fieldOrBehavior: string; value: unknown }[] }).claims;
-  const statusClaim = claims.find((claim) => claim.fieldOrBehavior === "record.status")!;
+  const statusClaim = claims.find((claim) => claim.fieldOrBehavior === "record.status")! as { id: string; value: unknown; status?: string };
   assert.equal(statusClaim.value, "Paused");
+  // Contested, not plainly verified: in the bundle and in the export's scope.
+  assert.equal(statusClaim.status, "disputed");
+  assert.equal((claims.find((claim) => claim.fieldOrBehavior === "record.alpha") as { status?: string }).status, "verified");
+  assert.deepEqual((exported.reviewRound as { groundingRefused?: unknown }).groundingRefused,
+    [{ claimId: statusClaim.id, fieldPath: "record.status", gaps: ["excluded-rival-unresolved"] }]);
   const grounding = exported.reviewedGrounding as {
     outcome: string;
     gaps: { kind: string; claimId: string; rivalProposalIndices?: number[] }[];
@@ -240,4 +259,82 @@ test("a metadata-only read rebuilds the verified import from the status bound at
   await writeFile(runPath, JSON.stringify(stored, null, 2));
   await assert.rejects(async () => projectAttestedReviewedProjection(await readRunMetadata(run)), refused("EXPORT_UNATTESTED_QUEUE"));
   await assert.rejects(() => reviewedExport(run), refused("RUN_EXTRACTION_MISMATCH"));
+});
+
+test("a field whose every proposal fails its excerpt check refuses the export, naming the field", async () => {
+  // record.alpha has one proposal; with it excluded there is no item left for it.
+  const run = await forgeUnverifiedExcerpt(await conflictRun("lost-field"), "alpha-value", "alpha: alphaXvalue", "alphaXvalue");
+  const snapshot = (await view(run)).review.snapshot as unknown as ReviewQueueSessionState;
+  assert.deepEqual(snapshot.items.map((item) => item.spec.target), ["record.status"], "the field has no review item");
+  assert.equal((await post(run, snapshot, acceptAll(snapshot, "Paused"))).ok, true);
+  await assert.rejects(() => reviewedExport(run), (error: Error & { code?: string; fieldPaths?: string[] }) => {
+    assert.equal(error.code, "EXPORT_EXCERPT_MISMATCH");
+    assert.deepEqual(error.fieldPaths, ["record.alpha"]);
+    assert.match(error.message, /record\.alpha/);
+    return true;
+  });
+});
+
+test("the CLI reports a claim whose grounding was refused and exits non-zero", async () => {
+  const run = await runWithExcludedRival("cli-contested");
+  const snapshot = (await view(run)).review.snapshot as unknown as ReviewQueueSessionState;
+  assert.equal((await post(run, snapshot, acceptAll(snapshot))).ok, true);
+  const outputPath = join(run, "..", "export.json");
+  await assert.rejects(
+    () => exec(process.execPath, ["--import", "tsx", "src/cli.ts", "export", run, "--output", outputPath, "--json"]),
+    (error: { code?: number; stdout: string }) => {
+      assert.equal(error.code, 3);
+      const summary = JSON.parse(error.stdout);
+      assert.equal(summary.complete, true, "nothing was excluded");
+      assert.deepEqual(summary.groundingRefused.map((entry: { fieldPath: string }) => entry.fieldPath), ["record.status"]);
+      return true;
+    },
+  );
+});
+
+test("an edit to the envelope's outcome or coverage, not only its proposals, is refused", async () => {
+  for (const [label, edit] of [
+    ["outcome", (envelope: { result: Record<string, unknown> }) => { envelope.result.outcome = { status: "partial", reason: "max-chunks" }; }],
+    ["coverage", (envelope: { result: Record<string, unknown> }) => { envelope.result.coverage = [{ chunk: 1, start: 0, end: 1, status: "complete" }]; }],
+  ] as const) {
+    const run = await conflictRun(`envelope-${label}`);
+    const { envelopePath, envelope } = await files(run);
+    edit(envelope as never);
+    await writeFile(envelopePath, JSON.stringify(envelope, null, 2));
+    await assert.rejects(() => view(run), refused("RUN_ENVELOPE_MISMATCH"));
+    await assert.rejects(() => reviewedExport(run), refused("RUN_ENVELOPE_MISMATCH"));
+  }
+});
+
+test("the reviewed-source facade describes a claim whose grounding was refused as such", async () => {
+  const snapshotRoot = await mkdtemp(join(tmpdir(), "fieldwork-contested-snapshots-"));
+  const root = await tempRoot("contested-facade");
+  const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));
+  const [statusProjection] = task.spec.projections;
+  task.spec.traverse.targetSchema.push({ path: "record.alpha", type: "string", inferenceType: "explicit" });
+  task.spec.projections.push({ ...statusProjection, fieldPath: "record.alpha", pattern: "alpha: ([^\\n]+)" });
+  const taskPath = join(root, "task.json");
+  await writeFile(taskPath, JSON.stringify(task));
+  const body = `alpha: alpha-value\nStatus: Active\n${"filler line of text.\n".repeat(700)}Status: Paused\n`;
+  const captured = { sourceId: "contested-source", url: "https://example.test/contested", status: 200, fetchedAt: "2026-08-26T00:00:00.000Z", body, bodyHash: createHash("sha256").update(body).digest("hex"), headers: { "content-type": "text/plain" } };
+  await createFilesystemSnapshotStore({ root: snapshotRoot }).put(captured);
+  const created = await runFieldwork({ taskPath, snapshotRef: buildSnapshotSourceRef(captured), snapshotRoot, root });
+  const run = await forgeUnverifiedExcerpt(created.runDirectory, "Active", "Status: Actiff", "Actiff");
+  const snapshot = (await view(run)).review.snapshot as unknown as ReviewQueueSessionState;
+  assert.equal((await post(run, snapshot, acceptAll(snapshot))).ok, true);
+
+  const reader = new ReviewedWebSourceReader({ runDirectory: run, snapshotRoot, authorize: () => true });
+  const listed = await reader.listReviewedWebSourceRefs();
+  assert.equal(listed.status, "available");
+  const states: Record<string, string> = {};
+  for (const exactRef of listed.status === "available" ? listed.refs : []) {
+    const described = await reader.describeReviewedWebSource(exactRef);
+    assert.equal(described.status, "available");
+    if (described.status !== "available") continue;
+    assert.deepEqual(parseReviewedWebSourceDescriptor(described), described);
+    states[described.evidence.reviewItem.name] = described.review.state;
+  }
+  const status = snapshot.items.find((item) => item.spec.target === "record.status")!.metadata.name;
+  const alpha = snapshot.items.find((item) => item.spec.target === "record.alpha")!.metadata.name;
+  assert.deepEqual(states, { [status]: "grounding-refused", [alpha]: "reviewed" });
 });

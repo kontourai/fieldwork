@@ -131,12 +131,17 @@ async function main(argv: string[]): Promise<void> {
       if (!run || !outputPath) throw Object.assign(new Error("export requires <run> --output <file>"), { code: "INVALID_ARGUMENT" });
       const artifact = await reviewedExport(resolve(run));
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
-      // A partial export is written, but never silently: it is reported with
-      // what was left out, and exits 3 so a script cannot mistake it for a
-      // complete one.
-      const scope = artifact.reviewRound as { complete?: boolean; excluded?: unknown[] } | undefined;
-      if (scope?.complete === false) {
-        output({ ok: true, output: outputPath, complete: false, excluded: scope.excluded ?? [] }, has(args, "--json"));
+      // A partial export, or one stating an accepted claim its grounding
+      // refused, is written but never silently: it is reported with what was
+      // left out or contested, and exits 3 so a script cannot mistake it for
+      // a complete, grounded one.
+      const scope = artifact.reviewRound as { complete?: boolean; excluded?: unknown[]; groundingRefused?: unknown[] } | undefined;
+      const contested = scope?.groundingRefused ?? [];
+      if (scope?.complete === false || contested.length > 0) {
+        output({
+          ok: true, output: outputPath, complete: scope?.complete !== false, excluded: scope?.excluded ?? [],
+          ...(contested.length === 0 ? {} : { groundingRefused: contested }),
+        }, has(args, "--json"));
         process.exitCode = 3;
         return;
       }

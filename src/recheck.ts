@@ -195,10 +195,7 @@ export async function recheckFieldwork(
       );
     }
     if (loaded.value && !sameObservation(loaded.value, priorObservation)) {
-      throw withCode(
-        "RECHECK_CONFLICT",
-        "Stored source continuity does not match the selected prior run",
-      );
+      throw priorContinuityConflict(loaded.value, priorObservation);
     }
     return portableResult({
       classification: "task-drift",
@@ -660,10 +657,7 @@ async function establishPrior(
         );
       return loaded.value;
     }
-    throw withCode(
-      "RECHECK_CONFLICT",
-      "Stored source continuity does not match the selected prior run",
-    );
+    throw priorContinuityConflict(loaded.value, observation);
   }
   const anchor = {
     checkedAt: observation.observedAt,
@@ -868,6 +862,29 @@ function assertCheckContinuity(
       "Lookout check does not continue from the selected prior run",
     );
   }
+}
+
+/**
+ * The stored prior observation is not the selected prior run's. When the only
+ * difference is the incomplete marker, say so: the prior was stored by Lookout
+ * 0.7 from a partial run, and every recheck of this source will hit it until
+ * the source's observation store is replaced. Re-running the source does not
+ * touch that store.
+ */
+function priorContinuityConflict(
+  stored: Parameters<typeof sameObservation>[0],
+  observation: ProposalSetObservation,
+): Error {
+  const unmarked = stored.incomplete === undefined && observation.incomplete !== undefined
+    && sameObservation({ ...stored, incomplete: observation.incomplete }, observation);
+  if (!unmarked) return withCode("RECHECK_CONFLICT", "Stored source continuity does not match the selected prior run");
+  return Object.assign(withCode(
+    "RECHECK_CONFLICT",
+    "The stored prior observation for this source does not record that the selected prior run was incomplete: "
+      + "it was stored by an older Lookout, which did not keep that marker, so reusing it would read values the run never read as added. "
+      + "Recheck this source with a new, empty --observation-root (or move this source's directory out of the current one); "
+      + "the prior is then re-established from the selected run, marker included.",
+  ), { reason: "prior-observation-unmarked-incomplete" });
 }
 
 /**
