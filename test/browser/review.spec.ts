@@ -609,6 +609,10 @@ test("composed Survey workbench bounds and searches a thousand review items", as
         activeItemName: items[0].metadata.name,
       };
       body.review.items = items;
+      // These items are synthesized for scale, so they cannot match the run's
+      // extraction import, and the workbench rightly refuses a queue checked
+      // against it. Dropping the import leaves the queue unverified instead.
+      delete body.review.extractionImport;
       await route.fulfill({ response, json: body });
     });
     await page.goto(server.url);
