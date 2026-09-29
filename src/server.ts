@@ -230,6 +230,8 @@ async function submit(directory: string, input: unknown, reviewer: FieldworkRevi
     if (reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items)) {
       return failure("RUN_FROM_OLDER_FIELDWORK", RUN_FROM_OLDER_FIELDWORK_MESSAGE);
     }
+    // The queue is checked before anything is validated or appended against it.
+    const extractionImport = attestStoredReviewQueue(stored, storedExtractionImport(stored));
     const { events, expectedEventCount, expectedRevision } = parsed.data;
     // The append-only check compares CONTENT, not key order. The submitted
     // prefix and the persisted history describe the same events but are
@@ -255,7 +257,6 @@ async function submit(directory: string, input: unknown, reviewer: FieldworkRevi
     const persisted = [...stored.run.review.events, ...appended];
     const record = reviewSessionRecord(stored.run, persisted.length);
     assertServerReviewSessionEvents(record, persisted);
-    const extractionImport = attestStoredReviewQueue(stored, storedExtractionImport(stored));
     const apply = deriveServerReviewSessionApplyResult({
       record, events: persisted, requiredResolvedItems: "none",
       ...(extractionImport === undefined ? {} : { extractionImport }),

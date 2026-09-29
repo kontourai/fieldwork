@@ -1017,10 +1017,14 @@ export function reviewSessionRecord(run: StoredRun, eventCount: number): {
 /**
  * The Survey extraction import a run's first review round was built from,
  * re-derived from what the run stores beside its queue: the extraction
- * envelope, which `readRun` binds to the prepared bytes by digest, and the
- * task's claim targets. Survey's reload paths check a stored queue against the
- * import stored with it; this is that record. It is rebuilt rather than kept
- * as a second copy, so it can never disagree with the envelope it came from.
+ * envelope and the task's claim targets. Survey's reload paths check a stored
+ * queue against the import stored with it; this is that record. It is rebuilt
+ * rather than kept as a second copy, so it cannot disagree with the stored
+ * envelope. That is all it attests: `readRun` checks the prepared bytes
+ * against the artifact identity the envelope records (digest, length, ref),
+ * but nothing binds the envelope's proposal set. A proposal deleted from the
+ * stored envelope, with the queue and its digest rebuilt to match, is not
+ * detected here or at export.
  */
 export function storedExtractionImport(stored: Pick<StoredRunMetadataRead, "run" | "envelope">): ExtractionEnvelopeImportResult {
   return importExtractionEnvelope(stored.envelope, {

@@ -132,6 +132,38 @@ test("a Fieldwork session is verified on reload, and a stored queue edited with 
   await assert.rejects(reopen, refused);
 });
 
+test("a queue edited after the run is opened is refused when a decision is appended", async () => {
+  const run = await conflictRun("submit");
+  const service = await openRun(run);
+  try {
+    const view = await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = view.review.snapshot as unknown as ReviewQueueSessionState;
+    // The edit lands between the page loading and the reviewer deciding.
+    const runPath = join(run, "run.json");
+    const stored = JSON.parse(await readFile(runPath, "utf8"));
+    const conflict = stored.review.snapshot.items.find((item: ReviewItem) => item.spec.candidates.length > 1);
+    conflict.spec.candidates = conflict.spec.candidates.slice(1);
+    stored.review.snapshotHash = hashReviewQueueSnapshot(stored.review.snapshot);
+    await writeFile(runPath, JSON.stringify(stored, null, 2));
+
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(snapshot.items.map((item) => [item.metadata.name, "reject-proposed"])),
+    });
+    const response = await apiFetch(service, "/api/v1/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, "REVIEW_QUEUE_UNATTESTED");
+    assert.deepEqual(JSON.parse(await readFile(runPath, "utf8")).review.events, [], "nothing was appended");
+  } finally {
+    // Closing reads the run's final state, which is the edited queue, so it refuses too.
+    await service.close().catch((error: Error & { code?: string }) => assert.equal(error.code, "REVIEW_QUEUE_UNATTESTED"));
+  }
+});
+
 async function conflictRun(label: string): Promise<string> {
   const root = await tempRoot(`conflict-${label}`);
   const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));

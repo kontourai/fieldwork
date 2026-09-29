@@ -752,20 +752,17 @@ function observationFor(
  * Lookout's marker for an observation whose extraction did not read and answer
  * all of its text. A proposal missing from such an observation may sit in text
  * that was never read, so Lookout reports it as unobserved rather than removed.
- * Traverse records two kinds of incomplete coverage: a typed partial outcome,
- * and a chunk whose provider call failed, which leaves the outcome at `success`
- * and is recorded only in `providerFailures`. Both are incomplete here, with
- * the same reason Lookout's own extraction path gives them.
+ * Traverse 3 reports every such loss as a partial outcome: a chunk whose
+ * provider call failed is unread coverage, which makes the run partial with
+ * reason `provider-failure`. A failure outcome is refused before a run is
+ * stored, so a stored envelope is either complete or partial.
  */
 function incompletenessOf(
   result: Awaited<ReturnType<typeof readRun>>["envelope"]["result"],
 ): ProposalSetIncompleteness | undefined {
-  const { outcome, providerFailures = [], coverage } = result;
-  if (outcome.status === "success" && providerFailures.length === 0) return undefined;
-  const reason = outcome.status === "partial" ? outcome.reason
-    : providerFailures.length > 0 ? "provider-failure"
-      : "extraction-error";
-  return { reason, ...(coverage === undefined ? {} : { coverage }) };
+  const { outcome, coverage } = result;
+  if (outcome.status !== "partial") return undefined;
+  return { reason: outcome.reason, ...(coverage === undefined ? {} : { coverage }) };
 }
 
 function evidence(observation: {
