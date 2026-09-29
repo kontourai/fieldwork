@@ -678,6 +678,30 @@ test("a value a partial prior never read is queued for review as newly observed,
 });
 
 /*
+ * The prior read the status line but lost later text, so it is stored as
+ * incomplete. The current capture moves that same line down. That is one
+ * change: the value moved. Lookout 0.8.1 also lists the moved proposal as newly
+ * observed, which queues a second item with no current value, and accepting
+ * both exports two claims. The fix belongs in Lookout, not in a Fieldwork guard.
+ */
+test("a value an incomplete prior read that moves is one moved item, not also newly seen", {
+  skip: "Lookout 0.8.1 also lists a moved value as newly observed against an incomplete prior; unskip when the Lookout fix (issue not yet filed) is released and taken",
+}, async () => {
+  const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
+  const runtime = unreadableChunkRuntimeBinding();
+  const setup = await baseline(`Status: Active${filler}UNREADABLE`, join(fixture, "task.json"), runtime);
+  assert.equal((await readRun(setup.prior.runDirectory)).envelope.result.outcome.status, "partial");
+  const current = snapshot("capture-moved", `Heading line.\nStatus: Active${filler}`, "2026-07-23T18:00:00.000Z");
+  const result = await recheckFieldwork({
+    ...setup.options,
+    runtime,
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
+  });
+  const kinds = result.review.items.map((item) => item.metadata?.producer?.["lookout.kontourai.io/semantic-transition"]?.semanticKind);
+  assert.deepEqual(kinds, ["proposal-moved"]);
+});
+
+/*
  * Lookout 0.7 stored observations without the `incomplete` marker. A prior it
  * stored from a partial run reads as complete, so values that run never read
  * would show as added rather than newly observed. It is not the prior run's
