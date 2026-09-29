@@ -40,7 +40,7 @@ import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
 import { resolveFieldworkSource } from "./source-input.js";
-import { buildReviewedEvidenceEnrichment } from "./reviewed-evidence.js";
+import { buildReviewedEvidenceEnrichment, REVIEWED_EVIDENCE_COLLECTED_BY, REVIEWED_GROUNDING_POLICY_ID } from "./reviewed-evidence.js";
 import { attributeReviewResults, UNATTRIBUTED_ACTOR_ID, type ReviewDecisionAttribution } from "./review-attribution.js";
 
 /**
@@ -306,17 +306,14 @@ export async function reviewedExport(
     assertExcerptsMatchPreparedText(stored.envelope, stored.preparedText);
   }
   const projection = projectAttestedReviewedProjection(stored);
-  const refused = groundingRefusedClaims(projection);
-  const bundle = validateTrustBundle(disputeGroundingRefusedClaims(
-    buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }),
-    refused,
-  ));
+  const { refused, unchecked } = classifyGroundingRefusals(projection);
+  const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = {
     apiVersion: "fieldwork.kontourai.io/v1",
     kind: "ReviewedExport",
-    bundle: withReviewedGroundingEvidence(bundle, projection.enrichment),
+    bundle: disputeContestedClaims(withReviewedGroundingEvidence(bundle, projection.enrichment), refused),
     reviewedGrounding: projection.enrichment.grounding,
-    reviewRound: reviewRoundScope(stored, projection, refused),
+    reviewRound: reviewRoundScope(stored, projection, refused, unchecked),
   };
   assertPortableOutput(output);
   return parseReviewedExport(output);
@@ -336,6 +333,7 @@ function reviewRoundScope(
   stored: StoredRunMetadataRead,
   projection: ReturnType<typeof projectAttestedReviewedProjection>,
   groundingRefused: readonly GroundingRefusedClaim[],
+  groundingUnchecked: readonly GroundingRefusedClaim[],
 ): Record<string, unknown> {
   return {
     apiVersion: "fieldwork.kontourai.io/v1",
@@ -347,6 +345,10 @@ function reviewRoundScope(
     // Present only when a claim the review accepted is not supported by its
     // grounding, so the receipt never states it as plainly verified.
     ...(groundingRefused.length === 0 ? {} : { groundingRefused }),
+    // Present only when Surface cannot check a verified claim's structure
+    // (an array or object value). Nothing disputes such a claim, so it stays
+    // verified; this says its grounding was not fully evaluated.
+    ...(groundingUnchecked.length === 0 ? {} : { groundingUnchecked }),
     decisions: projection.attribution,
   };
 }
@@ -356,40 +358,82 @@ export interface GroundingRefusedClaim {
   readonly claimId: string;
   readonly fieldPath: string;
   readonly gaps: readonly string[];
+  readonly evidenceIds: readonly string[];
 }
 
 /**
- * Claims the review resolved to a verified value whose grounding evaluation
- * nonetheless refused them, such as a value contested by an excluded rival
- * whose excerpt did not verify. A rejected or unconfirmed claim already does
- * not read as verified, so it is not listed.
+ * Gaps Surface reports for a value whose structure it cannot validate (an
+ * `array` or `object` field). They say the grounding was not fully evaluated,
+ * not that anything contradicts the value.
  */
-export function groundingRefusedClaims(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment">): GroundingRefusedClaim[] {
+const STRUCTURAL_GAPS = new Set(["evidence-not-entailing", "structure-not-validated", "profile-gap"]);
+/** Gaps that mean a rival value for the claim was never resolved: the claim is contested. */
+const RIVAL_GAPS = new Set(["excluded-rival-unresolved", "hidden-conflict", "chosen-over-rival-unresolved"]);
+
+/**
+ * Claims the review resolved to a verified value whose grounding evaluation
+ * nonetheless refused them, split by why. `refused` holds claims with any gap
+ * beyond Surface's structural limits, such as a value contested by an excluded
+ * rival; `unchecked` holds claims whose only gaps are structural. A rejected
+ * or unconfirmed claim already does not read as verified, so neither lists it.
+ */
+export function classifyGroundingRefusals(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment">): {
+  readonly refused: GroundingRefusedClaim[];
+  readonly unchecked: GroundingRefusedClaim[];
+} {
   const { grounding } = projection.enrichment;
-  if (grounding.outcome !== "refused") return [];
-  const gapsByClaim = new Map<string, string[]>();
+  if (grounding.outcome !== "refused") return { refused: [], unchecked: [] };
+  const gapsByClaim = new Map<string, { kinds: string[]; evidenceIds: string[] }>();
   for (const gap of grounding.gaps) {
     if (!("claimId" in gap)) continue;
-    gapsByClaim.set(gap.claimId, [...new Set([...gapsByClaim.get(gap.claimId) ?? [], gap.kind])]);
+    const entry = gapsByClaim.get(gap.claimId) ?? { kinds: [], evidenceIds: [] };
+    if (!entry.kinds.includes(gap.kind)) entry.kinds.push(gap.kind);
+    if ("evidenceId" in gap && !entry.evidenceIds.includes(gap.evidenceId)) entry.evidenceIds.push(gap.evidenceId);
+    gapsByClaim.set(gap.claimId, entry);
   }
-  return projection.canonical.surveyInput.claims.flatMap((claim) => claim.status === "verified" && gapsByClaim.has(claim.id)
-    ? [{ claimId: claim.id, fieldPath: claim.fieldOrBehavior, gaps: gapsByClaim.get(claim.id)! }] : []);
+  const refused: GroundingRefusedClaim[] = [];
+  const unchecked: GroundingRefusedClaim[] = [];
+  for (const claim of projection.canonical.surveyInput.claims) {
+    const entry = gapsByClaim.get(claim.id);
+    if (claim.status !== "verified" || !entry) continue;
+    const listed = { claimId: claim.id, fieldPath: claim.fieldOrBehavior, gaps: entry.kinds, evidenceIds: entry.evidenceIds };
+    (entry.kinds.every((kind) => STRUCTURAL_GAPS.has(kind)) ? unchecked : refused).push(listed);
+  }
+  return { refused, unchecked };
+}
+
+/** Claims whose grounding was refused for a reason other than Surface's structural limits. */
+export function groundingRefusedClaims(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment">): GroundingRefusedClaim[] {
+  return classifyGroundingRefusals(projection).refused;
 }
 
 /**
  * A verified claim whose grounding was refused because a rival value is
- * unresolved (excluded at import, hidden from the item, or chosen over under a
- * policy that refuses that) is contested. Surface's `disputed` status says so
- * inside the bundle, so a consumer that reads only the bundle does not see a
- * plain verified claim. Other refusals, such as a structure Surface cannot
- * validate, are not a dispute; they are named in `reviewRound.groundingRefused`.
+ * unresolved is contested. Surface derives a claim's status from its
+ * verification events, so the claim's own status field alone is not enough:
+ * a later `disputed` event from this export, citing the reviewed evidence the
+ * policy refused, makes Surface's trust report say disputed. The reviewer's
+ * own `verified` event is kept as recorded.
  */
-const RIVAL_GAPS = new Set(["excluded-rival-unresolved", "hidden-conflict", "chosen-over-rival-unresolved"]);
-
-function disputeGroundingRefusedClaims<T extends { claims: { id: string; status?: string }[] }>(bundle: T, refused: readonly GroundingRefusedClaim[]): T {
-  const ids = new Set(refused.filter((entry) => entry.gaps.some((gap) => RIVAL_GAPS.has(gap))).map((entry) => entry.claimId));
-  if (ids.size === 0) return bundle;
-  return { ...bundle, claims: bundle.claims.map((claim) => ids.has(claim.id) ? { ...claim, status: "disputed" } : claim) };
+function disputeContestedClaims<T extends ReturnType<typeof validateTrustBundle>>(bundle: T, refused: readonly GroundingRefusedClaim[]): T {
+  const contested = refused.filter((entry) => entry.gaps.some((gap) => RIVAL_GAPS.has(gap)));
+  if (contested.length === 0) return bundle;
+  const ids = new Set(contested.map((entry) => entry.claimId));
+  const createdAt = new Date().toISOString();
+  return validateTrustBundle({
+    ...bundle,
+    claims: bundle.claims.map((claim) => ids.has(claim.id) ? { ...claim, status: "disputed" as const } : claim),
+    events: [...bundle.events, ...contested.map((entry) => ({
+      id: `${entry.claimId}.reviewed-grounding-dispute`,
+      claimId: entry.claimId,
+      status: "disputed" as const,
+      actor: REVIEWED_EVIDENCE_COLLECTED_BY,
+      method: REVIEWED_GROUNDING_POLICY_ID,
+      evidenceIds: [...entry.evidenceIds],
+      createdAt,
+      notes: `Reviewed grounding refused: ${entry.gaps.filter((gap) => RIVAL_GAPS.has(gap)).join(", ")}.`,
+    }))],
+  }) as T;
 }
 
 /**

@@ -135,17 +135,22 @@ async function main(argv: string[]): Promise<void> {
       // refused, is written but never silently: it is reported with what was
       // left out or contested, and exits 3 so a script cannot mistake it for
       // a complete, grounded one.
-      const scope = artifact.reviewRound as { complete?: boolean; excluded?: unknown[]; groundingRefused?: unknown[] } | undefined;
+      // A claim whose structure Surface cannot check (an array or object
+      // value) is reported separately and does not change the exit status:
+      // nothing disputes it, and every run of such a task would otherwise exit 3.
+      const scope = artifact.reviewRound as { complete?: boolean; excluded?: unknown[]; groundingRefused?: unknown[]; groundingUnchecked?: unknown[] } | undefined;
       const contested = scope?.groundingRefused ?? [];
+      const unchecked = scope?.groundingUnchecked ?? [];
+      const uncheckedSummary = unchecked.length === 0 ? {} : { groundingUnchecked: unchecked };
       if (scope?.complete === false || contested.length > 0) {
         output({
           ok: true, output: outputPath, complete: scope?.complete !== false, excluded: scope?.excluded ?? [],
-          ...(contested.length === 0 ? {} : { groundingRefused: contested }),
+          ...(contested.length === 0 ? {} : { groundingRefused: contested }), ...uncheckedSummary,
         }, has(args, "--json"));
         process.exitCode = 3;
         return;
       }
-      return output({ ok: true, output: outputPath, complete: true }, has(args, "--json"));
+      return output({ ok: true, output: outputPath, complete: true, ...uncheckedSummary }, has(args, "--json"));
     }
     if (command === "inspect") {
       const run = args.find((value) => !value.startsWith("--")), outputPath = flag(args, "--output");

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
+import { buildTrustReport, formatTrustReportSummary, validateTrustBundle } from "@kontourai/surface";
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import { join } from "node:path";
 import test from "node:test";
@@ -228,8 +229,15 @@ test("a proposal whose excerpt does not verify is excluded, shown as an excluded
   // Contested, not plainly verified: in the bundle and in the export's scope.
   assert.equal(statusClaim.status, "disputed");
   assert.equal((claims.find((claim) => claim.fieldOrBehavior === "record.alpha") as { status?: string }).status, "verified");
-  assert.deepEqual((exported.reviewRound as { groundingRefused?: unknown }).groundingRefused,
+  const refusedEntries = (exported.reviewRound as { groundingRefused?: { claimId: string; fieldPath: string; gaps: string[] }[]; groundingUnchecked?: unknown }).groundingRefused;
+  assert.deepEqual(refusedEntries?.map(({ claimId, fieldPath, gaps }) => ({ claimId, fieldPath, gaps })),
     [{ claimId: statusClaim.id, fieldPath: "record.status", gaps: ["excluded-rival-unresolved"] }]);
+  assert.equal((exported.reviewRound as { groundingUnchecked?: unknown }).groundingUnchecked, undefined);
+  // Surface derives status from verification events, not the claim's field:
+  // its own trust report has to read the claim as disputed.
+  const summary = formatTrustReportSummary(buildTrustReport(validateTrustBundle(exported.bundle as never)));
+  assert.match(summary, /^Claims: 2 \(verified: 1, disputed: 1\)$/m);
+  assert.match(summary, new RegExp(`^Disputed: ${statusClaim.id.replaceAll(".", "\\.")}$`, "m"));
   const grounding = exported.reviewedGrounding as {
     outcome: string;
     gaps: { kind: string; claimId: string; rivalProposalIndices?: number[] }[];
@@ -348,4 +356,20 @@ test("the reviewed-source facade describes a claim whose grounding was refused a
   const status = snapshot.items.find((item) => item.spec.target === "record.status")!.metadata.name;
   const alpha = snapshot.items.find((item) => item.spec.target === "record.alpha")!.metadata.name;
   assert.deepEqual(states, { [status]: "grounding-refused", [alpha]: "reviewed" });
+});
+
+test("a field Surface cannot check structurally stays verified, is reported apart, and does not fail the CLI", async () => {
+  const run = await runFieldwork({ taskPath: "examples/schema-first/task.json", sourcePath: "examples/schema-first/source.txt", root: await tempRoot("schema-first-cli") });
+  const snapshot = (await view(run.runDirectory)).review.snapshot as unknown as ReviewQueueSessionState;
+  assert.equal((await post(run.runDirectory, snapshot, acceptAll(snapshot))).ok, true);
+  const outputPath = join(run.runDirectory, "..", "export.json");
+  const { stdout } = await exec(process.execPath, ["--import", "tsx", "src/cli.ts", "export", run.runDirectory, "--output", outputPath, "--json"]);
+  const summary = JSON.parse(stdout);
+  assert.equal(summary.complete, true);
+  assert.equal(summary.groundingRefused, undefined);
+  assert.deepEqual(summary.groundingUnchecked.map((entry: { fieldPath: string }) => entry.fieldPath).sort(), ["summary.detail", "tags"]);
+  const exported = JSON.parse(await readFile(outputPath, "utf8"));
+  const report = formatTrustReportSummary(buildTrustReport(validateTrustBundle(exported.bundle)));
+  assert.match(report, /^Disputed: none$/m);
+  assert.ok(exported.bundle.claims.every((claim: { status: string }) => claim.status === "verified"));
 });

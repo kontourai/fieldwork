@@ -134,8 +134,13 @@ while the round read as complete. Export refuses it instead
 (`EXPORT_EXCERPT_MISMATCH`, naming the field), as it did before Survey verified
 excerpts. A claim the review accepted but whose grounding is refused, such as
 one contested by an excluded rival, is listed under
-`reviewRound.groundingRefused`; when the refusal is an unresolved rival value
-it is also stated as `disputed` in the bundle. The CLI exits 3 for it, as for a
+`reviewRound.groundingRefused`. When the refusal is an unresolved rival value
+it is also stated as `disputed` in the bundle, on the claim and through a
+`disputed` verification event the export adds (Surface derives status from
+events), while the reviewer's own event is kept as recorded. A field whose only
+gaps are Surface's structural limits (an `array` or `object` value) is not
+disputed: it stays `verified` and is listed under
+`reviewRound.groundingUnchecked`, which does not change the CLI's exit status. The CLI exits 3 for it, as for a
 partial export, and the reviewed-source facade describes it with
 `review.state: "grounding-refused"`.
 
