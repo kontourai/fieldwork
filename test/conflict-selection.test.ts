@@ -118,8 +118,10 @@ test("a Fieldwork session is verified on reload, and a stored queue edited with 
     assert.match(error.message, /does not match the extraction it was imported from/);
     return true;
   };
+  // A service that opens anyway is closed, so a regression fails instead of hanging.
+  const reopen = async (): Promise<void> => { await (await openRun(run)).close(); };
   await tamper((conflict) => { conflict.spec.candidates = conflict.spec.candidates.slice(1); });
-  await assert.rejects(() => openRun(run), refused);
+  await assert.rejects(reopen, refused);
 
   // Labelling the edited item as a recheck transition does not route it past
   // the check: a recheck item is held to the envelope instead.
@@ -127,7 +129,7 @@ test("a Fieldwork session is verified on reload, and a stored queue edited with 
     conflict.spec.candidates = conflict.spec.candidates.slice(1);
     Object.assign(conflict.metadata, { producer: { ...conflict.metadata.producer, [SEMANTIC_TRANSITION_PRODUCER]: { semanticKind: "proposal-value-changed" } } });
   });
-  await assert.rejects(() => openRun(run), refused);
+  await assert.rejects(reopen, refused);
 });
 
 async function conflictRun(label: string): Promise<string> {
