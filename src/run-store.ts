@@ -19,6 +19,12 @@ export interface StoredRun {
   execution: FieldworkStoredExecution;
   preparedArtifact: { ref: string; digest: string; contentLength: number; file: "prepared.txt" };
   envelopeFile: "extraction-envelope.json";
+  /**
+   * Binds the stored extraction to this run, written once at creation. Absent
+   * on runs created before the binding existed; such a run is served blocked
+   * and never exported, because its envelope can be edited undetected.
+   */
+  extraction?: StoredExtractionBinding;
   review: {
     snapshot: ReviewQueueSessionState;
     events: ReviewSessionEvent[];
@@ -32,6 +38,31 @@ export interface StoredRun {
      */
     snapshotHash: string;
   };
+}
+
+export interface StoredExtractionBinding {
+  /** SHA-256 of the canonical JSON of `extraction-envelope.json` as written at creation. */
+  envelopeDigest: string;
+  /**
+   * The status Survey's import recorded when it verified every excerpt against
+   * the prepared text at creation. A read that has the prepared text re-derives
+   * it and must agree; a metadata-only read cannot, so it uses this one, which
+   * Survey still checks for being a status that import could have written.
+   */
+  importStatus: { state: "grounded" | "unresolved"; diagnostics: Record<string, unknown>[]; provenance: "verified" };
+}
+
+const storedExtractionBindingSchema = z.object({
+  envelopeDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  importStatus: z.object({
+    state: z.enum(["grounded", "unresolved"]),
+    diagnostics: z.array(z.record(z.string(), z.unknown())).max(FIELDWORK_LIMITS.reviewItems),
+    provenance: z.literal("verified"),
+  }).strict(),
+}).strict();
+
+export function extractionEnvelopeDigest(envelope: unknown): string {
+  return createHash("sha256").update(canonicalJson(envelope)).digest("hex");
 }
 
 export const storedRunSchema = z.object({
@@ -48,6 +79,7 @@ export const storedRunSchema = z.object({
     file: z.literal("prepared.txt")
   }).strict(),
   envelopeFile: z.literal("extraction-envelope.json"),
+  extraction: storedExtractionBindingSchema.optional(),
   review: z.object({
     snapshot: persistedReviewSnapshotSchema,
     events: z.array(persistedReviewEventSchema).max(FIELDWORK_LIMITS.events),
@@ -167,7 +199,18 @@ export async function readRunMetadata(runDirectory: string): Promise<StoredRunMe
   // matches the decisions recorded against it must not be servable either.
   const envelopePath = await containedRegularFile(directory, run.envelopeFile);
   const envelopeText = await readBounded(envelopePath, FIELDWORK_LIMITS.artifactBytes);
-  const validated = validatePortableExtractionResultEnvelope(JSON.parse(envelopeText));
+  const envelopeJson: unknown = JSON.parse(envelopeText);
+  // The envelope is checked against the digest bound at creation before it is
+  // believed at all: a proposal deleted from it, with the queue and the queue's
+  // digest rebuilt to match, otherwise reads as a consistent run.
+  if (run.extraction !== undefined && extractionEnvelopeDigest(envelopeJson) !== run.extraction.envelopeDigest) {
+    throw Object.assign(
+      new Error("Stored extraction envelope does not match the digest bound when this run was created, so the run cannot be read. "
+        + "Re-run the source rather than editing stored extraction state."),
+      { code: "RUN_ENVELOPE_MISMATCH" },
+    );
+  }
+  const validated = validatePortableExtractionResultEnvelope(envelopeJson);
   if (validated.status !== "valid") throw new Error("Stored extraction envelope is invalid");
   assertBoundedJson(run);
   return { directory, run, envelope: validated.envelope };

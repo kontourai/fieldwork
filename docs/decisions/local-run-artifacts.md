@@ -14,11 +14,11 @@ Export additionally checks the decided queue against an artifact it was not deri
 
 That check asks whether the stored queue is the *same set* as the attesting side, not merely whether each thing still in it is well-formed. A first round's queue is the whole extraction, so item names must match the envelope's exactly in both directions: a check that only walks what is present cannot notice what was removed, and dropping an item leaves every survivor valid. An empty queue certifies nothing and is refused while the run has extracted proposals, whether it was emptied or simply recorded no changes. An item carrying neither extraction nor recheck provenance, and a queue mixing the two, are refused rather than trusted.
 
-Reload applies the same check before anyone reviews the queue. Opening a run and appending a decision both check the stored queue against its extraction import (a recheck round against the envelope), and the run view hands Survey's workbench the import record so the workbench checks the queue too instead of showing it as unverified. The import record is rebuilt from the stored envelope and task rather than kept as a second copy that could disagree with them. This attests the queue against the stored envelope, not the envelope against anything: reads check the prepared bytes against the artifact identity the envelope records (digest, length, ref), but no stored artifact binds the envelope's proposal set, so a proposal deleted from the envelope, with the queue and its digest rebuilt to match, is served as verified and exports. That gap predates reload attestation and is tracked separately. An empty queue is served unchecked, since an emptied first round cannot be told from a recheck round with nothing to re-decide, and export still refuses it.
+Reload applies the same check before anyone reviews the queue. Opening a run and appending a decision both check the stored queue against its extraction import (a recheck round against the envelope), and the run view hands Survey's workbench the import record so the workbench checks the queue too instead of showing it as unverified. The import record is rebuilt from the stored envelope and task rather than kept as a second copy that could disagree with them. This attests the queue against the stored envelope; the envelope itself is bound to the run at creation (see the fieldwork#164 amendment below). An empty queue is served unchecked, since an emptied first round cannot be told from a recheck round with nothing to re-decide, and export still refuses it.
 
 Which observation a recheck candidate came from decides which attestation applies, so it is never read off a single mutable label. It is derived from agreement between the item's transition identity, the candidate's Lookout observation id, the round block, and the candidate's role — which Lookout assigns as `current`→prior observation and `proposed`→current observation, and which the decision itself depends on. Candidates on the current-observation side must match this run's own extracted proposals, or match none when they record an absence.
 
-Integrity inside a run directory is therefore agreement between artifacts written by different steps, not a cryptographic root: the prepared bytes must match the artifact identity the envelope records, and the queue must agree with the envelope. The envelope's proposal set itself is bound to nothing else in the run. Two parts have no in-run artifact to agree with, and both are functions of a snapshot this run never extracted: a recheck round's *prior*-observation candidates, and the recheck round's item set. Both are covered only by the queue binding, which a consistent rewrite of `run.json` could keep intact. That gap is accepted and disclosed; closing it needs the prior observation to carry an attestation this run can check on its own ([issue #65](https://github.com/kontourai/fieldwork/issues/65)).
+Integrity inside a run directory is therefore agreement between artifacts written by different steps, not a cryptographic root: the prepared bytes must match the artifact identity the envelope records, the envelope must match the digest `run.json` recorded for it at creation, and the queue must agree with the envelope. Two parts have no in-run artifact to agree with, and both are functions of a snapshot this run never extracted: a recheck round's *prior*-observation candidates, and the recheck round's item set. Both are covered only by the queue binding, which a consistent rewrite of `run.json` could keep intact. That gap is accepted and disclosed; closing it needs the prior observation to carry an attestation this run can check on its own ([issue #65](https://github.com/kontourai/fieldwork/issues/65)).
 
 `npm run check:guards` fault-injects each of these checks and requires the suite covering it to fail, so "load-bearing" is reproducible rather than asserted. It rewrites tracked source and restores it from git, so it is run directly rather than as part of `verify`.
 
@@ -85,3 +85,50 @@ agreement, size) still refuse the whole export. Checks about one claim
 on a field another item still leaves undecided, not projectable) exclude that
 claim and list it with a typed reason. A round
 with no exportable claim is still refused.
+
+## Amendment (fieldwork#164, fieldwork#165)
+
+The stored extraction is bound to the run when the run is created.
+`run.json` records `extraction.envelopeDigest`, the SHA-256 of the envelope's
+canonical JSON, and every read (opening, appending a decision, export, and the
+metadata-only reads of the reviewed-source facade) refuses an envelope that no
+longer matches it (`RUN_ENVELOPE_MISMATCH`). Before this, a proposal deleted
+from the envelope, with the queue and its digest rebuilt to match, was served
+as verified and exported: deleting one value of a conflict made the other read
+as uncontested.
+
+Survey's import now receives the prepared text, at creation and on every read
+that has it. Survey checks each excerpt against its `chars:` span, leaves a
+proposal that does not match out of the queue, records it on its claim slot as
+an excluded rival, and marks the import `verified`. `run.json` records the
+import status Survey wrote at creation as `extraction.importStatus`. A read
+with the prepared text re-derives the status and must agree
+(`RUN_EXTRACTION_MISMATCH`). A metadata-only read has no text, so it rebuilds
+the import from the bound status, which Survey still checks for coherence
+with the envelope. This keeps those reads off the prepared bytes.
+
+Export's grounding policy now sets `requireVerifiedExcerpts` and
+`refuseExcludedRivals`. An excluded rival is unverifiable, not disproven, and
+the reviewer could never choose it, so the claim it contests is not allowed as
+grounded. The claim is still exported, with an `excluded-rival-unresolved` gap.
+`refuseChosenOverRivals` stays off, because a rival the reviewer saw and chose
+against is a decision. A first round no longer refuses the whole export on an
+excerpt mismatch, since Survey has already excluded the proposal. A recheck
+round still refuses, because its current-side candidates are matched against
+the envelope's proposals directly.
+
+Runs created before the binding carry no `extraction` field. Verifying the
+excerpts changes the items an import builds, so their stored queues could never
+attest against a verified import. They are not re-bound: binding now would
+bless whatever envelope the run holds today. They open against the unverified
+import they were built from, so their history stays readable, but they are
+served with a `reviewBlocked` notice (`unbound-envelope`). Decisions are
+refused (`RUN_ENVELOPE_UNBOUND`), and so is export (`EXPORT_UNBOUND_ENVELOPE`).
+Removing the binding from a bound run therefore closes it rather than
+unlocking it.
+
+What remains: `run.json` and the envelope are both local files. A writer who
+edits the envelope and also rewrites the bound digest, the bound status, the
+queue and the queue's digest consistently is not detected. That is the same
+class of gap as fieldwork#65, and closing it needs an attestation rooted
+outside the run directory.

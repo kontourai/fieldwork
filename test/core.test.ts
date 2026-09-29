@@ -8,7 +8,7 @@ import {
 } from "../src/fieldwork.js";
 import { importExtractionEnvelope } from "@kontourai/survey";
 import { tempRoot } from "./helpers.js";
-import { assertPortableOutput, portablePath, readRun } from "../src/run-store.js";
+import { assertPortableOutput, extractionEnvelopeDigest, portablePath, readRun } from "../src/run-store.js";
 import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { openRun } from "../src/server.js";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
@@ -204,9 +204,11 @@ test("a reviewed export estimated above the size ceiling is refused before any e
 
 /* The queue/envelope attestation compares two stored artifacts with each other,
    not with the prepared bytes. An editor who rewrites an excerpt in the envelope
-   and re-derives the queue from it passes that attestation; only the prepared
-   text can say the cited excerpt is not there (fieldwork#140). */
-test("an envelope excerpt the prepared text does not contain cannot be exported", async () => {
+   and re-derives the queue from it passes that attestation (fieldwork#140).
+   The envelope is now bound to the run by digest, and Survey re-verifies every
+   excerpt against the prepared text on every read that has it, so the edit is
+   refused before anyone reviews or exports it, even with the digest refreshed. */
+test("an envelope excerpt the prepared text does not contain cannot be read or exported", async () => {
   const run = await runFieldwork({
     taskPath: "examples/vendor-obligations/task.json",
     sourcePath: "examples/vendor-obligations/source.txt",
@@ -237,19 +239,22 @@ test("an envelope excerpt the prepared text does not contain cannot be exported"
   stored.review = newReviewRound(imported.reviewItems);
   await writeFile(runPath, JSON.stringify(stored, null, 2));
   assert.equal(
-    (await readRun(run.runDirectory)).preparedText.slice(...fee.provenance.locator.slice("chars:".length).split("-").map(Number)),
+    honest.preparedText.slice(...fee.provenance.locator.slice("chars:".length).split("-").map(Number)),
     "Annual renewal fee USD: 48000",
   );
-  await decideEveryItem(run.runDirectory);
+  const refused = (code: string) => (error: Error & { code?: string }) => {
+    assert.equal(error.code, code);
+    return true;
+  };
+  await assert.rejects(() => reviewedExport(run.runDirectory), refused("RUN_ENVELOPE_MISMATCH"));
 
-  await assert.rejects(
-    () => reviewedExport(run.runDirectory),
-    (error: Error & { code?: string }) => {
-      assert.equal(error.code, "EXPORT_EXCERPT_MISMATCH");
-      assert.match(error.message, /commercial\.annualFeeUsd/);
-      return true;
-    },
-  );
+  // Refreshing the bound digest to match the edit is not enough: the prepared
+  // text still does not contain the excerpt, so Survey's verification disagrees
+  // with the one recorded when the run was created.
+  stored.extraction.envelopeDigest = extractionEnvelopeDigest(envelope);
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+  await assert.rejects(() => reviewedExport(run.runDirectory), refused("RUN_EXTRACTION_MISMATCH"));
+  await assert.rejects(async () => { await (await openRun(run.runDirectory)).close(); }, refused("RUN_EXTRACTION_MISMATCH"));
 });
 
 /* Per-item integrity does not give set integrity: dropping an item leaves every

@@ -21,7 +21,8 @@ import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import type { LookoutSource, CheckResult } from "@kontourai/lookout";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
-import { projectAttestedReviewedProjection, reviewedExport, runFieldwork, SEMANTIC_TRANSITION_PRODUCER } from "../src/fieldwork.js";
+import { projectAttestedReviewedProjection, reviewedExport, runFieldwork, SEMANTIC_TRANSITION_PRODUCER, storedExtractionImport } from "../src/fieldwork.js";
+import { conflictRun } from "./helpers/conflict-run.js";
 import { buildReviewedEvidenceEnrichment } from "../src/reviewed-evidence.js";
 import { readRunMetadata } from "../src/run-store.js";
 import { recheckFieldwork } from "../src/recheck.js";
@@ -308,4 +309,81 @@ test("an export that states no claims is refused before grounding is evaluated, 
       return true;
     },
   );
+});
+
+test("grounding refuses evidence whose import did not verify its excerpts", async () => {
+  const run = await runFieldwork({
+    taskPath: "examples/vendor-obligations/task.json",
+    sourcePath: "examples/vendor-obligations/source.txt",
+    root: await tempRoot("reviewed-evidence-unverified"),
+  });
+  await acceptAll(run.runDirectory);
+  const stored = await readRunMetadata(run.runDirectory);
+  const projection = projectAttestedReviewedProjection(stored);
+  assert.equal(projection.enrichment.grounding.outcome, "allowed");
+  // The same round against the import as it reads without the prepared text
+  // and without the status bound at creation: nothing checked the excerpts.
+  const { extraction: _extraction, ...unbound } = stored.run;
+  const unverified = storedExtractionImport({ run: unbound, envelope: stored.envelope });
+  assert.equal(unverified.record.status.provenance, "unverified");
+  const claimIdByCandidateId = new Map(
+    projection.canonical.surveyInput.claims.flatMap((claim) => claim.candidateId === undefined ? [] : [[claim.candidateId, claim.id] as const]),
+  );
+  const enrichment = buildReviewedEvidenceEnrichment({
+    imported: unverified, items: projection.items, results: projection.results,
+    isRecheckItem: () => false,
+    claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
+    claims: projection.canonical.surveyInput.claims.map((claim) => ({ id: claim.id, value: claim.value })),
+  });
+  assert.equal(enrichment.grounding.outcome, "refused");
+  const gaps = (enrichment.grounding as { gaps: { kind: string }[] }).gaps;
+  assert.equal(gaps.length, projection.items.length);
+  assert.ok(gaps.every((gap) => gap.kind === "excerpt-not-verified"), JSON.stringify(gaps));
+});
+
+/*
+ * Survey refuses accept-proposed on a conflict, so its client cannot produce
+ * this result; the guard is still the only Fieldwork-side one. A decision that
+ * names a candidate on a conflict without choosing it must not be read as the
+ * item's first candidate, which here is the rival the reviewer did not choose.
+ */
+test("a conflict decision that does not choose a candidate is refused, not read as the first candidate", async () => {
+  const runDirectory = await conflictRun("reviewed-candidate-guard");
+  const service = await openRun(runDirectory);
+  try {
+    const view = await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = view.review.snapshot as unknown as ReviewQueueSessionState;
+    const conflict = snapshot.items.find((item) => item.spec.candidates.length > 1)!;
+    const chosen = conflict.spec.candidates.find((candidate) => candidate.value === "Paused")!;
+    const events = buildReviewSessionEvents({
+      ...snapshot,
+      decisionsByItemName: Object.fromEntries(snapshot.items.map((item) => [item.metadata.name, item === conflict ? "select-proposed" : "accept-proposed"])),
+      selectedCandidateIdsByItemName: { [conflict.metadata.name]: chosen.id },
+    } as Parameters<typeof buildReviewSessionEvents>[0]);
+    const saved = await apiFetch(service, "/api/v1/review", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }),
+    }).then((response) => response.json()) as { ok: boolean };
+    assert.equal(saved.ok, true);
+  } finally { await service.close(); }
+
+  const projection = projectAttestedReviewedProjection(await readRunMetadata(runDirectory));
+  const conflict = projection.items.find((item) => item.spec.candidates.length > 1)!;
+  const [rival] = conflict.spec.candidates;
+  assert.equal(rival!.value, "Active");
+  const claimIdByCandidateId = new Map(projection.canonical.surveyInput.claims.flatMap((claim) => {
+    const set = projection.canonical.surveyInput.candidateSets.find((entry) => entry.id === claim.candidateSetId)!;
+    return set.candidates.map((candidate) => [candidate.id, claim.id] as const);
+  }));
+  const enrich = (results: typeof projection.results) => buildReviewedEvidenceEnrichment({
+    imported: projection.imported, items: projection.items, results,
+    isRecheckItem: () => false,
+    claimIdForCandidate: (candidateId) => claimIdByCandidateId.get(candidateId),
+    claims: projection.canonical.surveyInput.claims.map((claim) => ({ id: claim.id, value: claim.value })),
+  });
+  assert.equal(enrich(projection.results).grounding.outcome, "allowed");
+  const unchosen = projection.results.map((result) => result.reviewItemName === conflict.metadata.name
+    ? { ...result, decision: "accept-proposed" as const, selectedCandidateId: rival!.id }
+    : result);
+  assert.throws(() => enrich(unchosen), /cannot tell which of 2 candidates/);
 });

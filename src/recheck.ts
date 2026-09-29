@@ -870,12 +870,20 @@ function assertCheckContinuity(
   }
 }
 
+/**
+ * Whether a stored observation is the one this run records, including Lookout
+ * 0.8's `incomplete` marker. Lookout 0.7 stored no marker, so a prior it wrote
+ * from a partial run reads as complete: values that run never read would show
+ * as added rather than newly observed. A marker that differs is a different
+ * observation, and the stored one is not reused as this run's.
+ */
 function sameObservation(
   stored: {
     sourceId: string;
     snapshotRef: string;
     observedAt: string;
     proposals: readonly ExtractionProposal[];
+    incomplete?: ProposalSetIncompleteness;
   },
   observation: ProposalSetObservation,
 ): boolean {
@@ -883,7 +891,8 @@ function sameObservation(
     stored.sourceId === observation.sourceId &&
     stored.snapshotRef === observation.snapshotRef &&
     stored.observedAt === observation.observedAt &&
-    canonicalJson(stored.proposals) === canonicalJson(observation.proposals)
+    canonicalJson(stored.proposals) === canonicalJson(observation.proposals) &&
+    canonicalJson(stored.incomplete ?? null) === canonicalJson(observation.incomplete ?? null)
   );
 }
 

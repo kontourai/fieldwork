@@ -19,7 +19,7 @@ import {
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import {
   attestStoredReviewQueue, extractionCoverageSummary, reviewQueueFromOlderFieldwork, reviewSessionRecord,
-  RUN_FROM_OLDER_FIELDWORK_MESSAGE, storedExtractionImport,
+  RUN_FROM_OLDER_FIELDWORK_MESSAGE, reviewBlockedFor, storedExtractionImport, UNBOUND_ENVELOPE_MESSAGE,
 } from "./fieldwork.js";
 import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
 
@@ -207,9 +207,7 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
     run: { resource: stored.run.runResource, revision: stored.run.review.revision },
     inspector,
     extraction: { outcome: stored.envelope.result.outcome, ...(coverage === undefined ? {} : { coverage }) },
-    ...(reviewQueueFromOlderFieldwork(snapshot.items) ? {
-      reviewBlocked: { reason: "created-by-older-fieldwork", message: RUN_FROM_OLDER_FIELDWORK_MESSAGE },
-    } : {}),
+    ...reviewBlockedFor(stored.run),
     review: {
       snapshot,
       items: imported.reviewItems,
@@ -230,6 +228,7 @@ async function submit(directory: string, input: unknown, reviewer: FieldworkRevi
     if (reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items)) {
       return failure("RUN_FROM_OLDER_FIELDWORK", RUN_FROM_OLDER_FIELDWORK_MESSAGE);
     }
+    if (stored.run.extraction === undefined) return failure("RUN_ENVELOPE_UNBOUND", UNBOUND_ENVELOPE_MESSAGE);
     // The queue is checked before anything is validated or appended against it.
     const extractionImport = attestStoredReviewQueue(stored, storedExtractionImport(stored));
     const { events, expectedEventCount, expectedRevision } = parsed.data;
@@ -327,6 +326,8 @@ function publicError(error: unknown): { status: number; code: string; message: s
   if (code === "INVALID_JSON") return { status: 400, code, message: "Request body is not valid JSON" };
   if (code === "REVIEW_BUSY") return { status: 503, code, message: "Review storage is temporarily busy" };
   if (code === "REVIEW_QUEUE_UNATTESTED") return { status: 409, code, message: "Stored review queue does not match the extraction it was imported from" };
+  if (code === "RUN_ENVELOPE_MISMATCH") return { status: 409, code, message: "Stored extraction envelope does not match the one this run was created with" };
+  if (code === "RUN_EXTRACTION_MISMATCH") return { status: 409, code, message: "Stored extraction no longer verifies against the prepared text as it did when this run was created" };
   if (error instanceof z.ZodError) return { status: 422, code: "INVALID_RUN", message: "Stored Fieldwork run failed validation" };
   return { status: 500, code: "INTERNAL", message: "Fieldwork could not complete the request" };
 }

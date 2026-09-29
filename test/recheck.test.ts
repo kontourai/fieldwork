@@ -660,6 +660,46 @@ test("a partial recheck run records its incompleteness and raises no removal", a
   assert.ok((committed.value.incomplete?.coverage?.length ?? 0) > 0, "the run's coverage is recorded with it");
 });
 
+/*
+ * Lookout 0.7 stored observations without the `incomplete` marker. A prior it
+ * stored from a partial run reads as complete, so values that run never read
+ * would show as added rather than newly observed. It is not the prior run's
+ * observation and is not reused as one; the same prior stored with the marker is.
+ */
+test("a prior observation stored without the incomplete marker its run records is not reused", async () => {
+  const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
+  const runtime = unreadableChunkRuntimeBinding();
+  const attempt = async (withMarker: boolean) => {
+    const setup = await baseline(`Status: Active${filler}UNREADABLE`, join(fixture, "task.json"), runtime);
+    const prior = await readRun(setup.prior.runDirectory);
+    assert.equal(prior.envelope.result.outcome.status, "partial");
+    const { outcome, coverage } = prior.envelope.result;
+    const observation: ProposalSetObservation = {
+      sourceId: source.id,
+      snapshotRef: prior.envelope.source.snapshotRef!,
+      observedAt: prior.envelope.result.extractedAt,
+      proposals: prior.envelope.result.proposals as ProposalSetObservation["proposals"],
+      ...(withMarker && outcome.status === "partial" ? { incomplete: { reason: outcome.reason, ...(coverage ? { coverage } : {}) } } : {}),
+    };
+    const committed = await createObservationStore({ root: setup.options.observationRoot }).commit({
+      observation, recordedAt: observation.observedAt,
+      check: { checkedAt: observation.observedAt, resultKind: "changed", currentSnapshotRef: observation.snapshotRef },
+    }, null);
+    assert.ok(committed.ok, JSON.stringify(committed));
+    const current = snapshot("capture-after-partial", `Status: Paused${filler}`, "2026-07-23T18:00:00.000Z");
+    return recheckFieldwork({
+      ...setup.options,
+      runtime,
+      acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
+    });
+  };
+  assert.ok((await attempt(true)).run, "the prior stored with its marker is the prior run's observation");
+  await assert.rejects(() => attempt(false), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "RECHECK_CONFLICT");
+    return true;
+  });
+});
+
 /** Proposes the status its chunk states, fails any chunk marked UNREADABLE, and proposes nothing elsewhere. */
 function unreadableChunkRuntimeBinding(): FieldworkRuntimeBinding {
   return runtimeBinding(async (request) => {

@@ -6,8 +6,8 @@ import {
   type ExtractionProposal, type PortableExtractionOutcome, type PortableExtractionResultEnvelope
 } from "@kontourai/traverse";
 import {
-  importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle,
-  type ExtractionEnvelopeImportResult, type ReviewCandidate, type ReviewItem
+  importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildReviewItemsFromExtractionEnvelopeImport, buildSurveyTrustBundle,
+  type ExtractionEnvelopeImportOptions, type ExtractionEnvelopeImportResult, type ReviewCandidate, type ReviewItem
 } from "@kontourai/survey";
 import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
 import {
@@ -25,13 +25,17 @@ import {
   parseReviewedExport,
   type FieldworkBatchOptions,
   type FieldworkBatchRunResult,
+  type FieldworkRunViewV1,
   type FieldworkRunOutcome,
   type FieldworkRunResult,
   type ReviewedExportV1,
   type RunOptions,
 } from "./api-contracts.js";
 import { createDeterministicProvider } from "./deterministic-provider.js";
-import { assertPortableOutput, defaultRunRoot, readRun, writeRun, type StoredRun, type StoredRunMetadataRead } from "./run-store.js";
+import {
+  assertPortableOutput, defaultRunRoot, extractionEnvelopeDigest, readRun, writeRun,
+  type StoredRun, type StoredRunMetadataRead
+} from "./run-store.js";
 import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
 import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
@@ -111,28 +115,52 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   if (resolution.status !== "available") throw new Error(`Prepared artifact is ${resolution.status}`);
   const envelope = JSON.parse(serializePortableExtractionResult(result, { preparedArtifactResolution: resolution })) as PortableExtractionResultEnvelope;
   assertPortableOutput(envelope);
-  const imported = importExtractionEnvelope(envelope, {
-    importName: `fieldwork-import:${task.metadata.name}:${runIdentity}`,
-    producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
-    claimTarget: (proposal) => {
-      const projection = task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
-      if (!projection) throw new Error(`No claim target for ${proposal.fieldPath}`);
-      return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
-    }
-  });
-  assertImportRecordsItsOwnOutcome(imported);
+  const { imported, extraction } = bindExtraction(task, `fieldwork-import:${task.metadata.name}:${runIdentity}`, envelope, resolution.text);
   const createdAt = new Date().toISOString();
   const run: StoredRun = {
     schemaVersion: 1, runResource, createdAt, taskName: task.metadata.name, task,
     execution: runtimeSession?.execution ?? fixtureExecution(),
     preparedArtifact: { ref: result.preparedArtifact.ref, digest: result.preparedArtifact.digest, contentLength: result.preparedArtifact.contentLength, file: "prepared.txt" },
-    envelopeFile: "extraction-envelope.json", review: newReviewRound(imported.reviewItems, createdAt)
+    envelopeFile: "extraction-envelope.json",
+    extraction,
+    review: newReviewRound(imported.reviewItems, createdAt)
   };
   const persistedDirectory = await writeRun(root, run, envelope, resolution.text);
   return {
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunResult",
     runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length,
     outcome: envelope.result.outcome,
+  };
+}
+
+/**
+ * Import a new run's extraction and bind it to the run. Survey checks every
+ * excerpt against the prepared text, leaves out a proposal whose span does not
+ * match (recording it on its claim slot as an excluded rival), and records the
+ * import as verified. The binding written into `run.json` is the envelope's
+ * digest and that verified status, so a later read can refuse an envelope
+ * edited after the run was created.
+ */
+export function bindExtraction(
+  task: FieldworkTask,
+  importName: string,
+  envelope: PortableExtractionResultEnvelope,
+  preparedText: string,
+): { readonly imported: ExtractionEnvelopeImportResult; readonly extraction: NonNullable<StoredRun["extraction"]> } {
+  const prepared = envelope.result.preparedArtifact;
+  if (!prepared) throw new Error("Traverse did not record a prepared artifact");
+  const imported = importExtractionEnvelope(envelope, {
+    ...extractionImportOptions(task, importName),
+    artifact: { status: "available", text: preparedText, actualDigest: prepared.digest },
+  });
+  assertImportRecordsItsOwnOutcome(imported);
+  if (imported.record.status.provenance !== "verified") throw new Error("Survey did not verify the extraction's excerpts");
+  return {
+    imported,
+    extraction: {
+      envelopeDigest: extractionEnvelopeDigest(envelope),
+      importStatus: structuredClone(imported.record.status) as NonNullable<StoredRun["extraction"]>["importStatus"],
+    },
   };
 }
 
@@ -273,7 +301,10 @@ export async function reviewedExport(
   const stored = await readRun(runDirectory);
   assertCompleteCoverage(stored.envelope);
   assertExportSizeWithinCeiling(stored, options.maxEstimatedBytes ?? FIELDWORK_LIMITS.reviewedExportEstimateBytes);
-  assertExcerptsMatchPreparedText(stored.envelope, stored.preparedText);
+  const queue = stored.run.review.snapshot.items as readonly ReviewItem[];
+  if (queue.some((item) => item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER])) {
+    assertExcerptsMatchPreparedText(stored.envelope, stored.preparedText);
+  }
   const projection = projectAttestedReviewedProjection(stored);
   const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
   const output = {
@@ -380,6 +411,14 @@ function assertExportSizeWithinCeiling(stored: StoredRunMetadataRead, maxEstimat
  * inspector uses to show `excerpt-mismatch`. The inspector's own per-candidate
  * state is not reused: it marks every candidate of a source once any one
  * mismatches, so it cannot name the field that does.
+ *
+ * Only a recheck round needs this now. A first round's queue is attested
+ * against an import Survey verified against the same prepared text, which
+ * leaves a mismatched proposal out of the queue and records it as an excluded
+ * rival; the grounding policy then refuses the claim it was a rival for,
+ * instead of this refusing the whole export. A recheck round's current-side
+ * candidates are matched against the envelope's proposals directly, so a
+ * mismatched one would still be cited there.
  */
 function assertExcerptsMatchPreparedText(envelope: PortableExtractionResultEnvelope, preparedText: string): void {
   for (const proposal of envelope.result.proposals) {
@@ -412,7 +451,7 @@ function assertExcerptsMatchPreparedText(envelope: PortableExtractionResultEnvel
  * excluded becomes a claim, verified or otherwise. A round with nothing left
  * to export is still refused: a receipt over nothing certifies nothing.
  */
-export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead): {
+export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead & { readonly preparedText?: string }): {
   readonly imported: ExtractionEnvelopeImportResult;
   readonly items: readonly ReviewItem[];
   readonly results: readonly ReviewWorkbenchResult[];
@@ -426,6 +465,7 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
   if (imported.record.status.state !== "grounded") throw new Error("Export refused: extraction is not grounded");
   const queue = stored.run.review.snapshot.items as readonly ReviewItem[];
   assertReviewedQueueIsAttested(queue, imported, stored.envelope);
+  if (stored.run.extraction === undefined) throw unboundEnvelope();
   const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
   const applied = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
   if (!applied.ok || !applied.replayedSession) {
@@ -682,7 +722,7 @@ function withReviewedGroundingEvidence(
  *
  * Survey's cross-check attests queue-to-record consistency only; keeping the
  * stored record equal to the record originally imported is the caller's
- * storage obligation, met here by `readRun`'s prepared-bytes/digest binding
+ * storage obligation, met here by `readRun`'s prepared-bytes/digest and envelope-digest bindings
  * and, for what no artifact in this run can attest — a recheck item's
  * *prior*-observation candidates and the recheck item set itself — accepted
  * and disclosed as a gap (docs/decisions/local-run-artifacts.md, fieldwork#65).
@@ -746,6 +786,28 @@ export function extractionCoverageSummary(envelope: PortableExtractionResultEnve
   const chunks = new Set(coverage.map((entry) => entry.chunk));
   const incomplete = new Set(coverage.filter((entry) => entry.status !== "complete").map((entry) => entry.chunk));
   return { chunkCount: chunks.size, incompleteChunkCount: incomplete.size };
+}
+
+export const UNBOUND_ENVELOPE_MESSAGE = "This run was created before Fieldwork bound each run to its stored extraction, "
+  + "so an edit to that extraction cannot be detected. Its review is closed and cannot be exported; "
+  + "remove this run and re-run the source to review it again.";
+
+function unboundEnvelope(): Error {
+  return Object.assign(new Error(`Export refused: ${UNBOUND_ENVELOPE_MESSAGE}`), { code: "EXPORT_UNBOUND_ENVELOPE" });
+}
+
+/**
+ * Why a run opens but can never be exported, if it cannot. A run from before
+ * the extraction binding is served so its history stays readable, but closed:
+ * its envelope could have been edited undetected, and decisions recorded
+ * against it could never be exported.
+ */
+export function reviewBlockedFor(run: StoredRun): Pick<FieldworkRunViewV1, "reviewBlocked"> {
+  if (reviewQueueFromOlderFieldwork(run.review.snapshot.items)) {
+    return { reviewBlocked: { reason: "created-by-older-fieldwork", message: RUN_FROM_OLDER_FIELDWORK_MESSAGE } };
+  }
+  if (run.extraction === undefined) return { reviewBlocked: { reason: "unbound-envelope", message: UNBOUND_ENVELOPE_MESSAGE } };
+  return {};
 }
 
 export const RUN_FROM_OLDER_FIELDWORK_MESSAGE = "This run was created by an older Fieldwork, whose review queue the current "
@@ -1020,21 +1082,50 @@ export function reviewSessionRecord(run: StoredRun, eventCount: number): {
  * envelope and the task's claim targets. Survey's reload paths check a stored
  * queue against the import stored with it; this is that record. It is rebuilt
  * rather than kept as a second copy, so it cannot disagree with the stored
- * envelope. That is all it attests: `readRun` checks the prepared bytes
- * against the artifact identity the envelope records (digest, length, ref),
- * but nothing binds the envelope's proposal set. A proposal deleted from the
- * stored envelope, with the queue and its digest rebuilt to match, is not
- * detected here or at export.
+ * envelope, and the run store has already checked that envelope against the
+ * digest bound when the run was created.
+ *
+ * With the prepared text in hand, Survey verifies every excerpt again, and the
+ * status it records has to equal the one bound at creation. A metadata-only
+ * read has no text to verify with, so it takes the bound status; Survey still
+ * refuses one its import could not have written for this envelope. A run from
+ * before the binding is imported unverified, as it was built, so its queue
+ * still attests; it is served blocked and refused at export.
  */
-export function storedExtractionImport(stored: Pick<StoredRunMetadataRead, "run" | "envelope">): ExtractionEnvelopeImportResult {
-  return importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
+export function storedExtractionImport(
+  stored: Pick<StoredRunMetadataRead, "run" | "envelope"> & { readonly preparedText?: string },
+): ExtractionEnvelopeImportResult {
+  const options = extractionImportOptions(stored.run.task, importNameFor(stored.run));
+  const binding = stored.run.extraction;
+  if (binding === undefined) return importExtractionEnvelope(stored.envelope, options);
+  if (stored.preparedText === undefined) {
+    const { record } = importExtractionEnvelope(stored.envelope, options);
+    const bound = { ...record, status: structuredClone(binding.importStatus) } as ExtractionEnvelopeImportResult["record"];
+    return { record: bound, reviewItems: buildReviewItemsFromExtractionEnvelopeImport(bound) };
+  }
+  const imported = importExtractionEnvelope(stored.envelope, {
+    ...options,
+    artifact: { status: "available", text: stored.preparedText, actualDigest: stored.run.preparedArtifact.digest },
+  });
+  if (canonicalJson(imported.record.status) !== canonicalJson(binding.importStatus)) {
+    throw Object.assign(
+      new Error("The extraction's excerpts no longer verify against the prepared text the way they did when this run was created, "
+        + "so the run cannot be read. Re-run the source rather than editing stored extraction state."),
+      { code: "RUN_EXTRACTION_MISMATCH" },
+    );
+  }
+  return imported;
+}
+
+function extractionImportOptions(task: FieldworkTask, importName: string): ExtractionEnvelopeImportOptions {
+  return {
+    importName, producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
     claimTarget: (proposal) => {
-      const projection = stored.run.task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
+      const projection = task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
       if (!projection) throw new Error(`No claim target for ${proposal.fieldPath}`);
       return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
     }
-  });
+  };
 }
 
 /**
