@@ -140,7 +140,8 @@ it is also stated as `disputed` in the bundle, on the claim and through a
 events), while the reviewer's own event is kept as recorded. A field whose only
 gaps are Surface's structural limits (an `array` or `object` value) is not
 disputed: it stays `verified` and is listed under
-`reviewRound.groundingUnchecked`, which does not change the CLI's exit status. The CLI exits 3 for it, as for a
+`reviewRound.groundingUnchecked`, which does not change the CLI's exit status.
+For a claim in `reviewRound.groundingRefused`, the CLI exits 3, as for a
 partial export, and the reviewed-source facade describes it with
 `review.state: "grounding-refused"`.
 

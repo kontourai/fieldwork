@@ -13,7 +13,7 @@ import { importExtractionEnvelope, type ReviewItem } from "@kontourai/survey";
 import { buildReviewSessionEvents, hashReviewQueueSnapshot, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import {
-  bindExtraction, FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, projectAttestedReviewedProjection, reviewedExport, runFieldwork,
+  bindExtraction, disputeContestedClaims, FIELDWORK_SOURCE_KIND, importNameFor, newReviewRound, projectAttestedReviewedProjection, reviewedExport, runFieldwork,
 } from "../src/fieldwork.js";
 import { inspectionExport } from "../src/inspection.js";
 import { readRun, readRunMetadata, type StoredRun } from "../src/run-store.js";
@@ -195,9 +195,9 @@ async function runWithExcludedRival(label: string): Promise<string> {
 }
 
 /** Replace one proposal's excerpt with same-length text the source does not contain there, and re-bind the run. */
-async function forgeUnverifiedExcerpt(run: string, value: string, excerpt: string, candidateValue: string): Promise<string> {
+async function forgeUnverifiedExcerpt(run: string, value: unknown, excerpt: string, candidateValue: unknown): Promise<string> {
   const { runPath, envelopePath, run: stored, envelope } = await files(run);
-  const proposal = envelope.result.proposals.find((entry) => entry.candidateValue === value)!;
+  const proposal = envelope.result.proposals.find((entry) => JSON.stringify(entry.candidateValue) === JSON.stringify(value))!;
   assert.equal(proposal.provenance.excerpt.length, excerpt.length);
   proposal.provenance.excerpt = excerpt;
   proposal.candidateValue = candidateValue;
@@ -372,4 +372,55 @@ test("a field Surface cannot check structurally stays verified, is reported apar
   const report = formatTrustReportSummary(buildTrustReport(validateTrustBundle(exported.bundle)));
   assert.match(report, /^Disputed: none$/m);
   assert.ok(exported.bundle.claims.every((claim: { status: string }) => claim.status === "verified"));
+});
+
+/*
+ * An array field Surface cannot check structurally, which is also contested by
+ * an excluded rival: two Tags lines, one of them forged. The rival makes it a
+ * dispute, whatever structural gaps it also has.
+ */
+test("a structurally unchecked field that is also contested by an excluded rival is a dispute", async () => {
+  const root = await tempRoot("mixed-structural-rival");
+  const sourcePath = join(root, "source.txt");
+  await writeFile(sourcePath, `Tags: ["security","privacy"]\n${"filler line of text.\n".repeat(700)}Tags: ["other","list"]\n`);
+  const created = await runFieldwork({ taskPath: "examples/schema-first/task.json", sourcePath, root });
+  const run = await forgeUnverifiedExcerpt(created.runDirectory, ["other", "list"], 'Tags: ["othex","list"]', ["othex", "list"]);
+  const snapshot = (await view(run)).review.snapshot as unknown as ReviewQueueSessionState;
+  assert.equal((await post(run, snapshot, acceptAll(snapshot))).ok, true);
+  const outputPath = join(run, "..", "export.json");
+  await assert.rejects(
+    () => exec(process.execPath, ["--import", "tsx", "src/cli.ts", "export", run, "--output", outputPath, "--json"]),
+    (error: { code?: number; stdout: string }) => {
+      assert.equal(error.code, 3);
+      const summary = JSON.parse(error.stdout);
+      const tags = summary.groundingRefused.find((entry: { fieldPath: string }) => entry.fieldPath === "tags");
+      assert.ok(tags.gaps.includes("excluded-rival-unresolved") && tags.gaps.includes("structure-not-validated"), JSON.stringify(tags));
+      assert.equal(summary.groundingUnchecked, undefined);
+      return true;
+    },
+  );
+  const exported = JSON.parse(await readFile(outputPath, "utf8"));
+  assert.match(formatTrustReportSummary(buildTrustReport(validateTrustBundle(exported.bundle))), /^Claims: 1 \(disputed: 1\)$/m);
+});
+
+test("the dispute is newer than the verified event even when that event is stamped after this host's clock", async () => {
+  const run = await runWithExcludedRival("clock-skew");
+  const snapshot = (await view(run)).review.snapshot as unknown as ReviewQueueSessionState;
+  assert.equal((await post(run, snapshot, acceptAll(snapshot))).ok, true);
+  const exported = await reviewedExport(run);
+  const refusedEntries = (exported.reviewRound as { groundingRefused: Parameters<typeof disputeContestedClaims>[1] }).groundingRefused;
+  const contested = new Set(refusedEntries.map((entry) => entry.claimId));
+  const bundle = exported.bundle as unknown as ReturnType<typeof validateTrustBundle>;
+  // The bundle as it was before the dispute, with the reviewer's event
+  // recorded later than the exporting host's clock.
+  const future = "2999-01-01T00:00:00.000Z";
+  const undisputed = validateTrustBundle({
+    ...bundle,
+    claims: bundle.claims.map((claim) => contested.has(claim.id) ? { ...claim, status: "verified" as const } : claim),
+    events: bundle.events.filter((event) => !event.id.endsWith(".reviewed-grounding-dispute"))
+      .map((event) => contested.has(event.claimId) ? { ...event, createdAt: future, ...(event.verifiedAt ? { verifiedAt: future } : {}) } : event),
+  });
+  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 2 \(verified: 2\)$/m);
+  const disputed = disputeContestedClaims(undisputed, refusedEntries, new Date("2026-01-01T00:00:00.000Z"));
+  assert.match(formatTrustReportSummary(buildTrustReport(disputed)), /^Claims: 2 \(verified: 1, disputed: 1\)$/m);
 });

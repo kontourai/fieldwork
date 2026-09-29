@@ -415,11 +415,24 @@ export function groundingRefusedClaims(projection: Pick<ReturnType<typeof projec
  * policy refused, makes Surface's trust report say disputed. The reviewer's
  * own `verified` event is kept as recorded.
  */
-function disputeContestedClaims<T extends ReturnType<typeof validateTrustBundle>>(bundle: T, refused: readonly GroundingRefusedClaim[]): T {
+export function disputeContestedClaims<T extends ReturnType<typeof validateTrustBundle>>(
+  bundle: T,
+  refused: readonly GroundingRefusedClaim[],
+  now: Date = new Date(),
+): T {
   const contested = refused.filter((entry) => entry.gaps.some((gap) => RIVAL_GAPS.has(gap)));
   if (contested.length === 0) return bundle;
   const ids = new Set(contested.map((entry) => entry.claimId));
-  const createdAt = new Date().toISOString();
+  // Surface takes a claim's newest event, and on a tie keeps the earlier one in
+  // array order, so the dispute must be strictly newer than every event already
+  // recorded for the claim, whatever this host's clock says (skew, or a run
+  // moved between hosts).
+  const disputedAt = (claimId: string): string => new Date(Math.max(
+    now.getTime(),
+    ...bundle.events.filter((event) => event.claimId === claimId)
+      .flatMap((event) => [event.createdAt, event.verifiedAt])
+      .flatMap((instant) => instant === undefined || Number.isNaN(Date.parse(instant)) ? [] : [Date.parse(instant) + 1]),
+  )).toISOString();
   return validateTrustBundle({
     ...bundle,
     claims: bundle.claims.map((claim) => ids.has(claim.id) ? { ...claim, status: "disputed" as const } : claim),
@@ -430,7 +443,7 @@ function disputeContestedClaims<T extends ReturnType<typeof validateTrustBundle>
       actor: REVIEWED_EVIDENCE_COLLECTED_BY,
       method: REVIEWED_GROUNDING_POLICY_ID,
       evidenceIds: [...entry.evidenceIds],
-      createdAt,
+      createdAt: disputedAt(entry.claimId),
       notes: `Reviewed grounding refused: ${entry.gaps.filter((gap) => RIVAL_GAPS.has(gap)).join(", ")}.`,
     }))],
   }) as T;
