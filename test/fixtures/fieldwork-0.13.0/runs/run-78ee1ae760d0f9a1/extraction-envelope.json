@@ -1,0 +1,260 @@
+{
+  "format": "traverse-extraction-result",
+  "result": {
+    "exampleDigests": [],
+    "extractedAt": "2026-09-29T21:31:14.773Z",
+    "model": "fieldwork-deterministic-v1",
+    "outcome": {
+      "status": "success"
+    },
+    "preparedArtifact": {
+      "contentLength": 792,
+      "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+      "format": "traverse-prepared-artifact",
+      "preparationMode": "text",
+      "preparationVersion": "3",
+      "ref": "traverse-prepared-artifact:v1:sha256:492fa4101cfecbda1d54a11b8254203f6544a6919c0eee3830fa1a50eb0391f5",
+      "sourceSnapshotRef": "forage-snapshot:northstar-renewal-brief?url=https%3A%2F%2Fexample.invalid%2Fvendor-renewal&sha256=2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab&fetchedAt=2026-07-25T08%3A00%3A00.000Z&snapshotSha256=de61c12254f752540d5afc20754cae0ef460615eed966a7db137f98407f63491",
+      "version": 1
+    },
+    "preparedArtifactState": {
+      "canonicalRef": "traverse-prepared-artifact:v1:sha256:492fa4101cfecbda1d54a11b8254203f6544a6919c0eee3830fa1a50eb0391f5",
+      "requestedRef": "traverse-prepared-artifact:v1:sha256:492fa4101cfecbda1d54a11b8254203f6544a6919c0eee3830fa1a50eb0391f5",
+      "status": "available"
+    },
+    "proposals": [
+      {
+        "candidateValue": "Northstar Analytics",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "vendor.name",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Vendor: Northstar Analytics",
+          "locator": "chars:304-331",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 331,
+              "index": 0,
+              "start": 304
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      },
+      {
+        "candidateValue": 48000,
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "commercial.annualFeeUsd",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Annual renewal fee USD: 48000",
+          "locator": "chars:332-361",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 361,
+              "index": 0,
+              "start": 332
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "number"
+      },
+      {
+        "candidateValue": "2027-04-01",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "renewal.date",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Renewal date: 2027-04-01",
+          "locator": "chars:362-386",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 386,
+              "index": 0,
+              "start": 362
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "date"
+      },
+      {
+        "candidateValue": "automatic",
+        "confidence": 1,
+        "enumValues": [
+          "automatic",
+          "manual"
+        ],
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "renewal.posture",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Renewal posture: automatic",
+          "locator": "chars:387-413",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 413,
+              "index": 0,
+              "start": 387
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "enum"
+      },
+      {
+        "candidateValue": 45,
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "renewal.noticeDays",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Notice period days: 45",
+          "locator": "chars:414-436",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 436,
+              "index": 0,
+              "start": 414
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "number"
+      },
+      {
+        "candidateValue": "SOC 2 Type II report requested, 2026 report not yet received",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "security.assurance",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Security assurance: SOC 2 Type II report requested, 2026 report not yet received",
+          "locator": "chars:437-517",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 517,
+              "index": 0,
+              "start": 437
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      },
+      {
+        "candidateValue": "United States",
+        "confidence": 1,
+        "enumValues": [
+          "United States",
+          "European Union",
+          "Canada"
+        ],
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "data.hostingRegion",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Hosting region: United States",
+          "locator": "chars:518-547",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 547,
+              "index": 0,
+              "start": 518
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "enum"
+      }
+    ],
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "raw": {
+      "tokensUsed": 0
+    },
+    "runId": "traverse-extraction-run:9d2123a4-8808-4005-abd8-05ee1c6de6fe",
+    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+    "totalTokensUsed": 0
+  },
+  "source": {
+    "ref": "forage-snapshot:northstar-renewal-brief?url=https%3A%2F%2Fexample.invalid%2Fvendor-renewal&sha256=2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab&fetchedAt=2026-07-25T08%3A00%3A00.000Z&snapshotSha256=de61c12254f752540d5afc20754cae0ef460615eed966a7db137f98407f63491",
+    "snapshotRef": "forage-snapshot:northstar-renewal-brief?url=https%3A%2F%2Fexample.invalid%2Fvendor-renewal&sha256=2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab&fetchedAt=2026-07-25T08%3A00%3A00.000Z&snapshotSha256=de61c12254f752540d5afc20754cae0ef460615eed966a7db137f98407f63491"
+  },
+  "version": 1
+}

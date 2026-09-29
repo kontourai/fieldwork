@@ -18,17 +18,17 @@ importers:
         specifier: 1.0.0
         version: 1.0.0(playwright@1.62.1)
       '@kontourai/lookout':
-        specifier: 0.8.0
-        version: 0.8.0(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
+        specifier: 0.8.1
+        version: 0.8.1(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
       '@kontourai/relay':
         specifier: 0.7.0
         version: 0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3))
       '@kontourai/surface':
-        specifier: 4.4.0
-        version: 4.4.0
+        specifier: 4.4.1
+        version: 4.4.1
       '@kontourai/survey':
-        specifier: 7.0.0
-        version: 7.0.0(typescript@7.0.2)
+        specifier: 8.0.0
+        version: 8.0.0(typescript@7.0.2)
       '@kontourai/traverse':
         specifier: 3.0.1
         version: 3.0.1(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
@@ -353,8 +353,8 @@ packages:
       playwright:
         optional: true
 
-  '@kontourai/lookout@0.8.0':
-    resolution: {integrity: sha512-ljFz8oonFI6wsbtp33gYtrX6djiKoqj8tDS6Zo9qK6RqJTvA2GkSpbxUAw/NjxZFlVsDW6d7EuBKNQ1f0nRzvg==}
+  '@kontourai/lookout@0.8.1':
+    resolution: {integrity: sha512-n4BL2mEDF2wUGUbDiYsFkDmaDgxowcwGWA42cMnSYE+t6UX6jGlObT/sl36YJCP4jKJlgIjDsOBe9v8QD0U/Tw==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -393,13 +393,13 @@ packages:
     engines: {node: '>=22'}
     hasBin: true
 
-  '@kontourai/surface@4.2.0':
-    resolution: {integrity: sha512-b1S4hQchjQmU2TtE9OR481cLk9kDyalw19EZ66m+6aUuQHWCskatrJoEk5ILpOkLQ/xK7rn8Sl2C3hExDnP9/Q==}
+  '@kontourai/surface@4.4.0':
+    resolution: {integrity: sha512-Vy5c8k/SYTN1SB2EcoWZXF7V0WjMofruvut9oJv224jQkxrnCYRVglDK4e0o3D19K8bJRMGgNVmiMvEQl5NXeA==}
     engines: {node: '>=22'}
     hasBin: true
 
-  '@kontourai/surface@4.4.0':
-    resolution: {integrity: sha512-Vy5c8k/SYTN1SB2EcoWZXF7V0WjMofruvut9oJv224jQkxrnCYRVglDK4e0o3D19K8bJRMGgNVmiMvEQl5NXeA==}
+  '@kontourai/surface@4.4.1':
+    resolution: {integrity: sha512-XuOmO3ZIoyxQCyofcjfj32sNsJ5YlzEiBqheYnnEq/XaB1oPeWRLjnLzFnWz5QUE2vJXg8yTxuCiF5nriYfT3A==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -413,8 +413,8 @@ packages:
       typescript:
         optional: true
 
-  '@kontourai/survey@7.0.0':
-    resolution: {integrity: sha512-vM8vRtoB70dQ4StBCkGkzkI7YBVuvHLvvYZoPgv9CnTQgtKkGG+pefe1hazortop1SqyGvvkzAlLYMNWAp2nyg==}
+  '@kontourai/survey@8.0.0':
+    resolution: {integrity: sha512-4cs94lxDoB+FQ34n1mP5I96/glVFF0GVDJ2o34thQ3HGL2d+xGmcn+4x48RdM59eH1prApbsOsOccyEuFZ+Udw==}
     engines: {node: '>=22'}
     hasBin: true
     peerDependencies:
@@ -1794,7 +1794,7 @@ snapshots:
     optionalDependencies:
       playwright: 1.62.1
 
-  '@kontourai/lookout@0.8.0(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)':
+  '@kontourai/lookout@0.8.1(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)':
     dependencies:
       '@kontourai/datum': 0.8.0(playwright@1.62.1)
       '@kontourai/forage': 1.0.0(playwright@1.62.1)
@@ -1834,7 +1834,7 @@ snapshots:
       - kerberos
       - supports-color
 
-  '@kontourai/surface@4.2.0':
+  '@kontourai/surface@4.4.0':
     optionalDependencies:
       '@sigstore/bundle': 5.0.0
       '@sigstore/sign': 5.0.0
@@ -1843,7 +1843,7 @@ snapshots:
       - kerberos
       - supports-color
 
-  '@kontourai/surface@4.4.0':
+  '@kontourai/surface@4.4.1':
     optionalDependencies:
       '@sigstore/bundle': 5.0.0
       '@sigstore/sign': 5.0.0
@@ -1861,9 +1861,9 @@ snapshots:
       - kerberos
       - supports-color
 
-  '@kontourai/survey@7.0.0(typescript@7.0.2)':
+  '@kontourai/survey@8.0.0(typescript@7.0.2)':
     dependencies:
-      '@kontourai/surface': 4.2.0
+      '@kontourai/surface': 4.4.0
       '@modelcontextprotocol/server': 2.0.0
       zod: 4.4.3
     optionalDependencies:

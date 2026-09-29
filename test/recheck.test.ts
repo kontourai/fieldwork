@@ -23,6 +23,7 @@ import { bindExtraction, canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, im
 import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
+import { recheckAfterPartialPrior } from "./helpers/incomplete-runs.js";
 import { recheckFieldwork } from "../src/recheck.js";
 import { readRun } from "../src/run-store.js";
 import { parseFieldworkTask, traverseTask } from "../src/contracts.js";
@@ -658,6 +659,22 @@ test("a partial recheck run records its incompleteness and raises no removal", a
   assert.ok(committed.ok && committed.value);
   assert.equal(committed.value.incomplete?.reason, "provider-failure");
   assert.ok((committed.value.incomplete?.coverage?.length ?? 0) > 0, "the run's coverage is recorded with it");
+});
+
+/*
+ * Lookout 0.8.1 turns what a partial prior lacked into review work. Lookout 0.8.0
+ * listed it only as a newly observed fact, so a value the prior never read
+ * reached no reviewer: the round had nothing to decide.
+ */
+test("a value a partial prior never read is queued for review as newly observed, not dropped", async () => {
+  const result = await recheckAfterPartialPrior("node");
+  assert.equal(result.classification, "semantic-drift");
+  const items = result.review.items as unknown as ReviewItem[];
+  assert.deepEqual(items.map((item) => (item.metadata.producer?.["lookout.kontourai.io/semantic-transition"] as { semanticKind?: string } | undefined)?.semanticKind), ["proposal-newly-observed"]);
+  assert.deepEqual(items[0]!.spec.candidates.find((candidate) => candidate.role === "proposed")?.value, "Active");
+  await decideRound(result.run!.runDirectory, () => "accept-proposed");
+  const exported = (await reviewedExport(result.run!.runDirectory)).bundle as unknown as ExportedBundle;
+  assert.deepEqual(exported.claims.map((claim) => claim.value), ["Active"]);
 });
 
 /*

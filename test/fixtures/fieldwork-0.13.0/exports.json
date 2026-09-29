@@ -1,0 +1,103 @@
+{
+  "generic": {
+    "runDirectory": "run-ee0f5783bcfa2891",
+    "sha256": "f92bc9248e559810abc8e00e4abcb54bf91887999985b2dfa1b061fdbfae9799",
+    "claims": [
+      [
+        "record.status",
+        "Active",
+        "verified"
+      ]
+    ],
+    "reviewedGrounding": "allowed"
+  },
+  "conflict": {
+    "runDirectory": "run-dfc21686cf842a8f",
+    "sha256": "4a4c223e571c8de28b33febdf77039286df883b5b696a261a5573705a4ce3da8",
+    "claims": [
+      [
+        "record.alpha",
+        "alpha-value",
+        "verified"
+      ],
+      [
+        "record.status",
+        "Paused",
+        "verified"
+      ]
+    ],
+    "reviewedGrounding": "allowed"
+  },
+  "vendorPartial": {
+    "runDirectory": "run-cdecb02ac92d8fa1"
+  },
+  "vendorFirst": {
+    "runDirectory": "run-78ee1ae760d0f9a1",
+    "sha256": "f5a9b86a75416ae94eaf61712195eca0ada2a977dcb26af66e155a44ca4af90f",
+    "claims": [
+      [
+        "vendor.name",
+        "Northstar Analytics",
+        "verified"
+      ],
+      [
+        "commercial.annualFeeUsd",
+        48000,
+        "verified"
+      ],
+      [
+        "renewal.date",
+        "2027-04-01",
+        "verified"
+      ],
+      [
+        "renewal.posture",
+        "automatic",
+        "verified"
+      ],
+      [
+        "renewal.noticeDays",
+        45,
+        "verified"
+      ],
+      [
+        "security.assurance",
+        "SOC 2 Type II report requested, 2026 report not yet received",
+        "verified"
+      ],
+      [
+        "data.hostingRegion",
+        "United States",
+        "verified"
+      ]
+    ],
+    "reviewedGrounding": "allowed"
+  },
+  "vendorRecheck": {
+    "runDirectory": "run-8ba70916cd9cfee2",
+    "sha256": "532a8bdf4049d606aff09930082a348c99a28f4c61e2ad745b5263abeeea226b",
+    "claims": [
+      [
+        "commercial.annualFeeUsd",
+        52500,
+        "verified"
+      ],
+      [
+        "renewal.noticeDays",
+        60,
+        "verified"
+      ],
+      [
+        "commercial.annualFeeUsd",
+        52500,
+        "verified"
+      ],
+      [
+        "renewal.noticeDays",
+        60,
+        "verified"
+      ]
+    ],
+    "reviewedGrounding": "not-evaluated"
+  }
+}

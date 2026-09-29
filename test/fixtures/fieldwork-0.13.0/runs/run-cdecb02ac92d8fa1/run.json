@@ -1,0 +1,1182 @@
+{
+  "schemaVersion": 1,
+  "runResource": "fieldwork-run:v1:vendor-renewal-review:cdecb02ac92d8fa1",
+  "createdAt": "2026-09-29T21:31:14.624Z",
+  "taskName": "vendor-renewal-review",
+  "task": {
+    "apiVersion": "fieldwork.kontourai.io/v1alpha1",
+    "kind": "FieldworkTask",
+    "metadata": {
+      "name": "vendor-renewal-review"
+    },
+    "spec": {
+      "traverse": {
+        "version": "1",
+        "targetSchema": [
+          {
+            "path": "vendor.name",
+            "type": "string",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "commercial.annualFeeUsd",
+            "type": "number",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "renewal.date",
+            "type": "date",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "renewal.posture",
+            "type": "enum",
+            "enumValues": [
+              "automatic",
+              "manual"
+            ],
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "renewal.noticeDays",
+            "type": "number",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "security.assurance",
+            "type": "string",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "data.hostingRegion",
+            "type": "enum",
+            "enumValues": [
+              "United States",
+              "European Union",
+              "Canada"
+            ],
+            "inferenceType": "explicit"
+          }
+        ]
+      },
+      "projections": [
+        {
+          "fieldPath": "vendor.name",
+          "pattern": "Vendor: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "counterparty",
+            "claimType": "field",
+            "impactLevel": "medium"
+          }
+        },
+        {
+          "fieldPath": "commercial.annualFeeUsd",
+          "pattern": "Annual renewal fee USD: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "commercial",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "renewal.date",
+          "pattern": "Renewal date: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "renewal",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "renewal.posture",
+          "pattern": "Renewal posture: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "renewal",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "renewal.noticeDays",
+          "pattern": "Notice period days: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "renewal",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "security.assurance",
+          "pattern": "Security assurance: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "security",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "data.hostingRegion",
+          "pattern": "Hosting region: ([^\\n]+)",
+          "claim": {
+            "subjectType": "vendor-agreement",
+            "subjectId": "northstar-analytics-2027",
+            "facet": "data-residency",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        }
+      ]
+    }
+  },
+  "execution": {
+    "identity": {
+      "mode": "fixture-v1"
+    },
+    "receipts": []
+  },
+  "preparedArtifact": {
+    "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+    "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+    "contentLength": 792,
+    "file": "prepared.txt"
+  },
+  "envelopeFile": "extraction-envelope.json",
+  "extraction": {
+    "envelopeDigest": "d481a80ae2eb00eade46bf23acda9a41b6f5763450f19eee56c03595cdd00b49",
+    "importStatus": {
+      "state": "grounded",
+      "diagnostics": [],
+      "provenance": "verified"
+    }
+  },
+  "review": {
+    "snapshot": {
+      "items": [
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.02f7c9994b1fe7628b23",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.48d1a868532f5352dde4.source-evidence",
+                "proposalIndices": [
+                  0
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "vendor.name",
+            "candidates": [
+              {
+                "id": "extraction-envelope.f9efcaa6099b5edc2c1e.proposed",
+                "role": "proposed",
+                "value": "Northstar Analytics",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:304-331",
+                  "excerpt": "Vendor: Northstar Analytics"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.f9efcaa6099b5edc2c1e",
+                  "target": "vendor.name",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "counterparty",
+                  "claimType": "field",
+                  "fieldOrBehavior": "vendor.name",
+                  "impactLevel": "medium"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 0,
+                    "evidenceId": "survey.extraction.48d1a868532f5352dde4.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "string",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 331,
+                        "index": 0,
+                        "start": 304
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "string"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.199f7b5f2c6bd4222d1f",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.c4611edba3cc062135de.source-evidence",
+                "proposalIndices": [
+                  1
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "commercial.annualFeeUsd",
+            "candidates": [
+              {
+                "id": "extraction-envelope.329b8ef6526a685bdaba.proposed",
+                "role": "proposed",
+                "value": 48000,
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:332-361",
+                  "excerpt": "Annual renewal fee USD: 48000"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.329b8ef6526a685bdaba",
+                  "target": "commercial.annualFeeUsd",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "commercial",
+                  "claimType": "field",
+                  "fieldOrBehavior": "commercial.annualFeeUsd",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 1,
+                    "evidenceId": "survey.extraction.c4611edba3cc062135de.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "number",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 361,
+                        "index": 0,
+                        "start": 332
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "number"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.c4f89ddd95da4a0ec8b8",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.6d0a57a85e07ebb28425.source-evidence",
+                "proposalIndices": [
+                  2
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "renewal.date",
+            "candidates": [
+              {
+                "id": "extraction-envelope.c8be649e7fa24f67d9d0.proposed",
+                "role": "proposed",
+                "value": "2027-04-01",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:362-386",
+                  "excerpt": "Renewal date: 2027-04-01"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.c8be649e7fa24f67d9d0",
+                  "target": "renewal.date",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "renewal",
+                  "claimType": "field",
+                  "fieldOrBehavior": "renewal.date",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 2,
+                    "evidenceId": "survey.extraction.6d0a57a85e07ebb28425.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "date",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 386,
+                        "index": 0,
+                        "start": 362
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "date"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.fcfd4331175cf5ae6ca0",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.365bd8326aa85582629e.source-evidence",
+                "proposalIndices": [
+                  3
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "renewal.posture",
+            "candidates": [
+              {
+                "id": "extraction-envelope.4d4c64b45d81ada98181.proposed",
+                "role": "proposed",
+                "value": "automatic",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:387-413",
+                  "excerpt": "Renewal posture: automatic"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.4d4c64b45d81ada98181",
+                  "target": "renewal.posture",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "renewal",
+                  "claimType": "field",
+                  "fieldOrBehavior": "renewal.posture",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 3,
+                    "evidenceId": "survey.extraction.365bd8326aa85582629e.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "enum",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 413,
+                        "index": 0,
+                        "start": 387
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "enum"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.f39c7f17627941a3102f",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.f082a761001eb39160e6.source-evidence",
+                "proposalIndices": [
+                  4
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "renewal.noticeDays",
+            "candidates": [
+              {
+                "id": "extraction-envelope.211771b5a37289a7e882.proposed",
+                "role": "proposed",
+                "value": 45,
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:414-436",
+                  "excerpt": "Notice period days: 45"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.211771b5a37289a7e882",
+                  "target": "renewal.noticeDays",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "renewal",
+                  "claimType": "field",
+                  "fieldOrBehavior": "renewal.noticeDays",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 4,
+                    "evidenceId": "survey.extraction.f082a761001eb39160e6.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "number",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 436,
+                        "index": 0,
+                        "start": 414
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "number"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.403ac2858b26148fd83b",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.86a6d759de8d82be88d5.source-evidence",
+                "proposalIndices": [
+                  5
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "security.assurance",
+            "candidates": [
+              {
+                "id": "extraction-envelope.6858b02a8d8f358c2768.proposed",
+                "role": "proposed",
+                "value": "SOC 2 Type II report requested, 2026 report not yet received",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:437-517",
+                  "excerpt": "Security assurance: SOC 2 Type II report requested, 2026 report not yet received"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.6858b02a8d8f358c2768",
+                  "target": "security.assurance",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "security",
+                  "claimType": "field",
+                  "fieldOrBehavior": "security.assurance",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 5,
+                    "evidenceId": "survey.extraction.86a6d759de8d82be88d5.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "string",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 517,
+                        "index": 0,
+                        "start": 437
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "string"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.25bb8dab35372d58f203",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                "evidenceId": "survey.extraction.b0062a853196e303e430.source-evidence",
+                "proposalIndices": [
+                  6
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "snapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab"
+                },
+                "preparedArtifact": {
+                  "contentLength": 792,
+                  "digest": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:28ce9246590d3720c1f072890089a75a81bdd5705701052cd436f4f82b10bd5f",
+                  "sourceSnapshotRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "data.hostingRegion",
+            "candidates": [
+              {
+                "id": "extraction-envelope.95487fa8041246316ee1.proposed",
+                "role": "proposed",
+                "value": "United States",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "sourceId": "fieldwork-source:v1:vendor-renewal-review:2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.613Z",
+                  "checksum": "2588c1a8002f504a79d76015407f6c3f6c9c75912836e09879382f20de7260ab",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:518-547",
+                  "excerpt": "Hosting region: United States"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.95487fa8041246316ee1",
+                  "target": "data.hostingRegion",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.613Z"
+                },
+                "claimTarget": {
+                  "subjectType": "vendor-agreement",
+                  "subjectId": "northstar-analytics-2027",
+                  "facet": "data-residency",
+                  "claimType": "field",
+                  "fieldOrBehavior": "data.hostingRegion",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:vendor-renewal-review:cdecb02ac92d8fa1",
+                    "proposalIndex": 6,
+                    "evidenceId": "survey.extraction.b0062a853196e303e430.source-evidence",
+                    "runId": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:6492ce8649abdb2d2e173834e17e6a442a698344d4ec7ee44d92577acca46bca",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "enum",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 547,
+                        "index": 0,
+                        "start": 518
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:9fa20ed7-eda2-442b-8fcf-f73350c2f755",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "enum"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        }
+      ],
+      "activeItemName": "extraction-envelope.02f7c9994b1fe7628b23",
+      "notesByItemName": {},
+      "decisionsByItemName": {},
+      "reviewedAt": "2026-09-29T21:31:14.624Z",
+      "actorId": "unattributed",
+      "editedValuesByItemName": {}
+    },
+    "events": [
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0001-session-started",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "batch"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 1,
+          "eventType": "session-started",
+          "occurredAt": "2026-09-29T21:31:14.688Z",
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0002-item-selected",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "batch"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 2,
+          "eventType": "item-selected",
+          "occurredAt": "2026-09-29T21:31:14.688Z",
+          "activeItemName": "extraction-envelope.02f7c9994b1fe7628b23",
+          "reviewItemName": "extraction-envelope.02f7c9994b1fe7628b23",
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0003-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "batch"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 3,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-09-29T21:31:14.688Z",
+          "reviewItemName": "extraction-envelope.02f7c9994b1fe7628b23",
+          "reviewDecisionName": "extraction-envelope.02f7c9994b1fe7628b23-accept-proposed",
+          "candidateId": "extraction-envelope.f9efcaa6099b5edc2c1e.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0004-decision-submitted",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "batch"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 4,
+          "eventType": "decision-submitted",
+          "occurredAt": "2026-09-29T21:31:14.688Z",
+          "reviewItemName": "extraction-envelope.02f7c9994b1fe7628b23",
+          "reviewDecisionName": "extraction-envelope.02f7c9994b1fe7628b23-accept-proposed",
+          "candidateId": "extraction-envelope.f9efcaa6099b5edc2c1e.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0005-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "batch"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 5,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-09-29T21:31:14.688Z",
+          "reviewItemName": "extraction-envelope.199f7b5f2c6bd4222d1f",
+          "reviewDecisionName": "extraction-envelope.199f7b5f2c6bd4222d1f-accept-proposed",
+          "candidateId": "extraction-envelope.329b8ef6526a685bdaba.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0006-decision-submitted",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "batch"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 6,
+          "eventType": "decision-submitted",
+          "occurredAt": "2026-09-29T21:31:14.688Z",
+          "reviewItemName": "extraction-envelope.199f7b5f2c6bd4222d1f",
+          "reviewDecisionName": "extraction-envelope.199f7b5f2c6bd4222d1f-accept-proposed",
+          "candidateId": "extraction-envelope.329b8ef6526a685bdaba.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      }
+    ],
+    "revision": 1,
+    "snapshotHash": "858f7877660e33440fb4b32bf7b0a0050b446231c4650f04fa6a2ba51dc22718"
+  }
+}

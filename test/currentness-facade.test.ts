@@ -227,14 +227,14 @@ test("substituted source, opaque ref, lease token, store, and moved URL remain c
 
 test("published filesystem owners preserve an accepted A review while HTTP B/304-B/C/D advances as-of currentness", async (t) => {
   // This is deliberately one continuous owner journey.  It uses the published
-  // Forage 1.0.0 and Lookout 0.8.0 filesystem owners behind the real guarded
+  // Forage 1.0.0 and Lookout 0.8.1 filesystem owners behind the real guarded
   // HTTP fixture, not a fabricated CheckResult or an in-memory head.
   const f = await ownerFixture(t, "http", false, { distinctRepeats: true });
   const acceptedP = await f.establishProposal();
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   assert.equal(manifest.dependencies["@kontourai/forage"], "1.0.0");
-  assert.equal(manifest.dependencies["@kontourai/lookout"], "0.8.0");
-  assert.equal(manifest.dependencies["@kontourai/surface"], "4.4.0");
+  assert.equal(manifest.dependencies["@kontourai/lookout"], "0.8.1");
+  assert.equal(manifest.dependencies["@kontourai/surface"], "4.4.1");
 
   let authorizations = 0;
   const app = createFieldworkApplication({ reviewedWebSourceOwner: {
