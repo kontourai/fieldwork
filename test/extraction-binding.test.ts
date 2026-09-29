@@ -23,6 +23,7 @@ import { parseReviewedWebSourceDescriptor } from "../src/reviewed-web-source-con
 
 const exec = promisify(execFile);
 import { conflictRun } from "./helpers/conflict-run.js";
+import { partialRunWithProposals } from "./helpers/incomplete-runs.js";
 
 /*
  * A run's stored extraction envelope is bound to the run when it is created
@@ -293,14 +294,26 @@ test("the CLI reports a claim whose grounding was refused and exits non-zero", a
 });
 
 test("an edit to the envelope's outcome or coverage, not only its proposals, is refused", async () => {
+  // A partial run's envelope edited to read as complete: its outcome made a
+  // success, or its unread chunk marked read. Both stay valid envelopes, so
+  // only the binding can tell.
   for (const [label, edit] of [
-    ["outcome", (envelope: { result: Record<string, unknown> }) => { envelope.result.outcome = { status: "partial", reason: "max-chunks" }; }],
-    ["coverage", (envelope: { result: Record<string, unknown> }) => { envelope.result.coverage = [{ chunk: 1, start: 0, end: 1, status: "complete" }]; }],
+    ["outcome", (result: Record<string, unknown>) => {
+      result.outcome = { status: "success" };
+      delete result.partial; delete result.coverage; delete result.providerFailures;
+    }],
+    ["coverage", (result: Record<string, unknown>) => {
+      result.coverage = (result.coverage as { reason?: string; status: string }[]).map(({ reason: _reason, ...entry }) => ({ ...entry, status: "complete" }));
+    }],
   ] as const) {
-    const run = await conflictRun(`envelope-${label}`);
-    const { envelopePath, envelope } = await files(run);
-    edit(envelope as never);
+    const run = await partialRunWithProposals(`envelope-${label}`);
+    const { runPath, envelopePath, run: stored, envelope } = await files(run);
+    const preparedText = (await readRun(run)).preparedText;
+    edit(envelope.result as unknown as Record<string, unknown>);
+    // The queue and its digest are rebuilt from the edited envelope, as in the
+    // proposal-deletion attack, so the queue attestation agrees with the edit.
     await writeFile(envelopePath, JSON.stringify(envelope, null, 2));
+    await writeFile(runPath, JSON.stringify({ ...stored, review: newReviewRound(reimport(stored, envelope, preparedText).reviewItems, stored.createdAt) }, null, 2));
     await assert.rejects(() => view(run), refused("RUN_ENVELOPE_MISMATCH"));
     await assert.rejects(() => reviewedExport(run), refused("RUN_ENVELOPE_MISMATCH"));
   }
