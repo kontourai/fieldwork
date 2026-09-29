@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Panel, StatusBar, Topbar } from "@kontourai/ui/react";
 import { createPersistentReviewSessionEventStore, mountExtractionInspector, mountReviewWorkbench } from "@kontourai/survey/review-workbench";
-import type { ExtractionInspectorModel, ReviewItem, ReviewSessionEvent } from "@kontourai/survey";
+import type { ExtractionEnvelopeImport, ExtractionInspectorModel, ReviewItem, ReviewSessionEvent } from "@kontourai/survey";
 import type { ReviewPresentationAdapter, ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import "@kontourai/survey/review-workbench.css";
 import "@kontourai/ui/tokens";
@@ -446,7 +446,12 @@ function App() {
         void load();
       }
     } });
-    mountReviewWorkbench(workbenchHost, state.review.snapshot as unknown as ReviewQueueSessionState, { eventStore: store, presentationAdapter });
+    // The import the queue was built from, so Survey checks the stored queue
+    // against it and refuses one that diverges instead of flagging it unverified.
+    const extractionImport = state.review.extractionImport as unknown as ExtractionEnvelopeImport | undefined;
+    mountReviewWorkbench(workbenchHost, state.review.snapshot as unknown as ReviewQueueSessionState, {
+      eventStore: store, presentationAdapter, ...(extractionImport === undefined ? {} : { extractionImport }),
+    });
     const disposeLinking = linkDocumentAndQueue(inspectorHost, workbenchHost, inspectorModel.candidates, highlightByItem, recheck);
     return () => { disposeLinking(); disposeInspector(); workbenchHost.replaceChildren(); };
   }, [state, inspectorModel, queueItems, recheck, reviewable]);

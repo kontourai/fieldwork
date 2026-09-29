@@ -247,6 +247,13 @@ export interface FieldworkRunViewV1 {
     readonly items: readonly JsonObject[];
     readonly events: readonly JsonObject[];
     readonly apply: JsonObject;
+    /**
+     * Survey's extraction import record the queue was built from, rebuilt from
+     * the run's stored envelope. Present for a first review round; absent for a
+     * recheck round, whose items are Lookout's transitions rather than the
+     * import's. The workbench checks the queue against it on every load.
+     */
+    readonly extractionImport?: JsonObject;
   };
 }
 export interface ReviewMutationSuccessV1 {
@@ -438,7 +445,8 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
     snapshot: jsonObjectSchema,
     items: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.reviewItems),
     events: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.events),
-    apply: jsonObjectSchema
+    apply: jsonObjectSchema,
+    extractionImport: jsonObjectSchema.optional(),
   }).strict()
 }).strict();
 const reviewMutationSuccessSchema: z.ZodType<ReviewMutationSuccessV1> = z.object({

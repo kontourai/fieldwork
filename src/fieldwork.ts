@@ -422,14 +422,7 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead)
   readonly attribution: readonly (ReviewDecisionAttribution & { readonly claimId: string })[];
 } {
   assertPortableOutput(stored.envelope);
-  const imported = importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
-    claimTarget: (proposal) => {
-      const projection = stored.run.task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
-      if (!projection) throw new Error(`No claim target for ${proposal.fieldPath}`);
-      return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
-    }
-  });
+  const imported = storedExtractionImport(stored);
   if (imported.record.status.state !== "grounded") throw new Error("Export refused: extraction is not grounded");
   const queue = stored.run.review.snapshot.items as readonly ReviewItem[];
   assertReviewedQueueIsAttested(queue, imported, stored.envelope);
@@ -1021,6 +1014,70 @@ export function reviewSessionRecord(run: StoredRun, eventCount: number): {
     snapshotHash: run.review.snapshotHash, eventCount, updatedAt: run.createdAt,
   };
 }
+/**
+ * The Survey extraction import a run's first review round was built from,
+ * re-derived from what the run stores beside its queue: the extraction
+ * envelope, which `readRun` binds to the prepared bytes by digest, and the
+ * task's claim targets. Survey's reload paths check a stored queue against the
+ * import stored with it; this is that record. It is rebuilt rather than kept
+ * as a second copy, so it can never disagree with the envelope it came from.
+ */
+export function storedExtractionImport(stored: Pick<StoredRunMetadataRead, "run" | "envelope">): ExtractionEnvelopeImportResult {
+  return importExtractionEnvelope(stored.envelope, {
+    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
+    claimTarget: (proposal) => {
+      const projection = stored.run.task.spec.projections.find((candidate) => candidate.fieldPath === proposal.fieldPath);
+      if (!projection) throw new Error(`No claim target for ${proposal.fieldPath}`);
+      return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
+    }
+  });
+}
+
+/**
+ * Check a stored round's queue against the artifact it was built from when the
+ * round is reloaded, with the same rule `reviewedExport` applies, and return
+ * the import to hand to Survey's reload paths. The queue's binding digest can
+ * be refreshed by whoever edits the queue, so this is what catches an edit made
+ * together with its digest, before anyone reviews the edited queue.
+ *
+ * A first round is checked against its extraction import, which is returned. A
+ * recheck round holds Lookout's transition items, which are checked against
+ * the envelope and have no import to return. A queue from an older Fieldwork
+ * can never match and is served blocked instead. An empty queue is not checked:
+ * a recheck round that found nothing to re-decide is legitimately empty, so an
+ * emptied queue cannot be told from one (the disclosed recheck item-set gap),
+ * and export refuses an empty round either way.
+ */
+export function attestStoredReviewQueue(
+  stored: Pick<StoredRunMetadataRead, "run" | "envelope">,
+  imported: ExtractionEnvelopeImportResult,
+): ExtractionEnvelopeImportResult | undefined {
+  const items = stored.run.review.snapshot.items as readonly ReviewItem[];
+  if (items.length === 0 || reviewQueueFromOlderFieldwork(items)) return undefined;
+  try {
+    assertReviewedQueueIsAttested(items, imported, stored.envelope);
+  } catch (cause) {
+    throw unattestedStoredQueue(cause as Error);
+  }
+  return items.some((item) => item.metadata.producer?.[SEMANTIC_TRANSITION_PRODUCER]) ? undefined : imported;
+}
+
+/**
+ * A stored queue that does not match the extraction import it was built from.
+ * Its binding digest can be refreshed by whoever edits the queue, so this is
+ * the check that catches an edit made together with the digest.
+ */
+function unattestedStoredQueue(cause: Error): Error {
+  return Object.assign(
+    new Error(
+      "Stored review queue does not match the extraction it was imported from, so it cannot be reviewed. "
+      + "Re-run the source rather than editing stored review state.",
+      { cause },
+    ),
+    { code: "REVIEW_QUEUE_UNATTESTED" },
+  );
+}
+
 export function importNameFor(run: StoredRun): string { return `fieldwork-import:${run.taskName}:${run.runResource.split(":").at(-1)}`; }
 
 export const SEMANTIC_TRANSITION_PRODUCER = "lookout.kontourai.io/semantic-transition";

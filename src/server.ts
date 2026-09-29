@@ -7,7 +7,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { assertServerReviewSessionEvents, deriveServerReviewSessionApplyResult } from "@kontourai/survey/review-workbench/server-review-session";
-import { buildExtractionInspectorModel, importExtractionEnvelope, type ReviewSessionEvent } from "@kontourai/survey";
+import { buildExtractionInspectorModel, type ReviewSessionEvent } from "@kontourai/survey";
 import { FIELDWORK_LIMITS, canonicalJson, failure } from "./contracts.js";
 import {
   fieldworkHostPresentationSchema, parseFieldworkRunView, parsePreparedArtifactView,
@@ -18,8 +18,8 @@ import {
 } from "./api-contracts.js";
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import {
-  extractionCoverageSummary, FIELDWORK_SOURCE_KIND, importNameFor, reviewQueueFromOlderFieldwork, reviewSessionRecord,
-  RUN_FROM_OLDER_FIELDWORK_MESSAGE,
+  attestStoredReviewQueue, extractionCoverageSummary, reviewQueueFromOlderFieldwork, reviewSessionRecord,
+  RUN_FROM_OLDER_FIELDWORK_MESSAGE, storedExtractionImport,
 } from "./fieldwork.js";
 import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
 
@@ -189,21 +189,18 @@ async function handle(
 
 export async function readRunView(directory: string): Promise<FieldworkRunViewV1> {
   const stored = await readRun(directory);
-  const imported = importExtractionEnvelope(stored.envelope, {
-    importName: importNameFor(stored.run), producerNamespace: "fieldwork", sourceKind: FIELDWORK_SOURCE_KIND,
-    claimTarget: (proposal) => {
-      const projection = stored.run.task.spec.projections.find((entry) => entry.fieldPath === proposal.fieldPath);
-      if (!projection) throw new Error("Unknown projection");
-      return { ...projection.claim, fieldOrBehavior: proposal.fieldPath };
-    }
-  });
+  const imported = storedExtractionImport(stored);
   const inspector = buildExtractionInspectorModel({
     importResult: imported,
     artifact: { status: "available", text: stored.preparedText, actualDigest: stored.run.preparedArtifact.digest }
   });
-  const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
-  const apply = deriveServerReviewSessionApplyResult({ record, events: stored.run.review.events, requiredResolvedItems: "none" });
   const snapshot = stored.run.review.snapshot;
+  const extractionImport = attestStoredReviewQueue(stored, imported);
+  const record = reviewSessionRecord(stored.run, stored.run.review.events.length);
+  const apply = deriveServerReviewSessionApplyResult({
+    record, events: stored.run.review.events, requiredResolvedItems: "none",
+    ...(extractionImport === undefined ? {} : { extractionImport }),
+  });
   const coverage = extractionCoverageSummary(stored.envelope);
   return parseFieldworkRunView({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunView", ok: true,
@@ -217,7 +214,10 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
       snapshot,
       items: imported.reviewItems,
       events: stored.run.review.events,
-      apply
+      apply,
+      // The workbench checks the queue against this record on every load and
+      // refuses one that diverges; without it the queue shows as unverified.
+      ...(extractionImport === undefined ? {} : { extractionImport: extractionImport.record }),
     }
   });
 }
@@ -255,7 +255,11 @@ async function submit(directory: string, input: unknown, reviewer: FieldworkRevi
     const persisted = [...stored.run.review.events, ...appended];
     const record = reviewSessionRecord(stored.run, persisted.length);
     assertServerReviewSessionEvents(record, persisted);
-    const apply = deriveServerReviewSessionApplyResult({ record, events: persisted, requiredResolvedItems: "none" });
+    const extractionImport = attestStoredReviewQueue(stored, storedExtractionImport(stored));
+    const apply = deriveServerReviewSessionApplyResult({
+      record, events: persisted, requiredResolvedItems: "none",
+      ...(extractionImport === undefined ? {} : { extractionImport }),
+    });
     const revision = stored.run.review.revision + 1;
     // The queue is unchanged by a decision, so its binding is carried forward
     // verbatim: a mutating writer that recomputed the digest would re-bless a
@@ -321,6 +325,7 @@ function publicError(error: unknown): { status: number; code: string; message: s
   if (code === "REQUEST_TOO_LARGE") return { status: 413, code, message: "Request exceeds the Fieldwork body limit" };
   if (code === "INVALID_JSON") return { status: 400, code, message: "Request body is not valid JSON" };
   if (code === "REVIEW_BUSY") return { status: 503, code, message: "Review storage is temporarily busy" };
+  if (code === "REVIEW_QUEUE_UNATTESTED") return { status: 409, code, message: "Stored review queue does not match the extraction it was imported from" };
   if (error instanceof z.ZodError) return { status: 422, code: "INVALID_RUN", message: "Stored Fieldwork run failed validation" };
   return { status: 500, code: "INTERNAL", message: "Fieldwork could not complete the request" };
 }

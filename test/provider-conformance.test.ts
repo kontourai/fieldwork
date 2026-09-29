@@ -269,9 +269,10 @@ test("the Traverse maxChunks ceiling reports a distinct max-chunks partial outco
   // The beyond-maxChunks drop must classify distinctly from benign multi-chunk
   // splitting (traverse@0.25.1) — otherwise a 600k-char truncated run is
   // indistinguishable from a benign 25k run, which is exactly fieldwork#50.
+  // Traverse 3.0.1 names the limit itself (`max-chunks`).
   assert.ok(
     stored.envelope.result.warningClassifications.some(
-      (entry: { category: string; code: string }) => entry.category === "limit" && entry.code === "content-truncated",
+      (entry: { category: string; code: string }) => entry.category === "limit" && entry.code === "max-chunks",
     ),
     JSON.stringify(stored.envelope.result.warningClassifications),
   );
@@ -359,7 +360,7 @@ test("fieldwork inspect surfaces the truncation outcome and its distinct warning
   assert.deepEqual(artifact.spec.extraction.outcome, { status: "partial", reason: "max-chunks" });
   assert.ok(
     artifact.spec.extraction.warningClassifications.some(
-      (entry) => entry.category === "limit" && entry.code === "content-truncated",
+      (entry) => entry.category === "limit" && entry.code === "max-chunks",
     ),
     JSON.stringify(artifact.spec.extraction.warningClassifications),
   );

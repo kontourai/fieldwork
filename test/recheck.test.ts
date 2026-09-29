@@ -11,6 +11,7 @@ import {
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import {
   buildSemanticReviewWork,
+  createObservationStore,
   type CheckResult,
   type LookoutSource,
   type ProposalSetObservation,
@@ -258,6 +259,14 @@ test("a decided recheck round exports as a receipt of that round", async () => {
   const stored = await readRun(runDirectory);
   assert.equal(stored.envelope.result.proposals.length, 1);
   assert.equal(stored.run.review.snapshot.items.length, result.review.itemCount);
+  // A recheck round's items are Lookout's transitions, not the import's, so
+  // it carries no import to check them against and is not flagged unverified.
+  const service = await openRun(runDirectory);
+  try {
+    const view = await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    assert.equal(view.review.extractionImport, undefined);
+    assert.deepEqual((view.review.apply as { warnings?: unknown[] }).warnings ?? [], []);
+  } finally { await service.close(); }
 
   await decideRound(runDirectory, () => "accept-proposed");
   const exported = await exportedBundle(runDirectory);
@@ -596,34 +605,77 @@ test("a recheck round whose extraction did not cover the whole source is refused
   });
 });
 
-test("a run whose proposals report no confidence is never given one: export and recheck refuse it", async () => {
-  // Traverse 3 omits confidence when the provider does not report one, and
-  // Lookout 0.7.0 (built on Traverse 0.25.1) cannot record such a proposal.
+test("a run whose proposals report no confidence is never given one, and it can be exported and rechecked", async () => {
+  // Traverse 3 omits confidence when the provider does not report one. Lookout
+  // 0.8 records such a proposal, and Survey 7 exports it through Surface 4.1+,
+  // so neither path needs a confidence invented for it.
   const unreported = statusOnlyRuntimeBinding(null);
   const setup = await baseline("Status: Active", join(fixture, "task.json"), unreported);
   const prior = await readRun(setup.prior.runDirectory);
   assert.equal(prior.envelope.result.proposals.length, 1);
   assert.equal("confidence" in prior.envelope.result.proposals[0]!, false);
-  // Surface 4.1 accepts a proposal without confidence, but Survey 6.1.0's
-  // reviewed-extraction adapter still refuses one, so the export fails closed
-  // rather than grounding a value with an invented confidence.
   await decideRound(setup.prior.runDirectory, () => "accept-proposed");
-  await assert.rejects(() => reviewedExport(setup.prior.runDirectory), /requires a proposer confidence/);
-  let checks = 0;
-  await assert.rejects(
-    () => recheckFieldwork({
-      ...setup.options,
-      runtime: unreported,
-      acquisition: { check: async () => { checks += 1; throw new Error("the refusal comes before any acquisition"); } },
-    }),
-    (error: Error & { code?: string }) => {
-      assert.equal(error.code, "RECHECK_OBSERVATION_FAILED");
-      assert.match(error.message, /without a reported confidence/);
-      return true;
-    },
-  );
-  assert.equal(checks, 0);
+  const exported = await reviewedExport(setup.prior.runDirectory);
+  const dimensions = (exported.reviewedGrounding as { dimensions: Record<string, unknown>[] }).dimensions;
+  assert.equal(dimensions.length, 1);
+  assert.equal("candidateConfidence" in dimensions[0]!, false, "no confidence is invented for the export");
+
+  const current = snapshot("capture-unreported", "Status: Pending", "2026-07-23T17:40:00.000Z");
+  const result = await recheckFieldwork({
+    ...setup.options,
+    runtime: unreported,
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
+  });
+  assert.equal(result.classification, "semantic-drift");
+  assert.equal("confidence" in result.currentObservation!.proposals[0]!, false);
 });
+
+/*
+ * Lookout 0.8 never reports a removal from an observation whose extraction did
+ * not read all of its text, but only when the observation says so. The status
+ * line of the current capture sits in a chunk whose provider call fails, so the
+ * run proposes nothing there: it is partial, not a source that lost its status.
+ */
+test("a partial recheck run records its incompleteness and raises no removal", async () => {
+  const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
+  const runtime = unreadableChunkRuntimeBinding();
+  const setup = await baseline(`Status: Active${filler}`, join(fixture, "task.json"), runtime);
+  assert.deepEqual((await readRun(setup.prior.runDirectory)).envelope.result.outcome, { status: "success" });
+  const current = snapshot("capture-partial", `UNREADABLE Status: Active${filler}`, "2026-07-23T17:50:00.000Z");
+  const result = await recheckFieldwork({
+    ...setup.options,
+    runtime,
+    acquisition: { check: async () => { await setup.store.put(current); return check("changed", setup.priorRef, buildSnapshotSourceRef(current)); } },
+  });
+  const stored = await readRun(result.run!.runDirectory);
+  assert.deepEqual(stored.envelope.result.outcome, { status: "partial", reason: "provider-failure" });
+  assert.equal(stored.envelope.result.proposals.length, 0);
+
+  const kinds = result.review.items.map((item) => item.metadata?.producer?.["lookout.kontourai.io/semantic-transition"]?.semanticKind);
+  assert.equal(kinds.includes("proposal-removed"), false, `a partial run raised ${JSON.stringify(kinds)}`);
+  assert.equal(result.review.itemCount, 0);
+  const committed = await createObservationStore({ root: setup.options.observationRoot }).loadLatest(source.id);
+  assert.ok(committed.ok && committed.value);
+  assert.equal(committed.value.incomplete?.reason, "provider-failure");
+  assert.ok((committed.value.incomplete?.coverage?.length ?? 0) > 0, "the run's coverage is recorded with it");
+});
+
+/** Proposes the status its chunk states, fails any chunk marked UNREADABLE, and proposes nothing elsewhere. */
+function unreadableChunkRuntimeBinding(): FieldworkRuntimeBinding {
+  return runtimeBinding(async (request) => {
+    const text = JSON.stringify(request.messages);
+    if (text.includes("UNREADABLE")) throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false);
+    const match = /Status: (\w+)/.exec(text);
+    return {
+      provider: "fixture-runtime", model: "fixture-model", outputText: "",
+      toolCalls: [{
+        id: "tool-status", name: "submit_extraction_proposals",
+        input: { proposals: match ? [{ fieldPath: "record.status", value: match[1], confidence: 0.98, excerpt: match[0], locator: null, occurrenceHint: null }] : [] },
+      }],
+      usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1, stopReason: "tool_use",
+    };
+  });
+}
 
 function failingRuntimeBinding(): FieldworkRuntimeBinding {
   return runtimeBinding(async () => { throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false); });

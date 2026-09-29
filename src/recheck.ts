@@ -6,6 +6,7 @@ import {
   admitSourceCheck,
   buildSemanticReviewWork,
   createObservationStore,
+  type ProposalSetIncompleteness,
   type ProposalSetObservation,
   type LookoutSource,
   type CheckResult,
@@ -737,30 +738,34 @@ function observationFor(
     );
   }
   const { proposals } = envelope.result;
-  // Lookout 0.7.0 is built against Traverse 0.25.1, whose proposals always
-  // carry a confidence, and its observation store refuses one that does not.
-  // Traverse 3 makes confidence an optional provider self-report and Fieldwork
-  // never invents one, so a run with an unreported confidence cannot be
-  // recorded as a Lookout observation yet: say so here, with the reason,
-  // instead of surfacing Lookout's generic malformed-observation refusal.
-  if (!proposals.every(hasReportedConfidence)) {
-    throw withCode(
-      "RECHECK_OBSERVATION_FAILED",
-      "Stored extraction has a proposal without a reported confidence, which Lookout cannot record as an observation yet",
-    );
-  }
+  const incomplete = incompletenessOf(envelope.result);
   return {
     sourceId,
     snapshotRef: envelope.source.snapshotRef,
     observedAt: envelope.result.extractedAt,
     proposals,
+    ...(incomplete === undefined ? {} : { incomplete }),
   };
 }
 
-function hasReportedConfidence<T extends { readonly confidence?: number }>(
-  proposal: T,
-): proposal is T & { readonly confidence: number } {
-  return typeof proposal.confidence === "number";
+/**
+ * Lookout's marker for an observation whose extraction did not read and answer
+ * all of its text. A proposal missing from such an observation may sit in text
+ * that was never read, so Lookout reports it as unobserved rather than removed.
+ * Traverse records two kinds of incomplete coverage: a typed partial outcome,
+ * and a chunk whose provider call failed, which leaves the outcome at `success`
+ * and is recorded only in `providerFailures`. Both are incomplete here, with
+ * the same reason Lookout's own extraction path gives them.
+ */
+function incompletenessOf(
+  result: Awaited<ReturnType<typeof readRun>>["envelope"]["result"],
+): ProposalSetIncompleteness | undefined {
+  const { outcome, providerFailures = [], coverage } = result;
+  if (outcome.status === "success" && providerFailures.length === 0) return undefined;
+  const reason = outcome.status === "partial" ? outcome.reason
+    : providerFailures.length > 0 ? "provider-failure"
+      : "extraction-error";
+  return { reason, ...(coverage === undefined ? {} : { coverage }) };
 }
 
 function evidence(observation: {
