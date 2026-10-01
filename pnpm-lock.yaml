@@ -18,8 +18,8 @@ importers:
         specifier: 1.0.1
         version: 1.0.1(playwright@1.62.1)
       '@kontourai/lookout':
-        specifier: 0.8.4
-        version: 0.8.4(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
+        specifier: 0.8.5
+        version: 0.8.5(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
       '@kontourai/relay':
         specifier: 0.7.0
         version: 0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3))
@@ -30,8 +30,8 @@ importers:
         specifier: 8.0.0
         version: 8.0.0(typescript@7.0.2)
       '@kontourai/traverse':
-        specifier: 4.0.0
-        version: 4.0.0(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
+        specifier: 4.1.0
+        version: 4.1.0(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -353,8 +353,8 @@ packages:
       playwright:
         optional: true
 
-  '@kontourai/lookout@0.8.4':
-    resolution: {integrity: sha512-1lcj2nbujaEY5LtIVHX0M7Kjzfo2LnvGIDG4S2W2OL5BJvMMqJiWDftlyqKbe0ltcpGPe5k9TAlf9WXtvKzwXQ==}
+  '@kontourai/lookout@0.8.5':
+    resolution: {integrity: sha512-/zlYvHn4XJg1ADmf5t9NXGEATOr6LJ/ssnO5zvcrQwr8TFUwsPqHskfhpJYAy0EiG4QqkOZIy7vQbTG0LBh35Q==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -425,6 +425,27 @@ packages:
 
   '@kontourai/traverse@4.0.0':
     resolution: {integrity: sha512-yQHRIczN05POHFJhLqE/jvypW75p3i+VhMgnAoauL1PBFEHkK9j0Upy4O4H8oDIlO1L5Cv98XmDpiQnEEzw/ww==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.20.0'
+      '@google/genai': '>=1.0.0'
+      '@kontourai/relay': '>=0.1.0 <1'
+      openai: '>=4.0.0'
+      typescript: '>=5.0.0'
+    peerDependenciesMeta:
+      '@anthropic-ai/sdk':
+        optional: true
+      '@google/genai':
+        optional: true
+      '@kontourai/relay':
+        optional: true
+      openai:
+        optional: true
+      typescript:
+        optional: true
+
+  '@kontourai/traverse@4.1.0':
+    resolution: {integrity: sha512-Edijk8TDOFNCesaoBS0FG6zN1fZZUFz3Wv4Djn9Eis2Gg3/N/8DSH3Cuo6V8Ddp482kKhe0nPVqyy63YyfETuA==}
     engines: {node: '>=22'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.20.0'
@@ -1773,7 +1794,7 @@ snapshots:
     optionalDependencies:
       playwright: 1.62.1
 
-  '@kontourai/lookout@0.8.4(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)':
+  '@kontourai/lookout@0.8.5(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)':
     dependencies:
       '@kontourai/datum': 0.8.0(playwright@1.62.1)
       '@kontourai/forage': 1.0.0(playwright@1.62.1)
@@ -1853,7 +1874,20 @@ snapshots:
 
   '@kontourai/traverse@4.0.0(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)':
     dependencies:
-      '@kontourai/forage': 1.0.0(playwright@1.62.1)
+      '@kontourai/forage': 1.0.1(playwright@1.62.1)
+      linkedom: 0.18.13
+      turndown: 7.2.4
+    optionalDependencies:
+      '@anthropic-ai/sdk': 0.115.0(zod@4.4.3)
+      '@kontourai/relay': 0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3))
+      typescript: 7.0.2
+    transitivePeerDependencies:
+      - canvas
+      - playwright
+
+  '@kontourai/traverse@4.1.0(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@kontourai/relay@0.7.0(@ai-sdk/provider@4.0.3)(@anthropic-ai/sdk@0.115.0(zod@4.4.3)))(playwright@1.62.1)(typescript@7.0.2)':
+    dependencies:
+      '@kontourai/forage': 1.0.1(playwright@1.62.1)
       linkedom: 0.18.13
       turndown: 7.2.4
     optionalDependencies:

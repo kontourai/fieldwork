@@ -38,13 +38,34 @@ export function realRunSourceText(): Promise<string> {
   return readFile(join(REAL_RUN, "prepared.txt"), "utf8");
 }
 
+/** How {@link typedFieldRun} words the version and the publication date. */
+export interface TypedFieldOptions {
+  /** The model answers the version as a number rather than as text. */
+  readonly versionAsNumber?: boolean;
+  /**
+   * Keep the real memo's wording: "2.1" and "14 March 2026", the two spellings
+   * Traverse rewrites into the field's type. Otherwise the memo says "2.10"
+   * and "14/03/2026", which Traverse leaves as the model wrote them.
+   */
+  readonly rewritable?: boolean;
+}
+
+function typedFieldWording(options: TypedFieldOptions): { readonly version: string; readonly date: string } {
+  return {
+    version: options.rewritable || options.versionAsNumber ? "2.1" : "2.10",
+    date: options.rewritable ? "14 March 2026" : "14/03/2026",
+  };
+}
+
 /**
  * A runtime that answers the real run's task the way the real model did: the
- * version number as the text "2.1" for a `number` field and, as in the real
- * web-page run, the publication date in the document's own wording for a
- * `date` field. Traverse checks both against the schema itself.
+ * version number as text for a `number` field and, as in the real web-page
+ * run, the publication date in the document's own wording for a `date` field.
+ * Traverse checks both against the schema itself, after rewriting the two
+ * spellings it can rewrite without loss.
  */
-export function typedFieldRuntime(options: { readonly versionAsNumber?: boolean } = {}): FieldworkRuntimeBinding {
+export function typedFieldRuntime(options: TypedFieldOptions = {}): FieldworkRuntimeBinding {
+  const { version, date } = typedFieldWording(options);
   const proposal = (fieldPath: string, value: unknown, excerpt: string) =>
     ({ fieldPath, value, confidence: 1, excerpt, locator: null, occurrenceHint: null });
   const runtime: ModelRuntime = {
@@ -59,8 +80,8 @@ export function typedFieldRuntime(options: { readonly versionAsNumber?: boolean 
         id: "tool-typed", name: "submit_extraction_proposals",
         input: { proposals: [
           proposal("doc.title", "Harbor Telemetry Exchange Format", "The full title of this specification is Harbor Telemetry Exchange Format."),
-          proposal("doc.publicationDate", "14 March 2026", "This specification was published on 14 March 2026."),
-          proposal("doc.versionNumber", options.versionAsNumber ? 2.1 : "2.1", "This document describes version 2.1 of the format."),
+          proposal("doc.publicationDate", date, `This specification was published on ${date}.`),
+          proposal("doc.versionNumber", options.versionAsNumber ? 2.1 : version, `This document describes version ${version} of the format.`),
         ] },
       }],
       usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1, stopReason: "tool_use",
@@ -69,11 +90,15 @@ export function typedFieldRuntime(options: { readonly versionAsNumber?: boolean 
   return { role: "fieldwork-extraction", candidates: [{ id: "scripted", runtime }], budget: { maxAttempts: 4, maxElapsedMs: 60_000 } };
 }
 
-/** A new run of the real task over the real memo, answered by {@link typedFieldRuntime}. */
-export async function typedFieldRun(label: string, options: { readonly versionAsNumber?: boolean } = {}): Promise<string> {
+/** A new run of the real task over the real memo, worded per `options` and answered by {@link typedFieldRuntime}. */
+export async function typedFieldRun(label: string, options: TypedFieldOptions = {}): Promise<string> {
   const root = await tempRoot(`typed-fields-${label}`);
   const sourcePath = join(root, "memo.md");
-  await writeFile(sourcePath, await realRunSourceText());
+  const { version, date } = typedFieldWording(options);
+  const memo = (await realRunSourceText())
+    .replace("describes version 2.1 of", `describes version ${version} of`)
+    .replace("was published on 14 March 2026.", `was published on ${date}.`);
+  await writeFile(sourcePath, memo);
   const run = await runFieldwork({ taskPath: await realRunTaskPath(root), sourcePath, root: join(root, "runs"), runtime: typedFieldRuntime(options) });
   return run.runDirectory;
 }

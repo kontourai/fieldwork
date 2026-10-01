@@ -490,12 +490,35 @@ test("an added proposal is told to accept it, not to keep a value that was never
   assert.deepEqual(exported.claims.map((claim) => claim.value), ["Active"]);
 });
 
+/** A changed source long enough for two chunks, each stating the status, so the new run holds two proposals for one field. */
+const statedTwice = (first: string, second: string) => `Status: ${first}\n${"filler line of text.\n".repeat(700)}Status: ${second}\n`;
+
+test("one changed field is one review item, holding the old and the new locator", async () => {
+  // Lookout raised a value-changed and a provenance-changed item for this one
+  // change (lookout#34); a changed value that also moved is still one item.
+  for (const [captureId, body, locator] of [
+    ["capture-one-item", "Status: Paused", "chars:0-14"],
+    ["capture-one-item-moved", "Preamble line.\n\nStatus: Paused", "chars:16-30"],
+  ] as const) {
+    const round = await roundFor(captureId, body);
+    const items = (await readRun(round.run!.runDirectory)).run.review.snapshot.items as unknown as ReviewItem[];
+    assert.equal(items.length, 1, captureId);
+    assert.deepEqual(
+      items[0]!.spec.candidates.map((candidate) => [candidate.role, candidate.value, candidate.locator?.locator, candidate.locator?.excerpt]),
+      [["current", "Active", "chars:0-14", "Status: Active"], ["proposed", "Paused", locator, "Status: Paused"]],
+    );
+    await decideRound(round.run!.runDirectory, () => "accept-proposed");
+    assert.deepEqual((await exportedBundle(round.run!.runDirectory)).claims.map((claim) => claim.value), ["Paused"]);
+  }
+});
+
 test("a recheck field with one item decided and its sibling undecided exports no value for it", async () => {
-  // Survey groups a first round's values into one item per claim, so two
-  // items on one field now come from a recheck round (lookout#34).
-  const split = await roundFor("capture-both-unsettled", "Status: Paused");
+  // Two items on one field now come only from a source that states the field
+  // twice: the changed value, and the second statement as an added proposal.
+  const split = await roundFor("capture-both-unsettled", statedTwice("Paused", "Paused"));
   const items = (await readRun(split.run!.runDirectory)).run.review.snapshot.items;
   assert.equal(items.length, 2);
+  assert.equal(new Set(items.map((item) => item.spec.target)).size, 1);
   await decideRound(split.run!.runDirectory, (_name, index) => (index === 0 ? "accept-proposed" : undefined) as string);
   await assert.rejects(() => reviewedExport(split.run!.runDirectory), (error: Error & { code?: string; excluded?: { code: string }[] }) => {
     assert.deepEqual(error.excluded?.map((entry) => entry.code).sort(), ["EXPORT_FIELD_UNSETTLED", "EXPORT_UNDECIDED"]);
@@ -504,14 +527,14 @@ test("a recheck field with one item decided and its sibling undecided exports no
 });
 
 test("a round that decides one field two ways is refused rather than exported as two claims", async () => {
-  // A changed value also changes its excerpt, so Lookout raises both a
-  // value-changed and a provenance-changed item for the one field.
-  const split = await roundFor("capture-both-a", "Status: Paused");
+  // The changed source states the field twice with different values, so the
+  // round holds a value-changed item and an added one for the same field.
+  const split = await roundFor("capture-both-a", statedTwice("Paused", "Pending"));
   const stored = await readRun(split.run!.runDirectory);
   assert.equal(stored.run.review.snapshot.items.length, 2);
   assert.equal(new Set(stored.run.review.snapshot.items.map((item) => item.spec.target)).size, 1);
 
-  await decideRound(split.run!.runDirectory, (_name, index) => index === 0 ? "accept-proposed" : "keep-current");
+  await decideRound(split.run!.runDirectory, () => "accept-proposed");
   await assert.rejects(
     () => reviewedExport(split.run!.runDirectory),
     (error: Error & { code?: string }) => {
@@ -521,15 +544,23 @@ test("a round that decides one field two ways is refused rather than exported as
     },
   );
 
+  // Keeping the prior value on one item while accepting a new one on the other is the same refusal.
+  const keptAndAccepted = await roundFor("capture-both-d", statedTwice("Paused", "Pending"));
+  await decideRound(keptAndAccepted.run!.runDirectory, (_name, index) => index === 0 ? "keep-current" : "accept-proposed");
+  await assert.rejects(() => reviewedExport(keptAndAccepted.run!.runDirectory), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_CONFLICTING_DECISIONS");
+    return true;
+  });
+
   // Rejecting one side of the pair asserts only the accepted value (fieldwork#137).
-  const rejectedOne = await roundFor("capture-both-c", "Status: Paused");
+  const rejectedOne = await roundFor("capture-both-c", statedTwice("Paused", "Pending"));
   await decideRound(rejectedOne.run!.runDirectory, (_name, index) => index === 0 ? "accept-proposed" : "reject-proposed");
   const oneAccepted = (await reviewedExport(rejectedOne.run!.runDirectory)).bundle as unknown as {
     claims: { value: unknown; status: string }[];
   };
-  assert.deepEqual(oneAccepted.claims.map((claim) => [claim.value, claim.status]), [["Paused", "verified"], ["Paused", "rejected"]]);
+  assert.deepEqual(oneAccepted.claims.map((claim) => [claim.value, claim.status]), [["Paused", "verified"], ["Pending", "rejected"]]);
 
-  const agreed = await roundFor("capture-both-b", "Status: Paused");
+  const agreed = await roundFor("capture-both-b", statedTwice("Paused", "Paused"));
   await decideRound(agreed.run!.runDirectory, () => "accept-proposed");
   const exported = await exportedBundle(agreed.run!.runDirectory);
   assert.deepEqual(exported.claims.map((claim) => claim.value), ["Paused", "Paused"]);

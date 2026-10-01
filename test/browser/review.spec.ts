@@ -811,26 +811,25 @@ test("a recheck round says what changed, and shows it in the document", async ({
     await page.goto(server.url);
     await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
 
-    // `fieldwork recheck` raises two items per drifted field — a value change
-    // and a provenance change — so two fields become four decisions.
-    expect(itemCount).toBe(4);
+    // One changed field is one item, so two fields are two decisions. Lookout
+    // used to raise a second, provenance-changed item for each.
+    expect(itemCount).toBe(2);
     const summary = page.getByTestId("recheck-summary");
     await expect(summary).toContainText("The source moved");
     await expect(summary).toContainText("2 fields changed");
-    await expect(summary).toContainText("4 items to re-decide");
+    await expect(summary).toContainText("2 items to re-decide");
     // The one fact a reviewer asks first: when did I last look at this?
     await expect(summary).toContainText(/Captured .+, previously .+/);
 
-    // The panel badge used to count the new extraction's seven proposals while
-    // the queue beside it read "4 fields to review".
-    await expect(page.locator(".fieldwork-column-review .panel-head")).toContainText("4");
+    // The panel badge used to count the new extraction's seven proposals, not
+    // the items in the queue beside it.
+    await expect(page.locator(".fieldwork-column-review .panel-head")).toContainText("2");
     await expect(page.locator(".fieldwork-column-review .panel-head")).toContainText("What changed");
     await expect(page.locator(".fieldwork-document-meta")).toContainText("2 of 7 spans changed");
 
-    // Two items for one field read as a duplicate until each says why it is here.
+    // Each item says why it is here, and there is one per field.
     const kinds = await page.locator('[data-testid="review-field"] .fkind').allTextContents();
-    expect(kinds.filter((kind) => kind === "Value changed")).toHaveLength(2);
-    expect(kinds.filter((kind) => kind === "Evidence changed")).toHaveLength(2);
+    expect(kinds).toEqual(["Value changed", "Value changed"]);
 
     // The document has to answer "which of these seven spans moved".
     const spans = await page.evaluate(() => [...document.querySelectorAll(".inspector-source mark")]
@@ -850,7 +849,7 @@ test("a recheck round says what changed, and shows it in the document", async ({
         const href = from.querySelector("a")?.getAttribute("href") ?? "";
         return { text: from.textContent ?? "", href, resolves: href.startsWith("#") && Boolean(document.getElementById(href.slice(1))) };
       }));
-    expect(provenance).toHaveLength(4);
+    expect(provenance).toHaveLength(2);
     for (const entry of provenance) {
       expect(entry.resolves).toBe(true);
       expect(entry.text).toContain("Northstar renewal brief");
@@ -892,11 +891,10 @@ test("a recheck card links to its own proposed span when the field has two", asy
           linked: id ? document.querySelector(`mark[data-highlight-return-to~="${id}"]`)?.textContent ?? "" : "",
         };
       }));
-    // The value change and provenance change propose the header's 52500; the
-    // added item proposes the historical 48000.
+    // The value change proposes the header's 52500; the added item proposes
+    // the historical 48000.
     expect(cards.map((card) => card.linked).sort()).toEqual([
       "Annual renewal fee USD: 48000",
-      "Annual renewal fee USD: 52500",
       "Annual renewal fee USD: 52500",
     ]);
     const spanOf = (text: string) => {
@@ -1104,15 +1102,16 @@ for (const viewport of [{ label: "desktop", width: 1280, height: 800 }, { label:
 }
 
 test("a proposed value that does not match its field's type says so on its card and above the queue", async ({ page }) => {
-  // The model's answers as the real run recorded them: a number field as the
-  // text "2.1", a date field in the document's wording (fieldwork#170).
+  // The model's answers as the real run recorded them (fieldwork#170), in the
+  // spellings Traverse does not rewrite: a number field as the text "2.10", a
+  // date field in the document's numeric wording.
   const server = await openRun(await typedFieldRun("browser"));
   try {
     await page.goto(server.url);
     await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
     const version = page.locator('[data-field="doc.versionNumber"]');
-    await expect(version.getByTestId("proposed-value")).toHaveText("2.1 (text, not a number)");
-    await expect(page.locator('[data-field="doc.publicationDate"]').getByTestId("proposed-value")).toHaveText("14 March 2026 (not a YYYY-MM-DD date)");
+    await expect(version.getByTestId("proposed-value")).toHaveText("2.10 (text, not a number)");
+    await expect(page.locator('[data-field="doc.publicationDate"]').getByTestId("proposed-value")).toHaveText("14/03/2026 (not a YYYY-MM-DD date)");
     // A value that matches its field is shown as it was.
     await expect(page.locator('[data-field="doc.title"]').getByTestId("proposed-value")).toHaveText("Harbor Telemetry Exchange Format");
     const notice = page.getByTestId("schema-mismatch");
@@ -1123,7 +1122,7 @@ test("a proposed value that does not match its field's type says so on its card 
     // Accepting is still the reviewer's call, and the card keeps saying what was accepted.
     await version.getByTestId("use-proposed").click();
     await expect(version.getByTestId("decided-chip")).toHaveText("Accepted");
-    await expect(version.getByTestId("proposed-value")).toHaveText("2.1 (text, not a number)");
+    await expect(version.getByTestId("proposed-value")).toHaveText("2.10 (text, not a number)");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(notice).toBeVisible();
     const box = await notice.boundingBox();
