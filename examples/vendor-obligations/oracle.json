@@ -158,34 +158,6 @@
           "excerpt": "Notice period days: 60",
           "locator": "chars:414-436"
         }
-      },
-      {
-        "fieldPath": "commercial.annualFeeUsd",
-        "semanticKind": "proposal-provenance-changed",
-        "prior": {
-          "value": 48000,
-          "excerpt": "Annual renewal fee USD: 48000",
-          "locator": "chars:332-361"
-        },
-        "current": {
-          "value": 52500,
-          "excerpt": "Annual renewal fee USD: 52500",
-          "locator": "chars:332-361"
-        }
-      },
-      {
-        "fieldPath": "renewal.noticeDays",
-        "semanticKind": "proposal-provenance-changed",
-        "prior": {
-          "value": 45,
-          "excerpt": "Notice period days: 45",
-          "locator": "chars:414-436"
-        },
-        "current": {
-          "value": 60,
-          "excerpt": "Notice period days: 60",
-          "locator": "chars:414-436"
-        }
       }
     ],
     "priorRunRemainsImmutable": true

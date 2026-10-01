@@ -247,7 +247,7 @@ test("a date in the document's own wording is refused too, where Surface alone r
   const byPath = <T extends readonly unknown[]>(rows: T[]): T[] => rows.sort((left, right) => String(left[0]).localeCompare(String(right[0])));
   assert.deepEqual(
     byPath(proposals.map((proposal) => [proposal.fieldPath, proposal.candidateValue, proposal.evidenceMatch?.schema] as const)),
-    [["doc.publicationDate", "14 March 2026", "format-invalid"], ["doc.title", "Harbor Telemetry Exchange Format", "ok"], ["doc.versionNumber", "2.1", "type-mismatch"]],
+    [["doc.publicationDate", "14/03/2026", "format-invalid"], ["doc.title", "Harbor Telemetry Exchange Format", "ok"], ["doc.versionNumber", "2.10", "type-mismatch"]],
   );
   const view = await readRunView(runDirectory);
   assert.deepEqual(byPath((view.review.schemaMismatches ?? []).map((entry) => [entry.fieldPath, entry.schema, entry.valueType] as const)), [
@@ -276,7 +276,7 @@ test("a date mismatch on its own is disputed in the bundle and refuses the groun
   await acceptEverything(runDirectory);
   const exported = await reviewedExport(runDirectory);
   const date = exported.bundle.claims.find((entry) => entry.fieldOrBehavior === "doc.publicationDate")!;
-  assert.equal(date.value, "14 March 2026");
+  assert.equal(date.value, "14/03/2026");
   assert.equal(date.status, "disputed");
   const report = surfaceReport(exported);
   assert.match(report, /^Claims: 3 \(verified: 2, disputed: 1\)$/m);
@@ -288,6 +288,37 @@ test("a date mismatch on its own is disputed in the bundle and refuses the groun
   const grounding = exported.reviewedGrounding as { outcome: string; gaps: { kind: string; claimId: string; schemaMatch?: string }[] };
   assert.equal(grounding.outcome, "refused");
   assert.deepEqual(grounding.gaps.map((gap) => [gap.kind, gap.claimId, gap.schemaMatch]), [["schema-mismatch", date.id, "format-invalid"]]);
+});
+
+test("a plain decimal and a written date arrive in the field's type, and the inspection says values were rewritten", async () => {
+  // The real model's answers to the real memo: "2.1" for a number field and
+  // "14 March 2026" for a date field. Traverse rewrites both without loss, so
+  // neither is a mismatch; "2.10" and "14/03/2026" above still are.
+  const runDirectory = await typedFieldRun("rewritten", { rewritable: true });
+  const { proposals, warningClassifications } = (await readRun(runDirectory)).envelope.result;
+  const row = (fieldPath: string) => {
+    const proposal = proposals.find((entry) => entry.fieldPath === fieldPath)!;
+    return [proposal.candidateValue, proposal.evidenceMatch?.schema, proposal.evidenceMatch?.valueInExcerpt, proposal.provenance.excerpt];
+  };
+  assert.deepEqual(row("doc.versionNumber"), [2.1, "ok", "match", "This document describes version 2.1 of the format."]);
+  assert.deepEqual(row("doc.publicationDate"), ["2026-03-14", "ok", "match", "This specification was published on 14 March 2026."]);
+  assert.equal((await readRunView(runDirectory)).review.schemaMismatches, undefined);
+
+  // One classification per rewritten value, where `fieldwork inspect` lists the run's warnings.
+  const rewritten = [{ category: "normalization", code: "proposal-normalization" }, { category: "normalization", code: "proposal-normalization" }];
+  assert.deepEqual(warningClassifications, rewritten);
+  const inspected = JSON.parse(await inspectionExport(runDirectory)) as { spec: { extraction: { warningClassifications: unknown } } };
+  assert.deepEqual(inspected.spec.extraction.warningClassifications, rewritten);
+
+  await acceptEverything(runDirectory);
+  const exported = await reviewedExport(runDirectory);
+  assert.deepEqual(
+    exported.bundle.claims.map((claim) => [claim.fieldOrBehavior, claim.value, claim.status]).sort(),
+    [["doc.publicationDate", "2026-03-14", "verified"], ["doc.title", "Harbor Telemetry Exchange Format", "verified"], ["doc.versionNumber", 2.1, "verified"]],
+  );
+  const scope = exported.reviewRound as { groundingRefused?: unknown; groundingUnchecked?: unknown };
+  assert.equal(scope.groundingRefused, undefined);
+  assert.equal(scope.groundingUnchecked, undefined);
 });
 
 // --- 3. Chunks a chunk cap dropped ------------------------------------------
