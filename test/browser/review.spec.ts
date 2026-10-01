@@ -11,7 +11,7 @@ import { reviewedExport, runFieldwork } from "../../src/fieldwork.js";
 import { recheckFieldwork } from "../../src/recheck.js";
 import { openRun } from "../../src/server.js";
 import { tempRoot } from "../helpers.js";
-import { partialRunWithProposals, runFromOlderFieldwork, zeroProposalPartialRun } from "../helpers/incomplete-runs.js";
+import { partialRunWithProposals, recheckAfterPartialPrior, runFromOlderFieldwork, zeroProposalPartialRun } from "../helpers/incomplete-runs.js";
 import {
   formatImageBytes,
   formatPdfBytes,
@@ -963,6 +963,18 @@ test("a decided recheck round exports a receipt of the round", async ({ page }) 
       expect(evidence.excerptOrSummary).toContain(String(claim.value));
     }
   } finally { await server.close(); }
+});
+
+test("a value a partial prior never read is labelled newly seen, not new or merely changed", async ({ page }) => {
+  const result = await recheckAfterPartialPrior("browser");
+  const server = await openRun(result.run!.runDirectory);
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    await expect(page.locator('[data-testid="review-field"] .fkind')).toHaveText(["Newly seen"]);
+  } finally {
+    await server.close();
+  }
 });
 
 test("a first round is not dressed as a recheck", async ({ page }) => {

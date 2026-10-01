@@ -1,0 +1,71 @@
+{
+  "format": "traverse-extraction-result",
+  "result": {
+    "exampleDigests": [],
+    "extractedAt": "2026-09-29T21:31:14.387Z",
+    "model": "fieldwork-deterministic-v1",
+    "outcome": {
+      "status": "success"
+    },
+    "preparedArtifact": {
+      "contentLength": 15,
+      "digest": "5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+      "format": "traverse-prepared-artifact",
+      "preparationMode": "text",
+      "preparationVersion": "3",
+      "ref": "traverse-prepared-artifact:v1:sha256:45df43169b756ac9b8cb45115dce9583681964d754bd324558466db85f30a45c",
+      "sourceSnapshotRef": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+      "version": 1
+    },
+    "preparedArtifactState": {
+      "canonicalRef": "traverse-prepared-artifact:v1:sha256:45df43169b756ac9b8cb45115dce9583681964d754bd324558466db85f30a45c",
+      "requestedRef": "traverse-prepared-artifact:v1:sha256:45df43169b756ac9b8cb45115dce9583681964d754bd324558466db85f30a45c",
+      "status": "available"
+    },
+    "proposals": [
+      {
+        "candidateValue": "Active",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "record.status",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Status: Active",
+          "locator": "chars:0-14",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 14,
+              "index": 0,
+              "start": 0
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      }
+    ],
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 1,
+    "raw": {
+      "tokensUsed": 0
+    },
+    "runId": "traverse-extraction-run:d468aae6-2ff6-4b02-9118-9f5abfc09edb",
+    "taskDigest": "sha256:3530420847594beed88170e0cc41a712bfc9fa5f0a3d0797ad91a2328db72fa8",
+    "totalTokensUsed": 0
+  },
+  "source": {
+    "ref": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+    "snapshotRef": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52"
+  },
+  "version": 1
+}

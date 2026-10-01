@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createFilesystemSnapshotStore, type Snapshot } from "@kontourai/forage";
+import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import { ModelInvocationError, type ModelRuntime } from "@kontourai/relay";
 import type { ReviewItem } from "@kontourai/survey";
 import { newReviewRound, runFieldwork } from "../../src/fieldwork.js";
+import { recheckFieldwork } from "../../src/recheck.js";
 import type { FieldworkRuntimeBinding } from "../../src/runtime-contracts.js";
 import { tempRoot } from "../helpers.js";
 
@@ -49,6 +53,49 @@ export async function zeroProposalPartialRun(label: string): Promise<string> {
 }
 
 /**
+ * A recheck round over a partial prior: the prior capture's status sits in a
+ * chunk the provider fails, so the prior proposed nothing; the current capture
+ * reads in full and proposes the status. The status is newly observed, not
+ * added: it may have been in the text the prior never read.
+ */
+export async function recheckAfterPartialPrior(label: string) {
+  const root = await tempRoot(`newly-observed-${label}`);
+  const snapshotRoot = join(root, "snapshots");
+  const store = createFilesystemSnapshotStore({ root: snapshotRoot });
+  const source = {
+    id: "generic-record-source", url: "https://example.invalid/generic-record", kind: "web-page" as const,
+    cadenceHint: "manual" as const, renderPolicy: "never" as const,
+    targetSchema: [{ path: "record.status", type: "string" as const, inferenceType: "explicit" as const }],
+  };
+  const capture = (body: string, fetchedAt: string): Snapshot => ({
+    sourceId: source.id, url: source.url, status: 200, fetchedAt, body,
+    bodyHash: createHash("sha256").update(body).digest("hex"),
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+  const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
+  const prior = capture(`UNREADABLE Status: Active${filler}`, "2026-07-23T10:00:00.000Z");
+  const current = capture(`Status: Active${filler}`, "2026-07-23T18:00:00.000Z");
+  await store.put(prior);
+  const priorRef = buildSnapshotSourceRef(prior), currentRef = buildSnapshotSourceRef(current);
+  const runtime = statusOnlyRuntime({ withoutStatus: "no-proposals", unreadable: "UNREADABLE" });
+  const first = await runFieldwork({ taskPath: TASK, snapshotRef: priorRef, snapshotRoot, root: join(root, "runs"), runtime });
+  return recheckFieldwork({
+    source, priorRunDirectory: first.runDirectory, taskPath: TASK, runtime,
+    root: join(root, "runs"), observationRoot: join(root, "observations"), snapshotRoot,
+    now: () => "2026-07-23T18:01:00.000Z",
+    acquisition: {
+      check: async () => {
+        await store.put(current);
+        return {
+          sourceId: source.id, sourceUrl: source.url, checkedAt: "2026-07-23T18:00:30.000Z", warnings: [],
+          kind: "changed", priorSnapshotRef: priorRef, currentSnapshotRef: currentRef, changeBasis: "hash",
+        };
+      },
+    },
+  });
+}
+
+/**
  * A first-round run whose queue has the shape earlier Fieldwork releases wrote
  * (Survey 3 or older; Survey 5 introduced one item per claim slot):
  * item metadata without `proposalIndices`. The queue is re-bound with the same
@@ -73,9 +120,10 @@ export async function runFromOlderFieldwork(label: string): Promise<string> {
 /**
  * Proposes the status its chunk states. A chunk that states none fails at the
  * provider, or, with `withoutStatus: "output-truncated"`, answers with no
- * proposals and stops at the output cap.
+ * proposals and stops at the output cap, or, with `"no-proposals"`, answers
+ * with none. A chunk containing `unreadable` always fails at the provider.
  */
-function statusOnlyRuntime(options: { withoutStatus?: "provider-failure" | "output-truncated" } = {}): FieldworkRuntimeBinding {
+function statusOnlyRuntime(options: { withoutStatus?: "provider-failure" | "output-truncated" | "no-proposals"; unreadable?: string } = {}): FieldworkRuntimeBinding {
   const runtime: ModelRuntime = {
     id: "fake:incomplete-run",
     capabilities: () => ({
@@ -83,12 +131,15 @@ function statusOnlyRuntime(options: { withoutStatus?: "provider-failure" | "outp
       streaming: false, abort: true, usage: true,
     }),
     invoke: async (request) => {
-      const match = /Status: (\w+)/.exec(JSON.stringify(request.messages));
-      if (!match && options.withoutStatus === "output-truncated") {
+      const text = JSON.stringify(request.messages);
+      if (options.unreadable !== undefined && text.includes(options.unreadable)) throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false);
+      const match = /Status: (\w+)/.exec(text);
+      if (!match && (options.withoutStatus === "output-truncated" || options.withoutStatus === "no-proposals")) {
         return {
           provider: "fixture-runtime", model: "fixture-model", outputText: "",
           toolCalls: [{ id: "tool-status", name: "submit_extraction_proposals", input: { proposals: [] } }],
-          usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1, stopReason: "max_tokens",
+          usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }, latencyMs: 1,
+          stopReason: options.withoutStatus === "output-truncated" ? "max_tokens" : "tool_use",
         };
       }
       if (!match) throw new ModelInvocationError("PROVIDER_UNAVAILABLE", "unavailable", false);

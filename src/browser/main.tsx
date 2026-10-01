@@ -85,6 +85,9 @@ const SEMANTIC_TRANSITION = "lookout.kontourai.io/semantic-transition";
 
 const CHANGE_LABELS: Record<string, string> = {
   "proposal-added": "New",
+  // Lookout's kind for a value a partial prior lacked: it may be new, or may
+  // have sat in text the prior never read, so it is not labelled "New".
+  "proposal-newly-observed": "Newly seen",
   "proposal-removed": "Removed",
   "proposal-moved": "Moved",
   "proposal-value-changed": "Value changed",

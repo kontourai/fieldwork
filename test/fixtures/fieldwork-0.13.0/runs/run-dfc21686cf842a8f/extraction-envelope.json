@@ -1,0 +1,137 @@
+{
+  "format": "traverse-extraction-result",
+  "result": {
+    "exampleDigests": [],
+    "extractedAt": "2026-09-29T21:31:14.529Z",
+    "model": "fieldwork-deterministic-v1",
+    "outcome": {
+      "status": "success"
+    },
+    "preparedArtifact": {
+      "contentLength": 14749,
+      "digest": "d0479cf2588c44092359f446288bf8bbeb039d59e4ce62c653ba928965a3a4ca",
+      "format": "traverse-prepared-artifact",
+      "preparationMode": "text",
+      "preparationVersion": "3",
+      "ref": "traverse-prepared-artifact:v1:sha256:c2ba929d2ef1807c14388d6c4d5d7701107705b346782bc2aa44470434875209",
+      "sourceSnapshotRef": "fieldwork-source:v1:generic-record:d0479cf2588c44092359f446288bf8bbeb039d59e4ce62c653ba928965a3a4ca",
+      "version": 1
+    },
+    "preparedArtifactState": {
+      "canonicalRef": "traverse-prepared-artifact:v1:sha256:c2ba929d2ef1807c14388d6c4d5d7701107705b346782bc2aa44470434875209",
+      "requestedRef": "traverse-prepared-artifact:v1:sha256:c2ba929d2ef1807c14388d6c4d5d7701107705b346782bc2aa44470434875209",
+      "status": "available"
+    },
+    "proposals": [
+      {
+        "candidateValue": "alpha-value",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "record.alpha",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "alpha: alpha-value",
+          "locator": "chars:0-18",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 18,
+              "index": 0,
+              "start": 0
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      },
+      {
+        "candidateValue": "Active",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "record.status",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Status: Active",
+          "locator": "chars:19-33",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 33,
+              "index": 0,
+              "start": 19
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      },
+      {
+        "candidateValue": "Paused",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "fieldwork-deterministic-v1",
+        "fieldPath": "record.status",
+        "inferenceType": "explicit",
+        "provenance": {
+          "excerpt": "Status: Paused",
+          "locator": "chars:14734-14748",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 14748,
+              "index": 0,
+              "start": 14734
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      }
+    ],
+    "provider": "fieldwork-deterministic-v1",
+    "providerCalls": 2,
+    "raw": {
+      "tokensUsed": 0
+    },
+    "runId": "traverse-extraction-run:a20a482a-eaf3-4b9a-b3fd-f07546a2d829",
+    "taskDigest": "sha256:92f7b6d79b2ac4416f486a8bbbf9c907356aa5c29f0a57262b93bf1e3f2f9536",
+    "totalTokensUsed": 0,
+    "warningClassifications": [
+      {
+        "category": "content",
+        "code": "content-chunking"
+      }
+    ]
+  },
+  "source": {
+    "ref": "fieldwork-source:v1:generic-record:d0479cf2588c44092359f446288bf8bbeb039d59e4ce62c653ba928965a3a4ca",
+    "snapshotRef": "fieldwork-source:v1:generic-record:d0479cf2588c44092359f446288bf8bbeb039d59e4ce62c653ba928965a3a4ca"
+  },
+  "version": 1
+}

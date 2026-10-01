@@ -1,0 +1,321 @@
+{
+  "schemaVersion": 1,
+  "runResource": "fieldwork-run:v1:generic-record:ee0f5783bcfa2891",
+  "createdAt": "2026-09-29T21:31:14.404Z",
+  "taskName": "generic-record",
+  "task": {
+    "apiVersion": "fieldwork.kontourai.io/v1alpha1",
+    "kind": "FieldworkTask",
+    "metadata": {
+      "name": "generic-record"
+    },
+    "spec": {
+      "traverse": {
+        "version": "1",
+        "targetSchema": [
+          {
+            "path": "record.status",
+            "type": "string",
+            "inferenceType": "explicit"
+          }
+        ]
+      },
+      "projections": [
+        {
+          "fieldPath": "record.status",
+          "pattern": "Status: ([^\\n]+)",
+          "claim": {
+            "subjectType": "record",
+            "subjectId": "generic-1",
+            "facet": "review",
+            "claimType": "field",
+            "impactLevel": "medium"
+          }
+        }
+      ]
+    }
+  },
+  "execution": {
+    "identity": {
+      "mode": "fixture-v1"
+    },
+    "receipts": []
+  },
+  "preparedArtifact": {
+    "ref": "traverse-prepared-artifact:v1:sha256:45df43169b756ac9b8cb45115dce9583681964d754bd324558466db85f30a45c",
+    "digest": "5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+    "contentLength": 15,
+    "file": "prepared.txt"
+  },
+  "envelopeFile": "extraction-envelope.json",
+  "extraction": {
+    "envelopeDigest": "a63817776cbcded0fef495410617a5fc77ad58422b52415f0582628c107ea1a2",
+    "importStatus": {
+      "state": "grounded",
+      "diagnostics": [],
+      "provenance": "verified"
+    }
+  },
+  "review": {
+    "snapshot": {
+      "items": [
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.1194415ce1c4165bd50f",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:generic-record:ee0f5783bcfa2891",
+                "evidenceId": "survey.extraction.c247207c24dcd312213d.source-evidence",
+                "proposalIndices": [
+                  0
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+                  "snapshotRef": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52"
+                },
+                "preparedArtifact": {
+                  "contentLength": 15,
+                  "digest": "5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:45df43169b756ac9b8cb45115dce9583681964d754bd324558466db85f30a45c",
+                  "sourceSnapshotRef": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "record.status",
+            "candidates": [
+              {
+                "id": "extraction-envelope.33f596cd20b54d278839.proposed",
+                "role": "proposed",
+                "value": "Active",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+                  "sourceId": "fieldwork-source:v1:generic-record:5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-09-29T21:31:14.387Z",
+                  "checksum": "5ea46bff472a5ee9187e759d93a654919108f22f6890b6a147189a5640590d52",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:0-14",
+                  "excerpt": "Status: Active"
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.33f596cd20b54d278839",
+                  "target": "record.status",
+                  "confidence": 1,
+                  "extractor": "fieldwork-deterministic-v1",
+                  "model": "fieldwork-deterministic-v1",
+                  "extractedAt": "2026-09-29T21:31:14.387Z"
+                },
+                "claimTarget": {
+                  "subjectType": "record",
+                  "subjectId": "generic-1",
+                  "facet": "review",
+                  "claimType": "field",
+                  "fieldOrBehavior": "record.status",
+                  "impactLevel": "medium"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:generic-record:ee0f5783bcfa2891",
+                    "proposalIndex": 0,
+                    "evidenceId": "survey.extraction.c247207c24dcd312213d.source-evidence",
+                    "runId": "traverse-extraction-run:d468aae6-2ff6-4b02-9118-9f5abfc09edb",
+                    "provider": "fieldwork-deterministic-v1",
+                    "model": "fieldwork-deterministic-v1",
+                    "taskDigest": "sha256:3530420847594beed88170e0cc41a712bfc9fa5f0a3d0797ad91a2328db72fa8",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "string",
+                      "origin": "explicit"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 14,
+                        "index": 0,
+                        "start": 0
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:d468aae6-2ff6-4b02-9118-9f5abfc09edb",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "string"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        }
+      ],
+      "activeItemName": "extraction-envelope.1194415ce1c4165bd50f",
+      "notesByItemName": {},
+      "decisionsByItemName": {},
+      "reviewedAt": "2026-09-29T21:31:14.404Z",
+      "actorId": "unattributed",
+      "editedValuesByItemName": {}
+    },
+    "events": [
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0001-session-started",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 1,
+          "eventType": "session-started",
+          "occurredAt": "2026-09-29T21:31:14.504Z",
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0002-item-selected",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 2,
+          "eventType": "item-selected",
+          "occurredAt": "2026-09-29T21:31:14.504Z",
+          "activeItemName": "extraction-envelope.1194415ce1c4165bd50f",
+          "reviewItemName": "extraction-envelope.1194415ce1c4165bd50f",
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0003-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 3,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-09-29T21:31:14.504Z",
+          "reviewItemName": "extraction-envelope.1194415ce1c4165bd50f",
+          "reviewDecisionName": "extraction-envelope.1194415ce1c4165bd50f-accept-proposed",
+          "candidateId": "extraction-envelope.33f596cd20b54d278839.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0004-decision-submitted",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 4,
+          "eventType": "decision-submitted",
+          "occurredAt": "2026-09-29T21:31:14.504Z",
+          "reviewItemName": "extraction-envelope.1194415ce1c4165bd50f",
+          "reviewDecisionName": "extraction-envelope.1194415ce1c4165bd50f-accept-proposed",
+          "candidateId": "extraction-envelope.33f596cd20b54d278839.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0005-session-completed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "unattributed",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 5,
+          "eventType": "session-completed",
+          "occurredAt": "2026-09-29T21:31:14.504Z",
+          "actor": {
+            "id": "unattributed"
+          }
+        }
+      }
+    ],
+    "revision": 1,
+    "snapshotHash": "3c943ee5fc698d0ab2b75211cdc1fe4537b8d2547ec18a8a35cc4e811f9d2016"
+  }
+}
