@@ -1,0 +1,1228 @@
+{
+  "schemaVersion": 1,
+  "runResource": "fieldwork-run:v1:spec-publication-facts:b51eaff623a3a58a",
+  "createdAt": "2026-10-01T02:11:56.143Z",
+  "taskName": "spec-publication-facts",
+  "task": {
+    "apiVersion": "fieldwork.kontourai.io/v1alpha1",
+    "kind": "FieldworkTask",
+    "metadata": {
+      "name": "spec-publication-facts"
+    },
+    "spec": {
+      "traverse": {
+        "version": "1",
+        "targetSchema": [
+          {
+            "path": "doc.title",
+            "type": "string",
+            "description": "Full title of the specification",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "doc.publicationDate",
+            "type": "date",
+            "description": "Date this document was published, ISO YYYY-MM-DD",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "doc.status",
+            "type": "enum",
+            "enumValues": [
+              "W3C Recommendation",
+              "W3C Working Draft",
+              "W3C Candidate Recommendation",
+              "Internal Draft"
+            ],
+            "description": "Publication status of the document",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "doc.versionNumber",
+            "type": "number",
+            "description": "Version number of the specified technology, e.g. 1.1",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "doc.firstEditor",
+            "type": "string",
+            "description": "Name of the first listed editor",
+            "inferenceType": "explicit"
+          },
+          {
+            "path": "doc.editorCount",
+            "type": "number",
+            "description": "How many editors are listed",
+            "inferenceType": "inferred"
+          }
+        ],
+        "guidance": "Extract publication facts about the single specification document this source is. Use the document's own header/front matter. Do not extract facts about other documents it cites. If the source states the same field more than one way with different values, return a separate proposal for each distinct stated value, each with its own excerpt."
+      },
+      "projections": [
+        {
+          "fieldPath": "doc.title",
+          "pattern": "Title: ([^\\n]+)",
+          "claim": {
+            "subjectType": "specification",
+            "subjectId": "spec-under-review",
+            "facet": "identity",
+            "claimType": "field",
+            "impactLevel": "medium"
+          }
+        },
+        {
+          "fieldPath": "doc.publicationDate",
+          "pattern": "Publication date: ([^\\n]+)",
+          "claim": {
+            "subjectType": "specification",
+            "subjectId": "spec-under-review",
+            "facet": "publication",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "doc.status",
+          "pattern": "Status: ([^\\n]+)",
+          "claim": {
+            "subjectType": "specification",
+            "subjectId": "spec-under-review",
+            "facet": "publication",
+            "claimType": "field",
+            "impactLevel": "high"
+          }
+        },
+        {
+          "fieldPath": "doc.versionNumber",
+          "pattern": "Version: ([^\\n]+)",
+          "claim": {
+            "subjectType": "specification",
+            "subjectId": "spec-under-review",
+            "facet": "identity",
+            "claimType": "field",
+            "impactLevel": "medium"
+          }
+        },
+        {
+          "fieldPath": "doc.firstEditor",
+          "pattern": "First editor: ([^\\n]+)",
+          "claim": {
+            "subjectType": "specification",
+            "subjectId": "spec-under-review",
+            "facet": "editors",
+            "claimType": "field",
+            "impactLevel": "low"
+          }
+        },
+        {
+          "fieldPath": "doc.editorCount",
+          "pattern": "Editor count: ([^\\n]+)",
+          "claim": {
+            "subjectType": "specification",
+            "subjectId": "spec-under-review",
+            "facet": "editors",
+            "claimType": "field",
+            "impactLevel": "low"
+          }
+        }
+      ]
+    }
+  },
+  "execution": {
+    "identity": {
+      "mode": "runtime",
+      "role": "fieldwork-extraction",
+      "candidates": [
+        {
+          "id": "profile-1",
+          "runtimeId": "codex:gpt-6.1-sol",
+          "structuredToolsFidelity": "native",
+          "outputTokenLimitFidelity": "unavailable"
+        }
+      ],
+      "budget": {
+        "maxAttempts": 40,
+        "maxElapsedMs": 1500000
+      },
+      "authorization": {
+        "mode": "file-ledger-v1"
+      },
+      "providerOperations": {
+        "concurrency": 3,
+        "batchSize": 1
+      },
+      "minimumStructuredToolsFidelity": "native",
+      "maxOutputTokens": 2048
+    },
+    "receipts": [
+      {
+        "schemaVersion": 1,
+        "planDigest": "51d9e41c8a976b91e0d5732f36b4e5446e9cab4dd54c93cb8a52b38078669a51",
+        "requestDigest": "sha256:7fb4a076f547006263812ee98ec84418f69975002dcd8f4b4fcb3354684c306c",
+        "role": "fieldwork-extraction",
+        "outcome": "succeeded",
+        "attempts": [
+          {
+            "candidateId": "profile-1",
+            "runtimeId": "codex:gpt-6.1-sol",
+            "outcome": "succeeded",
+            "structuredToolsFidelity": "native",
+            "elapsedMs": 21487.853916,
+            "inputTokens": 21902,
+            "outputTokens": 381,
+            "totalTokens": 22283,
+            "reservationId": "rsv_329da9e44b88c1b5adb484d7d02033c5e455e61568b772621bd42ec2eeff9c9a",
+            "reservationState": "settled",
+            "model": "gpt-6.1-sol",
+            "modelSource": "configured"
+          }
+        ],
+        "totalElapsedMs": 21526.020208,
+        "totalTokens": 22283,
+        "estimatedCostUsd": 0,
+        "authorization": {
+          "id": "fieldwork:b51eaff623a3a58a",
+          "invocationId": "invoke-1-sha256:7fb4a076f547006263812ee98",
+          "outcome": "settled"
+        }
+      }
+    ]
+  },
+  "preparedArtifact": {
+    "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+    "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+    "contentLength": 781,
+    "file": "prepared.txt"
+  },
+  "envelopeFile": "extraction-envelope.json",
+  "extraction": {
+    "envelopeDigest": "b20422a6db0a662ca29a50114f950bd453c4c31d0e78d87c63d7d1c06674868e",
+    "importStatus": {
+      "state": "grounded",
+      "diagnostics": [],
+      "provenance": "verified"
+    }
+  },
+  "review": {
+    "snapshot": {
+      "items": [
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.f933604de5282558da9b",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                "evidenceId": "survey.extraction.5fed1c2220d153e5ee04.source-evidence",
+                "proposalIndices": [
+                  0
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+                },
+                "preparedArtifact": {
+                  "contentLength": 781,
+                  "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+                  "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "doc.title",
+            "candidates": [
+              {
+                "id": "extraction-envelope.f094fc453482708c8d15.proposed",
+                "role": "proposed",
+                "value": "Harbor Telemetry Exchange Format",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:130-203",
+                  "excerpt": "The full title of this specification is Harbor Telemetry Exchange Format."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.f094fc453482708c8d15",
+                  "target": "doc.title",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "identity",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.title",
+                  "impactLevel": "medium"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 0,
+                    "evidenceId": "survey.extraction.5fed1c2220d153e5ee04.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "string",
+                      "origin": "explicit"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 203,
+                        "index": 0,
+                        "start": 130
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "string"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.c5bc44675cb10a282a6d",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                "evidenceId": "survey.extraction.aa6257728a0b659dbbed.source-evidence",
+                "proposalIndices": [
+                  1,
+                  2
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+                },
+                "preparedArtifact": {
+                  "contentLength": 781,
+                  "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+                  "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "doc.publicationDate",
+            "candidates": [
+              {
+                "id": "extraction-envelope.bc94af0a83142440ec9e.proposed",
+                "role": "proposed",
+                "value": "2026-03-14",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:357-407",
+                  "excerpt": "This specification was published on 14 March 2026."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.bc94af0a83142440ec9e",
+                  "target": "doc.publicationDate",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "publication",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.publicationDate",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 1,
+                    "evidenceId": "survey.extraction.aa6257728a0b659dbbed.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "date",
+                      "origin": "explicit"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 407,
+                        "index": 0,
+                        "start": 357
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "extraction-envelope.f05e1c703538692d0a1e.proposed",
+                "role": "proposed",
+                "value": "2026-03-21",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:684-780",
+                  "excerpt": "Per the registry entry circulated to members, this specification was published on 21 March 2026."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.f05e1c703538692d0a1e",
+                  "target": "doc.publicationDate",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "publication",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.publicationDate",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 2,
+                    "evidenceId": "survey.extraction.f39781250858ff85615a.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "date",
+                      "origin": "explicit"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 780,
+                        "index": 0,
+                        "start": 684
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "conflict",
+            "valueDescriptor": {
+              "type": "date"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 2
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.132871304aa1854d4cca",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                "evidenceId": "survey.extraction.9f0a3035d77eafdcf776.source-evidence",
+                "proposalIndices": [
+                  3
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+                },
+                "preparedArtifact": {
+                  "contentLength": 781,
+                  "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+                  "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "doc.status",
+            "candidates": [
+              {
+                "id": "extraction-envelope.4398a3265548a6d1727b.proposed",
+                "role": "proposed",
+                "value": "Internal Draft",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:255-292",
+                  "excerpt": "Its current status is Internal Draft."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.4398a3265548a6d1727b",
+                  "target": "doc.status",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "publication",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.status",
+                  "impactLevel": "high"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 3,
+                    "evidenceId": "survey.extraction.9f0a3035d77eafdcf776.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "enum",
+                      "origin": "explicit"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 292,
+                        "index": 0,
+                        "start": 255
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "enum"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.b4e8954bff4d27fe4d28",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                "evidenceId": "survey.extraction.ba58ec37afd4f95b6681.source-evidence",
+                "proposalIndices": [
+                  4
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+                },
+                "preparedArtifact": {
+                  "contentLength": 781,
+                  "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+                  "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "doc.versionNumber",
+            "candidates": [
+              {
+                "id": "extraction-envelope.91bef2963b7d2701da3a.proposed",
+                "role": "proposed",
+                "value": "2.1",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:204-254",
+                  "excerpt": "This document describes version 2.1 of the format."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.91bef2963b7d2701da3a",
+                  "target": "doc.versionNumber",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "identity",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.versionNumber",
+                  "impactLevel": "medium"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 4,
+                    "evidenceId": "survey.extraction.ba58ec37afd4f95b6681.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "number",
+                      "origin": "explicit"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "type-mismatch",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "not-evaluated"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 254,
+                        "index": 0,
+                        "start": 204
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "number"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.175a7814525b47f912fe",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                "evidenceId": "survey.extraction.e7caed94c45d66bfe18b.source-evidence",
+                "proposalIndices": [
+                  5
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+                },
+                "preparedArtifact": {
+                  "contentLength": 781,
+                  "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+                  "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "doc.firstEditor",
+            "candidates": [
+              {
+                "id": "extraction-envelope.e3f519d60d797dea0fd8.proposed",
+                "role": "proposed",
+                "value": "Priya Raman",
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:293-355",
+                  "excerpt": "The editors are Priya Raman, Tomas Lindqvist and Aiko Brennan."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.e3f519d60d797dea0fd8",
+                  "target": "doc.firstEditor",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "editors",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.firstEditor",
+                  "impactLevel": "low"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 5,
+                    "evidenceId": "survey.extraction.e7caed94c45d66bfe18b.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "string",
+                      "origin": "explicit"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "match"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 355,
+                        "index": 0,
+                        "start": 293
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "string"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        },
+        {
+          "apiVersion": "survey.kontourai.io/v1alpha1",
+          "kind": "ReviewItem",
+          "metadata": {
+            "name": "extraction-envelope.d64274291426417102fa",
+            "producer": {
+              "survey.kontourai.io/extraction-envelope": {
+                "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                "evidenceId": "survey.extraction.e7caed94c45d66bfe18b.source-evidence",
+                "proposalIndices": [
+                  6
+                ],
+                "source": {
+                  "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+                },
+                "preparedArtifact": {
+                  "contentLength": 781,
+                  "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "format": "traverse-prepared-artifact",
+                  "preparationMode": "text",
+                  "preparationVersion": "3",
+                  "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+                  "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "version": 1
+                },
+                "excerptVerification": "verified"
+              }
+            }
+          },
+          "spec": {
+            "target": "doc.editorCount",
+            "candidates": [
+              {
+                "id": "extraction-envelope.b6795e3fc88dda7ea790.proposed",
+                "role": "proposed",
+                "value": 3,
+                "confidence": 1,
+                "source": {
+                  "sourceRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "sourceId": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "kind": "uploaded-document",
+                  "observedAt": "2026-10-01T02:11:34.290Z",
+                  "checksum": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+                  "locatorScheme": "text-span"
+                },
+                "locator": {
+                  "scheme": "text-span",
+                  "locator": "chars:293-355",
+                  "excerpt": "The editors are Priya Raman, Tomas Lindqvist and Aiko Brennan."
+                },
+                "extraction": {
+                  "extractionId": "extraction-envelope.b6795e3fc88dda7ea790",
+                  "target": "doc.editorCount",
+                  "confidence": 1,
+                  "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                  "model": "gpt-6.1-sol",
+                  "extractedAt": "2026-10-01T02:11:34.290Z"
+                },
+                "claimTarget": {
+                  "subjectType": "specification",
+                  "subjectId": "spec-under-review",
+                  "facet": "editors",
+                  "claimType": "field",
+                  "fieldOrBehavior": "doc.editorCount",
+                  "impactLevel": "low"
+                },
+                "producer": {
+                  "survey.kontourai.io/extraction-envelope": {
+                    "importName": "fieldwork-import:spec-publication-facts:b51eaff623a3a58a",
+                    "proposalIndex": 6,
+                    "evidenceId": "survey.extraction.e7caed94c45d66bfe18b.source-evidence",
+                    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+                    "model": "gpt-6.1-sol",
+                    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+                    "exampleDigests": [],
+                    "valueType": {
+                      "type": "number",
+                      "origin": "inferred"
+                    },
+                    "producedBy": {
+                      "model": "gpt-6.1-sol",
+                      "modelSource": "configured",
+                      "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+                    },
+                    "evidenceMatch": {
+                      "checkerVersion": "evidence-match-v4",
+                      "schema": "ok",
+                      "tokenBoundary": true,
+                      "valueInExcerpt": "not-applicable"
+                    },
+                    "occurrence": {
+                      "ambiguous": false,
+                      "count": 1,
+                      "hintUsed": false,
+                      "resolverVersion": "exact-occurrence-v1",
+                      "selected": {
+                        "end": 355,
+                        "index": 0,
+                        "start": 293
+                      },
+                      "selection": "source-order"
+                    },
+                    "attempt": {
+                      "id": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+                      "providerCalls": 1
+                    },
+                    "outcome": {
+                      "status": "success"
+                    }
+                  }
+                }
+              }
+            ],
+            "candidateSetStatus": "needs-review",
+            "valueDescriptor": {
+              "type": "number"
+            },
+            "editable": false
+          },
+          "status": {
+            "observedCandidateCount": 1
+          }
+        }
+      ],
+      "activeItemName": "extraction-envelope.f933604de5282558da9b",
+      "notesByItemName": {},
+      "decisionsByItemName": {},
+      "reviewedAt": "2026-10-01T02:11:56.143Z",
+      "actorId": "unattributed",
+      "editedValuesByItemName": {}
+    },
+    "events": [
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0001-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "human",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 1,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-10-01T02:14:55.855Z",
+          "actor": {
+            "id": "e2e-verifier"
+          },
+          "reviewItemName": "extraction-envelope.c5bc44675cb10a282a6d",
+          "reviewDecisionName": "extraction-envelope.c5bc44675cb10a282a6d-select-proposed",
+          "candidateId": "extraction-envelope.f05e1c703538692d0a1e.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "select-proposed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0002-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "human",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 2,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-10-01T02:14:56.283Z",
+          "actor": {
+            "id": "e2e-verifier"
+          },
+          "reviewItemName": "extraction-envelope.f933604de5282558da9b",
+          "reviewDecisionName": "extraction-envelope.f933604de5282558da9b-accept-proposed",
+          "candidateId": "extraction-envelope.f094fc453482708c8d15.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0003-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "human",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 3,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-10-01T02:14:56.504Z",
+          "actor": {
+            "id": "e2e-verifier"
+          },
+          "reviewItemName": "extraction-envelope.b4e8954bff4d27fe4d28",
+          "reviewDecisionName": "extraction-envelope.b4e8954bff4d27fe4d28-accept-proposed",
+          "candidateId": "extraction-envelope.91bef2963b7d2701da3a.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0004-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "human",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 4,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-10-01T02:14:56.703Z",
+          "actor": {
+            "id": "e2e-verifier"
+          },
+          "reviewItemName": "extraction-envelope.d64274291426417102fa",
+          "reviewDecisionName": "extraction-envelope.d64274291426417102fa-accept-proposed",
+          "candidateId": "extraction-envelope.b6795e3fc88dda7ea790.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0005-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "human",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 5,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-10-01T02:16:29.090Z",
+          "actor": {
+            "id": "e2e-verifier"
+          },
+          "reviewItemName": "extraction-envelope.132871304aa1854d4cca",
+          "reviewDecisionName": "extraction-envelope.132871304aa1854d4cca-accept-proposed",
+          "candidateId": "extraction-envelope.4398a3265548a6d1727b.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          }
+        }
+      },
+      {
+        "apiVersion": "survey.kontourai.io/v1alpha1",
+        "kind": "ReviewSessionEvent",
+        "metadata": {
+          "name": "review-workbench-session-0006-decision-changed",
+          "producer": {
+            "fieldwork.kontourai.io/review-attribution": {
+              "actorKind": "human",
+              "mode": "individual"
+            }
+          }
+        },
+        "spec": {
+          "sessionName": "review-workbench-session",
+          "sequence": 6,
+          "eventType": "decision-changed",
+          "occurredAt": "2026-10-01T02:16:29.387Z",
+          "reviewItemName": "extraction-envelope.175a7814525b47f912fe",
+          "reviewDecisionName": "extraction-envelope.175a7814525b47f912fe-accept-proposed",
+          "candidateId": "extraction-envelope.e3f519d60d797dea0fd8.proposed",
+          "status": "verified",
+          "data": {
+            "workbenchDecision": "accept-proposed"
+          },
+          "actor": {
+            "id": "e2e-verifier"
+          }
+        }
+      }
+    ],
+    "revision": 6,
+    "snapshotHash": "97db02c5fc28bd0e5c952a2c532c97161afd2c1ca3487411e8fe4fb79dd0316c"
+  }
+}

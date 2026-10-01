@@ -1,0 +1,26 @@
+# Harbor Telemetry Exchange Format
+
+Internal specification memo, prepared for the Harbor Systems working group.
+
+## Front matter
+
+The full title of this specification is Harbor Telemetry Exchange Format.
+This document describes version 2.1 of the format.
+Its current status is Internal Draft.
+The editors are Priya Raman, Tomas Lindqvist and Aiko Brennan.
+
+This specification was published on 14 March 2026.
+
+## Summary
+
+The format defines a line-oriented envelope for buoy and berth sensor readings.
+Each record carries a station identifier, a UTC timestamp and a typed payload.
+
+## Change log
+
+- Clarified payload length limits.
+- Added the checksum trailer.
+
+## Distribution note
+
+Per the registry entry circulated to members, this specification was published on 21 March 2026.

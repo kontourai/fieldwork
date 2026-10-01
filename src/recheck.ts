@@ -893,6 +893,11 @@ function priorContinuityConflict(
  * from a partial run reads as complete: values that run never read would show
  * as added rather than newly observed. A marker that differs is a different
  * observation, and the stored one is not reused as this run's.
+ *
+ * Proposals are compared as a set. Lookout's store keeps them sorted by
+ * canonical JSON while an envelope keeps extraction order, so comparing in
+ * order refused every later recheck of a run with more than one proposal
+ * (fieldwork#170).
  */
 function sameObservation(
   stored: {
@@ -908,9 +913,21 @@ function sameObservation(
     stored.sourceId === observation.sourceId &&
     stored.snapshotRef === observation.snapshotRef &&
     stored.observedAt === observation.observedAt &&
-    canonicalJson(stored.proposals) === canonicalJson(observation.proposals) &&
+    sameProposals(stored.proposals, observation.proposals) &&
     canonicalJson(stored.incomplete ?? null) === canonicalJson(observation.incomplete ?? null)
   );
+}
+
+/**
+ * Whether two lists hold the same proposals the same number of times, in any
+ * order. A multiset, not a set: a list that repeats a proposal is a different
+ * observation from one that states it once.
+ */
+export function sameProposals(left: readonly unknown[], right: readonly unknown[]): boolean {
+  // Typed as JSON values: this module's declarations are part of the package
+  // facade, which does not expose Traverse's types.
+  const sorted = (proposals: readonly unknown[]) => proposals.map(canonicalJson).sort();
+  return canonicalJson(sorted(left)) === canonicalJson(sorted(right));
 }
 
 // Fieldwork's public DTO is readonly; Lookout's registered-source DTO predates

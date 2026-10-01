@@ -141,6 +141,22 @@ events), while the reviewer's own event is kept as recorded. A field whose only
 gaps are Surface's structural limits (an `array` or `object` value) is not
 disputed: it stays `verified` and is listed under
 `reviewRound.groundingUnchecked`, which does not change the CLI's exit status.
+A value that does not satisfy its field's declared schema is not that case: a
+`number` field accepted as the text "2.1" was checked and found wrong, not left
+unchecked. It is listed under `reviewRound.groundingRefused` with a
+`schema-mismatch` gap. Fieldwork names the gap from two recorded facts,
+Traverse's `evidenceMatch.schema` on the accepted proposal and Surface deriving
+`invalid` (rather than `unvalidated`) structural trust, because Surface reports
+an invalid value with the same gap kinds as one it cannot check, and accepts
+any string as a `date`. The alternative, refusing the decision until the
+reviewer corrects the value, is not available: an envelope-imported review item
+is not editable, and Surface's reviewed-evidence profile requires that. The
+claim is stated as `disputed`, through the same dispute event an unresolved
+rival gets, with a note naming `schema-mismatch` and the rule: a consumer that
+reads only the bundle would otherwise count the text "2.1" as a verified
+number. The exported `reviewedGrounding` carries the `schema-mismatch` gap and
+reads `refused`, so it cannot read `allowed` over a claim the same export
+disputes. The workbench warns on the item before it is decided.
 For a claim in `reviewRound.groundingRefused`, the CLI exits 3, as for a
 partial export, and the reviewed-source facade describes it with
 `review.state: "grounding-refused"`.

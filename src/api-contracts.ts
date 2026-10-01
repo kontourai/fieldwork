@@ -237,7 +237,12 @@ export interface FieldworkRunViewV1 {
    */
   readonly extraction: {
     readonly outcome: FieldworkRunOutcome;
-    readonly coverage?: { readonly chunkCount: number; readonly incompleteChunkCount: number };
+    readonly coverage?: {
+      readonly chunkCount: number;
+      readonly incompleteChunkCount: number;
+      /** Chunks a chunk cap dropped whose text is not in the prepared artifact; counted in both totals. */
+      readonly droppedChunkCount?: number;
+    };
   };
   /** Present when the run can be opened but its review can never be exported. */
   readonly reviewBlocked?: { readonly reason: "created-by-older-fieldwork" | "unbound-envelope"; readonly message: string };
@@ -254,6 +259,20 @@ export interface FieldworkRunViewV1 {
      * import's. The workbench checks the queue against it on every load.
      */
     readonly extractionImport?: JsonObject;
+    /**
+     * Queue items whose proposed value does not satisfy its field's declared
+     * schema (Traverse's `evidenceMatch.schema` is not `ok`): a number field
+     * proposed as text, a date not in `YYYY-MM-DD` form. Present only when
+     * there is one. Accepting such a value exports its claim under
+     * `reviewRound.groundingRefused` with a `schema-mismatch` gap.
+     */
+    readonly schemaMismatches?: readonly {
+      readonly reviewItemName: string;
+      readonly fieldPath: string;
+      readonly candidateId: string;
+      readonly schema: string;
+      readonly valueType?: string;
+    }[];
   };
 }
 export interface ReviewMutationSuccessV1 {
@@ -435,7 +454,9 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
     coverage: z.object({
       chunkCount: z.number().int().positive(),
       incompleteChunkCount: z.number().int().nonnegative(),
-    }).strict().refine((value) => value.incompleteChunkCount <= value.chunkCount).optional(),
+      droppedChunkCount: z.number().int().positive().optional(),
+    }).strict().refine((value) => value.incompleteChunkCount <= value.chunkCount
+      && (value.droppedChunkCount ?? 0) <= value.incompleteChunkCount).optional(),
   }).strict(),
   reviewBlocked: z.object({
     reason: z.enum(["created-by-older-fieldwork", "unbound-envelope"]),
@@ -447,6 +468,13 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
     events: z.array(jsonObjectSchema).max(TRANSPORT_LIMITS.events),
     apply: jsonObjectSchema,
     extractionImport: jsonObjectSchema.optional(),
+    schemaMismatches: z.array(z.object({
+      reviewItemName: z.string().min(1).max(512),
+      fieldPath: z.string().min(1).max(512),
+      candidateId: z.string().min(1).max(512),
+      schema: z.string().min(1).max(64),
+      valueType: z.string().min(1).max(64).optional(),
+    }).strict()).min(1).optional(),
   }).strict()
 }).strict();
 const reviewMutationSuccessSchema: z.ZodType<ReviewMutationSuccessV1> = z.object({

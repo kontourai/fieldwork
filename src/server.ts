@@ -22,6 +22,7 @@ import {
   RUN_FROM_OLDER_FIELDWORK_MESSAGE, reviewBlockedFor, storedExtractionImport, UNBOUND_ENVELOPE_MESSAGE,
 } from "./fieldwork.js";
 import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
+import { reviewItemSchemaMismatches } from "./schema-match.js";
 
 const reviewRequestSchema = z.object({
   events: z.array(z.custom<ReviewSessionEvent>((value) => Boolean(value && typeof value === "object"))).max(FIELDWORK_LIMITS.events),
@@ -202,6 +203,7 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
     ...(extractionImport === undefined ? {} : { extractionImport }),
   });
   const coverage = extractionCoverageSummary(stored.envelope);
+  const schemaMismatches = reviewItemSchemaMismatches(snapshot.items);
   return parseFieldworkRunView({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkRunView", ok: true,
     run: { resource: stored.run.runResource, revision: stored.run.review.revision },
@@ -216,6 +218,7 @@ export async function readRunView(directory: string): Promise<FieldworkRunViewV1
       // The workbench checks the queue against this record on every load and
       // refuses one that diverges; without it the queue shows as unverified.
       ...(extractionImport === undefined ? {} : { extractionImport: extractionImport.record }),
+      ...(schemaMismatches.length === 0 ? {} : { schemaMismatches }),
     }
   });
 }

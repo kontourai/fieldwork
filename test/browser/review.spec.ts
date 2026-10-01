@@ -12,6 +12,7 @@ import { recheckFieldwork } from "../../src/recheck.js";
 import { openRun } from "../../src/server.js";
 import { tempRoot } from "../helpers.js";
 import { partialRunWithProposals, recheckAfterPartialPrior, runFromOlderFieldwork, zeroProposalPartialRun } from "../helpers/incomplete-runs.js";
+import { chunkCappedRun, realRunCopy, typedFieldRun } from "../helpers/real-run.js";
 import {
   formatImageBytes,
   formatPdfBytes,
@@ -1101,3 +1102,65 @@ for (const viewport of [{ label: "desktop", width: 1280, height: 800 }, { label:
     } finally { await server.close(); }
   });
 }
+
+test("a proposed value that does not match its field's type says so on its card and above the queue", async ({ page }) => {
+  // The model's answers as the real run recorded them: a number field as the
+  // text "2.1", a date field in the document's wording (fieldwork#170).
+  const server = await openRun(await typedFieldRun("browser"));
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    const version = page.locator('[data-field="doc.versionNumber"]');
+    await expect(version.getByTestId("proposed-value")).toHaveText("2.1 (text, not a number)");
+    await expect(page.locator('[data-field="doc.publicationDate"]').getByTestId("proposed-value")).toHaveText("14 March 2026 (not a YYYY-MM-DD date)");
+    // A value that matches its field is shown as it was.
+    await expect(page.locator('[data-field="doc.title"]').getByTestId("proposed-value")).toHaveText("Harbor Telemetry Exchange Format");
+    const notice = page.getByTestId("schema-mismatch");
+    await expect(notice).toContainText("2 proposed values do not match the field's type.");
+    await expect(notice).toContainText("Doc version number");
+    await expect(notice).toContainText("Doc publication date");
+    await expect(notice).toContainText("exported as a disputed claim (schema-mismatch)");
+    // Accepting is still the reviewer's call, and the card keeps saying what was accepted.
+    await version.getByTestId("use-proposed").click();
+    await expect(version.getByTestId("decided-chip")).toHaveText("Accepted");
+    await expect(version.getByTestId("proposed-value")).toHaveText("2.1 (text, not a number)");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(notice).toBeVisible();
+    const box = await notice.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= 390).toBeTruthy();
+    await expect(version.getByTestId("proposed-value")).toBeVisible();
+  } finally {
+    await server.close();
+  }
+});
+
+test("the run a real model produced shows the type warning on its decided card", async ({ page }) => {
+  const server = await openRun(await realRunCopy("browser"));
+  try {
+    await page.goto(server.url);
+    await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    await expect(page.locator('[data-field="doc.versionNumber"]').getByTestId("proposed-value")).toHaveText("2.1 (text, not a number)");
+    await expect(page.getByTestId("schema-mismatch")).toContainText("1 proposed value does not match the field's type.");
+    await expect(page.locator('[data-field="doc.editorCount"]').getByTestId("proposed-value")).toHaveText("3");
+  } finally {
+    await server.close();
+  }
+});
+
+test("a run that dropped chunks at the chunk limit counts them in what it did not read", async ({ page }) => {
+  const run = await chunkCappedRun("browser", "html");
+  const server = await openRun(run);
+  try {
+    const { coverage } = (await server.view()).extraction;
+    expect(coverage?.droppedChunkCount).toBeGreaterThan(1);
+    await page.goto(server.url);
+    const notice = page.getByTestId("extraction-incomplete");
+    await expect(notice).toContainText("Extraction incomplete: the source has more chunks than the chunk limit.");
+    // Coverage alone lists two complete chunks, which used to read "0 of 2".
+    await expect(notice).toContainText(`${coverage!.droppedChunkCount} of ${2 + coverage!.droppedChunkCount!} chunks not read in full.`);
+    await expect(notice).toContainText(`${coverage!.droppedChunkCount} of them were dropped by the chunk limit, so that text is not in the document shown here.`);
+    await expect(notice).not.toContainText("0 of 2");
+  } finally {
+    await server.close();
+  }
+});

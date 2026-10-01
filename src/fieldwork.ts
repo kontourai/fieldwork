@@ -38,10 +38,13 @@ import {
 } from "./run-store.js";
 import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
 import type { FieldworkStoredExecution } from "./runtime-contracts.js";
-import { createFieldworkExecutionIdentity, createFieldworkRuntimeSession } from "./runtime-session.js";
+import {
+  createFieldworkExecutionIdentity, createFieldworkRuntimeSession, runtimeMessageIsPlain, type FieldworkRuntimeSession,
+} from "./runtime-session.js";
 import { resolveFieldworkSource } from "./source-input.js";
 import { buildReviewedEvidenceEnrichment, REVIEWED_EVIDENCE_COLLECTED_BY, REVIEWED_GROUNDING_POLICY_ID } from "./reviewed-evidence.js";
 import { attributeReviewResults, UNATTRIBUTED_ACTOR_ID, type ReviewDecisionAttribution } from "./review-attribution.js";
+import { candidateSchemaMismatch } from "./schema-match.js";
 
 /**
  * Source kind Fieldwork reports to Survey for every raw source it records. Both
@@ -110,7 +113,9 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     ...(options.runtime?.maxChunks === undefined ? {} : { maxChunks: options.runtime.maxChunks }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-  if (result.error || !result.preparedArtifact) throw new Error(result.error ?? "Traverse did not produce a prepared artifact");
+  if (result.error || !result.preparedArtifact) {
+    throw extractionFailure(result.error ?? "Traverse did not produce a prepared artifact", runtimeSession);
+  }
   const resolution = await resolvePreparedArtifact(result.preparedArtifact, store);
   if (resolution.status !== "available") throw new Error(`Prepared artifact is ${resolution.status}`);
   const envelope = JSON.parse(serializePortableExtractionResult(result, { preparedArtifactResolution: resolution })) as PortableExtractionResultEnvelope;
@@ -131,6 +136,30 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     runDirectory: persistedDirectory, runResource, proposalCount: result.proposals.length,
     outcome: envelope.result.outcome,
   };
+}
+
+/**
+ * A failed extraction, with the cause when a model runtime was the reason.
+ * Dispatch reports a spent runtime only as "ended with exhausted"; the last
+ * failed attempt's code and the runtime's own message say why (quota,
+ * sign-in, an unavailable CLI). The message is shown only when it reads as
+ * plain prose (`runtimeMessageIsPlain`); otherwise only the code is reported.
+ */
+function extractionFailure(message: string, session: FieldworkRuntimeSession | undefined): Error {
+  const failure = session?.lastFailure();
+  if (!failure) return new Error(message);
+  const failedAttempts = session!.execution.receipts
+    .reduce((count, receipt) => count + receipt.attempts.filter((attempt) => attempt.outcome === "failed").length, 0);
+  const cause = !failure.message ? ""
+    : runtimeMessageIsPlain(failure.message) ? `: ${failure.message}`
+    : " (details withheld)";
+  return Object.assign(
+    new Error(
+      `${message}. The last attempt on runtime ${failure.runtimeId} failed with ${failure.code}${cause}`
+      + `${failedAttempts > 0 ? ` (${failedAttempts} failed ${failedAttempts === 1 ? "attempt" : "attempts"} recorded).` : "."}`
+    ),
+    { code: "RUNTIME_INVOCATION_FAILED", runtimeFailure: { runtimeId: failure.runtimeId, code: failure.code } },
+  );
 }
 
 /**
@@ -242,6 +271,8 @@ function batchError(error: unknown): { code: string; message: string } {
   // A task-level refusal names a task field, never source text, so its own
   // message is safe to carry and is the only thing that says which field.
   if (code === "TASK_UNSUPPORTED_FIELD_TYPE" && error instanceof Error) return { code, message: error.message };
+  // Built by `extractionFailure` from a bounded, checked runtime message.
+  if (code === "RUNTIME_INVOCATION_FAILED" && error instanceof Error) return { code, message: error.message };
   return { code, message: safeMessages[code] ?? "Source processing failed" };
 }
 
@@ -312,7 +343,7 @@ export async function reviewedExport(
     apiVersion: "fieldwork.kontourai.io/v1",
     kind: "ReviewedExport",
     bundle: disputeContestedClaims(withReviewedGroundingEvidence(bundle, projection.enrichment), refused),
-    reviewedGrounding: projection.enrichment.grounding,
+    reviewedGrounding: withSchemaMismatchGaps(projection.enrichment.grounding, refused),
     reviewRound: reviewRoundScope(stored, projection, refused, unchecked),
   };
   assertPortableOutput(output);
@@ -343,7 +374,8 @@ function reviewRoundScope(
     complete: projection.excluded.length === 0,
     excluded: projection.excluded,
     // Present only when a claim the review accepted is not supported by its
-    // grounding, so the receipt never states it as plainly verified.
+    // grounding, or states a value that does not satisfy its field's schema,
+    // so the receipt never states it as plainly verified.
     ...(groundingRefused.length === 0 ? {} : { groundingRefused }),
     // Present only when Surface cannot check a verified claim's structure
     // (an array or object value). Nothing disputes such a claim, so it stays
@@ -359,7 +391,20 @@ export interface GroundingRefusedClaim {
   readonly fieldPath: string;
   readonly gaps: readonly string[];
   readonly evidenceIds: readonly string[];
+  /** With a `schema-mismatch` gap: Traverse's `evidenceMatch.schema` for the accepted value, when it recorded one. */
+  readonly schemaMatch?: string;
 }
+
+/**
+ * The accepted value does not satisfy its field's declared schema: a number
+ * field holding the text "2.1", a date field holding "21 March 2013". Fieldwork
+ * names this gap itself, from two recorded facts: Traverse's
+ * `evidenceMatch.schema` on the accepted proposal, and Surface deriving
+ * `invalid` structural trust for it. Surface's own gap kinds for an invalid
+ * value are the ones it also reports for a value it cannot check at all, and
+ * its date check accepts any string, so neither says this on its own.
+ */
+export const SCHEMA_MISMATCH_GAP = "schema-mismatch";
 
 /**
  * Gaps Surface reports for a value whose structure it cannot validate (an
@@ -371,45 +416,91 @@ const STRUCTURAL_GAPS = new Set(["evidence-not-entailing", "structure-not-valida
 const RIVAL_GAPS = new Set(["excluded-rival-unresolved", "hidden-conflict", "chosen-over-rival-unresolved"]);
 
 /**
- * Claims the review resolved to a verified value whose grounding evaluation
- * nonetheless refused them, split by why. `refused` holds claims with any gap
- * beyond Surface's structural limits, such as a value contested by an excluded
- * rival; `unchecked` holds claims whose only gaps are structural. A rejected
- * or unconfirmed claim already does not read as verified, so neither lists it.
+ * Claims the review resolved to a verified value whose grounding nonetheless
+ * does not hold, split by why. `refused` holds claims with any gap beyond
+ * Surface's structural limits: a value contested by an excluded rival, or a
+ * value that does not satisfy its field's schema (`schema-mismatch`).
+ * `unchecked` holds claims whose only gaps are structural: a value Surface
+ * could not check, with nothing recorded against it. A rejected or unconfirmed
+ * claim already does not read as verified, so neither lists it.
  */
-export function classifyGroundingRefusals(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment">): {
+export function classifyGroundingRefusals(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment" | "items" | "results">): {
   readonly refused: GroundingRefusedClaim[];
   readonly unchecked: GroundingRefusedClaim[];
 } {
   const { grounding } = projection.enrichment;
-  if (grounding.outcome !== "refused") return { refused: [], unchecked: [] };
-  const gapsByClaim = new Map<string, { kinds: string[]; evidenceIds: string[] }>();
-  for (const gap of grounding.gaps) {
-    if (!("claimId" in gap)) continue;
-    const entry = gapsByClaim.get(gap.claimId) ?? { kinds: [], evidenceIds: [] };
-    if (!entry.kinds.includes(gap.kind)) entry.kinds.push(gap.kind);
-    if ("evidenceId" in gap && !entry.evidenceIds.includes(gap.evidenceId)) entry.evidenceIds.push(gap.evidenceId);
-    gapsByClaim.set(gap.claimId, entry);
+  const gapsByClaim = new Map<string, { kinds: string[]; evidenceIds: string[]; schemaMatch?: string }>();
+  const entryFor = (claimId: string) => {
+    const entry = gapsByClaim.get(claimId) ?? { kinds: [], evidenceIds: [] };
+    gapsByClaim.set(claimId, entry);
+    return entry;
+  };
+  const add = (claimId: string, kind: string, evidenceId?: string) => {
+    const entry = entryFor(claimId);
+    if (!entry.kinds.includes(kind)) entry.kinds.push(kind);
+    if (evidenceId !== undefined && !entry.evidenceIds.includes(evidenceId)) entry.evidenceIds.push(evidenceId);
+  };
+  if (grounding.outcome === "refused") {
+    for (const gap of grounding.gaps) {
+      if (!("claimId" in gap)) continue;
+      const evidenceId = "evidenceId" in gap ? gap.evidenceId : undefined;
+      add(gap.claimId, gap.kind, evidenceId);
+      // `unvalidated` is a value Surface could not check; `invalid` is one it
+      // checked and found not to be of the declared type.
+      if (gap.kind === "structure-not-validated" && gap.structuralTrust === "invalid") add(gap.claimId, SCHEMA_MISMATCH_GAP, evidenceId);
+    }
+  }
+  for (const mismatch of acceptedSchemaMismatches(projection)) {
+    add(mismatch.claimId, SCHEMA_MISMATCH_GAP, mismatch.evidenceId);
+    entryFor(mismatch.claimId).schemaMatch = mismatch.schema;
   }
   const refused: GroundingRefusedClaim[] = [];
   const unchecked: GroundingRefusedClaim[] = [];
   for (const claim of projection.canonical.surveyInput.claims) {
     const entry = gapsByClaim.get(claim.id);
     if (claim.status !== "verified" || !entry) continue;
-    const listed = { claimId: claim.id, fieldPath: claim.fieldOrBehavior, gaps: entry.kinds, evidenceIds: entry.evidenceIds };
+    const listed = {
+      claimId: claim.id, fieldPath: claim.fieldOrBehavior, gaps: entry.kinds, evidenceIds: entry.evidenceIds,
+      ...(entry.schemaMatch === undefined ? {} : { schemaMatch: entry.schemaMatch }),
+    };
     (entry.kinds.every((kind) => STRUCTURAL_GAPS.has(kind)) ? unchecked : refused).push(listed);
   }
   return { refused, unchecked };
 }
 
+/**
+ * Accepted candidates whose value Traverse recorded as not satisfying the
+ * field's schema. Only an envelope-imported candidate carries the record, and
+ * those items are not editable, so the decided value is the candidate's own.
+ */
+function acceptedSchemaMismatches(
+  projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment" | "items" | "results">,
+): { readonly claimId: string; readonly evidenceId?: string; readonly schema: string }[] {
+  const claimIdByCandidateId = claimIdsByCandidate(projection.canonical.surveyInput);
+  const resultsByName = new Map(projection.results.map((result) => [result.reviewItemName, result]));
+  const evidenceIds = new Set(projection.enrichment.additionalEvidence.map((evidence) => evidence.id));
+  return projection.items.flatMap((item) => {
+    const result = resultsByName.get(item.metadata.name);
+    const selected = result === undefined ? undefined : selectedCandidateOf(item, result);
+    if (!result || !selected) return [];
+    const mismatch = candidateSchemaMismatch(selected);
+    const claimId = claimIdForItem(item, claimIdByCandidateId);
+    if (!mismatch || !claimId) return [];
+    const evidenceId = `${item.metadata.name}.reviewed-extraction-evidence`;
+    return [{ claimId, schema: mismatch.schema, ...(evidenceIds.has(evidenceId) ? { evidenceId } : {}) }];
+  });
+}
+
 /** Claims whose grounding was refused for a reason other than Surface's structural limits. */
-export function groundingRefusedClaims(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment">): GroundingRefusedClaim[] {
+export function groundingRefusedClaims(projection: Pick<ReturnType<typeof projectAttestedReviewedProjection>, "canonical" | "enrichment" | "items" | "results">): GroundingRefusedClaim[] {
   return classifyGroundingRefusals(projection).refused;
 }
 
 /**
  * A verified claim whose grounding was refused because a rival value is
- * unresolved is contested. Surface derives a claim's status from its
+ * unresolved is contested, and one whose accepted value does not satisfy its
+ * field's schema is not a verified value of that field. Both are stated as
+ * disputed. Surface derives a claim's status from its
  * verification events, so the claim's own status field alone is not enough:
  * a later `disputed` event from this export, citing the reviewed evidence the
  * policy refused, makes Surface's trust report say disputed. The reviewer's
@@ -420,7 +511,7 @@ export function disputeContestedClaims<T extends ReturnType<typeof validateTrust
   refused: readonly GroundingRefusedClaim[],
   now: Date = new Date(),
 ): T {
-  const contested = refused.filter((entry) => entry.gaps.some((gap) => RIVAL_GAPS.has(gap)));
+  const contested = refused.filter((entry) => disputeReasons(entry).length > 0);
   if (contested.length === 0) return bundle;
   const ids = new Set(contested.map((entry) => entry.claimId));
   // Surface takes a claim's newest event, and on a tie keeps the earlier one in
@@ -444,9 +535,45 @@ export function disputeContestedClaims<T extends ReturnType<typeof validateTrust
       method: REVIEWED_GROUNDING_POLICY_ID,
       evidenceIds: [...entry.evidenceIds],
       createdAt: disputedAt(entry.claimId),
-      notes: `Reviewed grounding refused: ${entry.gaps.filter((gap) => RIVAL_GAPS.has(gap)).join(", ")}.`,
+      notes: `Reviewed grounding refused: ${disputeReasons(entry).join(", ")}.`,
     }))],
   }) as T;
+}
+
+/**
+ * Why an accepted claim is stated as disputed: the unresolved rival gaps, and
+ * a schema mismatch with the rule Traverse recorded it under, or `invalid`
+ * when only Surface's derivation says so.
+ */
+function disputeReasons(entry: GroundingRefusedClaim): string[] {
+  return [
+    ...entry.gaps.filter((gap) => RIVAL_GAPS.has(gap)),
+    ...(entry.gaps.includes(SCHEMA_MISMATCH_GAP) ? [`${SCHEMA_MISMATCH_GAP} (${entry.schemaMatch ?? "invalid"})`] : []),
+  ];
+}
+
+/**
+ * Surface's evaluation with Fieldwork's schema-mismatch gaps added. Surface
+ * accepts any string as a `date`, so on its own it allows a claim whose date
+ * is "21 March 2013"; the export's evaluation must not read `allowed` over a
+ * claim the same export states as disputed.
+ */
+function withSchemaMismatchGaps<T extends ReturnType<typeof buildReviewedEvidenceEnrichment>["grounding"]>(
+  grounding: T,
+  refused: readonly GroundingRefusedClaim[],
+): T {
+  const mismatched = refused.filter((entry) => entry.gaps.includes(SCHEMA_MISMATCH_GAP));
+  if (mismatched.length === 0 || grounding.outcome === "not-evaluated") return grounding;
+  return {
+    ...grounding,
+    outcome: "refused",
+    gaps: [...(grounding.gaps ?? []), ...mismatched.map((entry) => ({
+      kind: SCHEMA_MISMATCH_GAP,
+      claimId: entry.claimId,
+      ...(entry.evidenceIds[0] === undefined ? {} : { evidenceId: entry.evidenceIds[0] }),
+      ...(entry.schemaMatch === undefined ? {} : { schemaMatch: entry.schemaMatch }),
+    }))],
+  } as unknown as T;
 }
 
 /**
@@ -910,16 +1037,39 @@ export function reviewQueueFromOlderFieldwork(items: readonly ReviewItem[]): boo
 }
 
 /**
- * How many prepared-text chunks Traverse recorded, and how many of them were
- * not read and answered in full. Traverse emits coverage only on a partial
- * outcome, so this is undefined for a run that read everything.
+ * How many chunks the source was cut into, and how many of them were not read
+ * and answered in full. Traverse emits coverage only on a partial outcome, so
+ * this is undefined for a run that read everything.
+ *
+ * Coverage lists the chunks whose text is in the prepared artifact. A chunk
+ * cap can also drop chunks whose text the prepared artifact no longer holds:
+ * a `--max-chunks 2` run of a seven-chunk page stores two complete coverage
+ * entries. Those chunks are counted from `partial.remainingChunks`, Traverse's
+ * count of chunks never dispatched, less the never-dispatched chunks coverage
+ * already lists. They are reported as `droppedChunkCount` and included in both
+ * totals, so the count never reads as "0 of 2" over a run that read two of
+ * seven (fieldwork#170).
  */
-export function extractionCoverageSummary(envelope: PortableExtractionResultEnvelope): { chunkCount: number; incompleteChunkCount: number } | undefined {
-  const { coverage } = envelope.result;
+export function extractionCoverageSummary(envelope: PortableExtractionResultEnvelope): ExtractionCoverageSummary | undefined {
+  const { coverage, partial } = envelope.result;
   if (coverage === undefined || coverage.length === 0) return undefined;
   const chunks = new Set(coverage.map((entry) => entry.chunk));
   const incomplete = new Set(coverage.filter((entry) => entry.status !== "complete").map((entry) => entry.chunk));
-  return { chunkCount: chunks.size, incompleteChunkCount: incomplete.size };
+  const listedUndispatched = new Set(coverage
+    .filter((entry) => entry.status === "unread" && entry.reason === "not-dispatched").map((entry) => entry.chunk));
+  const dropped = Math.max(0, (partial?.remainingChunks ?? 0) - listedUndispatched.size);
+  return {
+    chunkCount: chunks.size + dropped,
+    incompleteChunkCount: incomplete.size + dropped,
+    ...(dropped === 0 ? {} : { droppedChunkCount: dropped }),
+  };
+}
+
+export interface ExtractionCoverageSummary {
+  readonly chunkCount: number;
+  readonly incompleteChunkCount: number;
+  /** Chunks a chunk cap dropped whose text is not in the prepared artifact; counted in both totals. */
+  readonly droppedChunkCount?: number;
 }
 
 export const UNBOUND_ENVELOPE_MESSAGE = "This run was created before Fieldwork bound each run to its stored extraction, "

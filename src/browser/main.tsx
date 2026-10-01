@@ -12,6 +12,7 @@ import {
   fieldworkHostPresentationSchema, fieldworkRunViewSchema, reviewMutationResponseSchema,
   type FieldworkHostPresentationV1, type FieldworkRunViewV1
 } from "../api-contracts.js";
+import { candidateSchemaMismatch, schemaMismatchPhrase } from "../schema-match.js";
 
 const capability = new URLSearchParams(location.hash.slice(1)).get("cap") ?? "";
 const apiHeaders = { "x-fieldwork-capability": capability };
@@ -198,7 +199,27 @@ function ExtractionNotice({ extraction }: { readonly extraction: FieldworkRunVie
     <p className="fieldwork-notice-lede">Extraction incomplete: {reason}.</p>
     <p className="fieldwork-notice-detail">
       {coverage ? <>{coverage.incompleteChunkCount} of {coverage.chunkCount} {coverage.chunkCount === 1 ? "chunk" : "chunks"} not read in full. </> : undefined}
+      {coverage?.droppedChunkCount ? <>{coverage.droppedChunkCount === 1 ? "1 of them was" : `${coverage.droppedChunkCount} of them were`} dropped by the chunk limit, so that text is not in the document shown here. </> : undefined}
       Values in the unread text have no review item, so this run cannot be exported as reviewed. Re-run the source to cover it.
+    </p>
+  </aside>;
+}
+
+/* --- Schema mismatches -----------------------------------------------------
+   A model can answer a number field with the text "2.1", or a date field with
+   "21 March 2013". Traverse records that on the proposal, and on a card the
+   text "2.1" and the number 2.1 look the same, so a reviewer accepted it
+   unknowingly and the export then refused its grounding. The card says it
+   through Survey's `summarizeValue` hook; this notice names every such field
+   and what accepting it does. */
+function SchemaMismatchNotice({ mismatches }: { readonly mismatches: NonNullable<FieldworkRunViewV1["review"]["schemaMismatches"]> }) {
+  const fields = [...new Set(mismatches.map((mismatch) => humanizeFieldPath(mismatch.fieldPath)))];
+  return <aside className="fieldwork-notice fieldwork-notice-caution" data-testid="schema-mismatch" role="status">
+    <p className="fieldwork-notice-lede">
+      {mismatches.length === 1 ? "1 proposed value does" : `${mismatches.length} proposed values do`} not match the field's type.
+    </p>
+    <p className="fieldwork-notice-detail">
+      {fields.join(", ")}. A value accepted as proposed is exported as a disputed claim (schema-mismatch), not a verified one.
     </p>
   </aside>;
 }
@@ -422,6 +443,14 @@ function App() {
     const presentationAdapter: ReviewPresentationAdapter = {
       // A field is a thing a person reads, not an identifier they decode.
       labelForTarget: (target) => humanizeFieldPath(target),
+      // Only the candidate's own value: the hook is also asked about other
+      // values (an excluded rival's), which this candidate's record does not describe.
+      summarizeValue: (value, context) => {
+        const mismatch = value === context.candidate.value ? candidateSchemaMismatch(context.candidate) : undefined;
+        if (!mismatch) return undefined;
+        const text = typeof value === "string" ? value : JSON.stringify(value);
+        return `${text} (${schemaMismatchPhrase(mismatch, value)})`;
+      },
       linkForSource: (sourceRef, context) => {
         if (context.candidate.role !== "proposed") return undefined;
         const highlightElementId = highlightByItem.get(context.item.metadata.name);
@@ -528,6 +557,7 @@ function App() {
         {state && !state.reviewBlocked && queueItems.length === 0 && stoppedShort && <p className="fieldwork-empty-queue" data-testid="no-values-proposed">
           No values were proposed: extraction stopped short ({stoppedShort}).
         </p>}
+        {reviewable && state?.review.schemaMismatches && <SchemaMismatchNotice mismatches={state.review.schemaMismatches}/>}
         {reviewable && <div className="survey-workbench-embed theme-survey" data-theme={presentation.theme} ref={workbench}/>}
       </Panel>
     </div>

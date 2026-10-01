@@ -1,0 +1,292 @@
+{
+  "format": "traverse-extraction-result",
+  "result": {
+    "exampleDigests": [],
+    "extractedAt": "2026-10-01T02:11:34.290Z",
+    "model": "gpt-6.1-sol",
+    "outcome": {
+      "status": "success"
+    },
+    "preparedArtifact": {
+      "contentLength": 781,
+      "digest": "54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+      "format": "traverse-prepared-artifact",
+      "preparationMode": "text",
+      "preparationVersion": "3",
+      "ref": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+      "sourceSnapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+      "version": 1
+    },
+    "preparedArtifactState": {
+      "canonicalRef": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+      "requestedRef": "traverse-prepared-artifact:v1:sha256:b9b293a2b1e9a4cc17b0c4b5e2e8e1ce4d4982e91c159fdb03e63669f1e327ae",
+      "status": "available"
+    },
+    "proposals": [
+      {
+        "candidateValue": "Harbor Telemetry Exchange Format",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.title",
+        "inferenceType": "explicit",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "The full title of this specification is Harbor Telemetry Exchange Format.",
+          "locator": "chars:130-203",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 203,
+              "index": 0,
+              "start": 130
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      },
+      {
+        "candidateValue": "2026-03-14",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.publicationDate",
+        "inferenceType": "explicit",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "This specification was published on 14 March 2026.",
+          "locator": "chars:357-407",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 407,
+              "index": 0,
+              "start": 357
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "date"
+      },
+      {
+        "candidateValue": "2026-03-21",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.publicationDate",
+        "inferenceType": "explicit",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "Per the registry entry circulated to members, this specification was published on 21 March 2026.",
+          "locator": "chars:684-780",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 780,
+              "index": 0,
+              "start": 684
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "date"
+      },
+      {
+        "candidateValue": "Internal Draft",
+        "confidence": 1,
+        "enumValues": [
+          "W3C Recommendation",
+          "W3C Working Draft",
+          "W3C Candidate Recommendation",
+          "Internal Draft"
+        ],
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.status",
+        "inferenceType": "explicit",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "Its current status is Internal Draft.",
+          "locator": "chars:255-292",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 292,
+              "index": 0,
+              "start": 255
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "enum"
+      },
+      {
+        "candidateValue": "2.1",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "type-mismatch",
+          "tokenBoundary": true,
+          "valueInExcerpt": "not-evaluated"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.versionNumber",
+        "inferenceType": "explicit",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "This document describes version 2.1 of the format.",
+          "locator": "chars:204-254",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 254,
+              "index": 0,
+              "start": 204
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "number"
+      },
+      {
+        "candidateValue": "Priya Raman",
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "match"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.firstEditor",
+        "inferenceType": "explicit",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "The editors are Priya Raman, Tomas Lindqvist and Aiko Brennan.",
+          "locator": "chars:293-355",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 355,
+              "index": 0,
+              "start": 293
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "string"
+      },
+      {
+        "candidateValue": 3,
+        "confidence": 1,
+        "evidenceMatch": {
+          "checkerVersion": "evidence-match-v4",
+          "schema": "ok",
+          "tokenBoundary": true,
+          "valueInExcerpt": "not-applicable"
+        },
+        "extractor": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+        "fieldPath": "doc.editorCount",
+        "inferenceType": "inferred",
+        "producedBy": {
+          "model": "gpt-6.1-sol",
+          "modelSource": "configured",
+          "requestDigest": "sha256:b3f360aaca83b07723f639aa36d801cf7486691318fcc642016a100d7b8a6d4a"
+        },
+        "provenance": {
+          "excerpt": "The editors are Priya Raman, Tomas Lindqvist and Aiko Brennan.",
+          "locator": "chars:293-355",
+          "occurrence": {
+            "ambiguous": false,
+            "count": 1,
+            "hintUsed": false,
+            "resolverVersion": "exact-occurrence-v1",
+            "selected": {
+              "end": 355,
+              "index": 0,
+              "start": 293
+            },
+            "selection": "source-order"
+          }
+        },
+        "valueType": "number"
+      }
+    ],
+    "provider": "relay-extraction-provider:fieldwork-dispatch:fieldwork-extraction",
+    "providerCalls": 1,
+    "raw": {
+      "tokensUsed": 22283
+    },
+    "runId": "traverse-extraction-run:33be7b49-e7f3-4260-9e61-112ba9d98c5f",
+    "taskDigest": "sha256:99fd99378b286195bdb2733ef8de5bce6801ab110f1b823f1722d6dc6b954ec2",
+    "totalTokensUsed": 22283
+  },
+  "source": {
+    "ref": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812",
+    "snapshotRef": "fieldwork-source:v1:spec-publication-facts:54291cfefd63cc78ec8e686938451defd286962b89150e3db9cd121452a8c812"
+  },
+  "version": 1
+}
