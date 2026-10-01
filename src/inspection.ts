@@ -3,7 +3,7 @@ import {
   exportExtractionInspector,
 } from "@kontourai/survey";
 import { canonicalJson } from "./contracts.js";
-import { reviewBlockedFor, storedExtractionImport } from "./fieldwork.js";
+import { extractionCoverageSummary, reviewBlockedFor, storedExtractionImport } from "./fieldwork.js";
 import { assertPortableOutput, readRun } from "./run-store.js";
 
 export interface FieldworkInspectionExportOptions {
@@ -32,6 +32,7 @@ export async function inspectionExport(
       actualDigest: stored.run.preparedArtifact.digest,
     },
   });
+  const coverageSummary = extractionCoverageSummary(stored.envelope);
   const artifact = JSON.parse(exportExtractionInspector(model, options)) as { spec: Record<string, unknown> };
   // Survey's inspector export is per-candidate/per-source; the run-level
   // truncation outcome and its warning classifications are Traverse's, and
@@ -47,6 +48,11 @@ export async function inspectionExport(
         // Which prepared-text ranges were read, and why any were not. Traverse
         // emits it only on a partial outcome; it holds offsets, never text.
         ...(stored.envelope.result.coverage === undefined ? {} : { coverage: stored.envelope.result.coverage }),
+        // Coverage lists only chunks whose text is in the prepared artifact.
+        // Chunks a chunk cap dropped are not among them, so carry Traverse's
+        // own progress record and the count that includes them.
+        ...(stored.envelope.result.partial === undefined ? {} : { partial: stored.envelope.result.partial }),
+        ...(coverageSummary === undefined ? {} : { coverageSummary }),
       },
       // The extraction still inspects, but its review can never be exported.
       ...reviewBlockedFor(stored.run),

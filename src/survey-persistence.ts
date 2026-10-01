@@ -190,14 +190,20 @@ export function parsePersistedReview(input: {
   const snapshot = persistedReviewSnapshotSchema.parse(input.snapshot) as ReviewQueueSessionState;
   const events = z.array(persistedReviewEventSchema).max(FIELDWORK_LIMITS.events).parse(input.events) as ReviewSessionEvent[];
   const names = new Set(snapshot.items.map((item) => item.metadata.name));
+  // A queue whose bytes no longer match the digest stored when the round
+  // opened was changed afterwards. Removing an item shows up first as a
+  // decision, a map entry or the active item naming something the queue no
+  // longer holds; those are the same broken binding an edited value is, and
+  // get its typed code rather than an untyped validation error (fieldwork#170).
+  const refuse = (cause: Error): Error => (queueChangedSinceBound(snapshot, input.snapshotHash) ? brokenBinding(cause) : cause);
   if (names.size !== snapshot.items.length || (snapshot.items.length === 0 ? snapshot.activeItemName !== "" : !names.has(snapshot.activeItemName))) {
-    throw new Error("Persisted Survey snapshot has invalid item identity");
+    throw refuse(new Error("Persisted Survey snapshot has invalid item identity"));
   }
   for (const map of [
     snapshot.notesByItemName, snapshot.decisionsByItemName, snapshot.editedValuesByItemName ?? {},
     snapshot.attemptEvidenceIdsByItemName ?? {}, snapshot.selectedCandidateIdsByItemName ?? {},
   ]) {
-    if (Object.keys(map).some((name) => !names.has(name))) throw new Error("Persisted Survey snapshot map references an unknown item");
+    if (Object.keys(map).some((name) => !names.has(name))) throw refuse(new Error("Persisted Survey snapshot map references an unknown item"));
   }
   for (const item of snapshot.items as readonly ReviewItem[]) {
     if (new Set(item.spec.candidates.map((candidate) => candidate.id)).size !== item.spec.candidates.length) {
@@ -223,7 +229,11 @@ export function parsePersistedReview(input: {
     // held to the same rule directly.
     throw brokenBinding(new Error("Stored empty review round does not match its recorded digest"));
   }
-  assertServerReviewSessionEvents(record, events);
+  try {
+    assertServerReviewSessionEvents(record, events);
+  } catch (cause) {
+    throw refuse(cause as Error);
+  }
   try {
     deriveServerReviewSessionApplyResult({
       record, events, requiredResolvedItems: "none",
@@ -234,6 +244,12 @@ export function parsePersistedReview(input: {
     throw cause;
   }
   return { snapshot, events, snapshotHash: input.snapshotHash };
+}
+
+/** Whether the stored queue's bytes differ from the digest taken when its round opened. */
+function queueChangedSinceBound(snapshot: ReviewQueueSessionState, snapshotHash: string): boolean {
+  try { return hashReviewQueueSnapshot(snapshot) !== snapshotHash; }
+  catch { return true; }
 }
 
 function brokenBinding(cause: Error): Error {
