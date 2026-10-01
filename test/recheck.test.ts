@@ -680,13 +680,11 @@ test("a value a partial prior never read is queued for review as newly observed,
 /*
  * The prior read the status line but lost later text, so it is stored as
  * incomplete. The current capture moves that same line down. That is one
- * change: the value moved. Lookout 0.8.1 also lists the moved proposal as newly
- * observed, which queues a second item with no current value, and accepting
- * both exports two claims. The fix belongs in Lookout, not in a Fieldwork guard.
+ * change: the value moved. Lookout before 0.8.3 also listed the moved proposal
+ * as newly observed, which queued a second item with no current value, and
+ * accepting both exported two claims.
  */
-test("a value an incomplete prior read that moves is one moved item, not also newly seen", {
-  skip: "Lookout 0.8.1 also lists a moved value as newly observed against an incomplete prior; unskip when the Lookout fix (issue not yet filed) is released and taken",
-}, async () => {
+test("a value an incomplete prior read that moves is one moved item, not also newly seen", async () => {
   const filler = `\n${"filler line of text.\n".repeat(1_300)}`;
   const runtime = unreadableChunkRuntimeBinding();
   const setup = await baseline(`Status: Active${filler}UNREADABLE`, join(fixture, "task.json"), runtime);
