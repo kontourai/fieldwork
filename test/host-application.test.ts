@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createFilesystemSnapshotStore } from "@kontourai/forage";
-import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
+import { buildSnapshotSourceRef, fetchSource } from "@kontourai/forage/fetch";
 import { restoreReviewedExtractionEvidence } from "@kontourai/surface";
 import { parseReviewedWebSourceDescriptor, parseReviewedWebSourceInspection, parseReviewedWebSourceRefs } from "../src/reviewed-web-source-contract.js";
 import {
@@ -181,6 +181,38 @@ test("an authorized host lists, describes, and inspects only a reviewed exact we
   assert.ok(calls.filter((operation) => operation === "list").length >= 2);
   assert.ok(calls.filter((operation) => operation === "inspect").length >= 2);
   await application.close();
+});
+
+test("reviewed source inspection verifies a non-UTF-8 capture against the bytes Forage hashed", async () => {
+  const snapshotRoot = await mkdtemp(join(tmpdir(), "fieldwork-reviewed-source-snapshots-"));
+  const runRoot = await tempRoot("reviewed-source-latin1-run");
+  // Forage hashes a text capture over the bytes received and decodes them by
+  // the declared charset, so the decoded text re-encoded as UTF-8 hashes differently.
+  const wire = Buffer.from("<main><p>Café · Status: Active</p></main>", "latin1");
+  const acquired = await fetchSource({ id: "reviewed-source", url: "https://example.test/latin1", respectRobots: false, retries: 0, minDelayMs: 0, egress: { guarded: true } }, {
+    clock: () => "2026-08-26T00:00:00.000Z",
+    fetch: async () => new Response(wire, { headers: { "content-type": "text/html; charset=iso-8859-1" } }),
+  });
+  assert.ok(acquired.snapshot);
+  assert.equal(acquired.snapshot.bodyHash, createHash("sha256").update(wire).digest("hex"));
+  assert.notEqual(acquired.snapshot.bodyHash, createHash("sha256").update(String(acquired.snapshot.body)).digest("hex"), "the fixture must be a capture whose decoded text hashes differently");
+  await createFilesystemSnapshotStore({ root: snapshotRoot }).put(acquired.snapshot);
+  const initial = createFieldworkApplication();
+  const run = await initial.run({ taskPath: "examples/generic/task.json", snapshotRef: buildSnapshotSourceRef(acquired.snapshot), snapshotRoot, root: runRoot });
+  const server = await initial.open({ runDirectory: run.runDirectory });
+  try {
+    const state = (await server.view()).review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({ ...state, decisionsByItemName: { [state.items[0]!.metadata.name]: "accept-proposed" }, reviewedAt: "2026-08-26T00:00:00.000Z", actorId: "reviewed-source-test" });
+    assert.equal((await apiFetch(server, "/api/v1/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }) })).status, 200);
+  } finally { await server.close(); await initial.close(); }
+  const application = createFieldworkApplication({ reviewedWebSourceOwner: { runDirectory: run.runDirectory, snapshotRoot, authorize: () => true } });
+  try {
+    const listed = await application.listReviewedWebSourceRefs();
+    assert.ok(listed.status === "available" && listed.refs.length === 1);
+    const inspected = await application.inspectReviewedWebSource(listed.refs[0]!);
+    assert.equal(inspected.status, "available");
+    if (inspected.status === "available") assert.match(inspected.pages[0]!.text, /Café · Status: Active/);
+  } finally { await application.close(); }
 });
 
 test("reviewed web-source owner reads are total and do not expose a missing owner path", async () => {
