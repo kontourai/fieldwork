@@ -111,7 +111,10 @@ export class ReviewedWebSourceReader {
       const store = createFilesystemSnapshotStore({ root: this.owner.snapshotRoot });
       const replay = await resolveSnapshotSourceRef(store, found.captureRef);
       if (!replay.ok) return inspection(replay.error.kind === "snapshot-store-error" ? "storage-unavailable" : replay.error.kind === "snapshot-not-found" ? "missing" : "corrupt");
-      const bytes = typeof replay.snapshot.body === "string" ? Buffer.from(replay.snapshot.body) : replay.snapshot.body;
+      // A text capture's bodyHash covers the bytes received (`snapshot.bytes`),
+      // not its decoded text; only earlier-format text records hash the UTF-8 text.
+      const bytes = replay.snapshot.bytes
+        ?? (typeof replay.snapshot.body === "string" ? Buffer.from(replay.snapshot.body) : replay.snapshot.body);
       if (createHash("sha256").update(bytes).digest("hex") !== replay.reference.bodyHash) return inspection("digest-mismatch");
       const stored = await readRun(this.owner.runDirectory);
       const resolution = await resolvePreparedArtifact(stored.envelope.result.preparedArtifact, { get: () => stored.preparedText });
