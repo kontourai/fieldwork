@@ -232,18 +232,20 @@ const WITHHELD_WORDS = ["key", "token", "secret", "password", "passwd", "authori
  * as plain prose. All of these must hold, and the error code and runtime id
  * are reported either way:
  *
- * - every character is a letter, a digit, a space or one of `, . ' ( ) : - _`,
+ * - every character is a letter, a digit, a space or one of `, . ' ( ) : ; - _`,
  *   which rules out paths, URLs, assignments, headers and query strings;
  * - it names nothing credential-like: none of `WITHHELD_WORDS` anywhere in
- *   it, nor the word `sig`;
+ *   it (outside the phrase "session limit"), nor the word `sig`;
  * - no word of 12 or more characters mixes letters and digits, and no word
  *   is 24 or more characters long (an identifier, a hash, an encoded blob);
  * - it is at most `MAX_FAILURE_MESSAGE_CHARS` characters.
  */
 export function runtimeMessageIsPlain(message: string): boolean {
   if (message.length > MAX_FAILURE_MESSAGE_CHARS) return false;
-  if (!/^[A-Za-z0-9 ,.'():_-]*$/u.test(message)) return false;
-  const lower = message.toLowerCase();
+  if (!/^[A-Za-z0-9 ,.'():;_-]*$/u.test(message)) return false;
+  // "session limit" is Relay's fixed phrase for a CLI's session usage limit,
+  // not a session credential; any other mention of "session" still withholds.
+  const lower = message.toLowerCase().replace(/\bsession limit\b/gu, "");
   if (WITHHELD_WORDS.some((word) => lower.includes(word)) || /(?:^|[^a-z0-9])sig(?:[^a-z0-9]|$)/u.test(lower)) return false;
   return message.split(/[^A-Za-z0-9_-]+/u)
     .every((word) => word.length < 24 && !(word.length >= 12 && /[0-9]/u.test(word) && /[A-Za-z]/u.test(word)));

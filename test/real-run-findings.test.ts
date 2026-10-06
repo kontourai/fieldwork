@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { createFilesystemSnapshotStore, type Snapshot } from "@kontourai/forage";
 import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import { createObservationStore, type CheckResult, type LookoutSource, type ProposalSetObservation } from "@kontourai/lookout";
-import { ModelInvocationError, type ModelRuntime } from "@kontourai/relay";
+import { FakeModelRuntime, ModelInvocationError, type ModelRuntime } from "@kontourai/relay";
+import { createCodexRuntime } from "@kontourai/relay/codex";
 import { buildTrustReport, formatTrustReportSummary, validateTrustBundle } from "@kontourai/surface";
 import type { PortableExtractionResultEnvelope } from "@kontourai/traverse";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
@@ -475,3 +476,52 @@ test("a runtime message is shown only when it reads as plain prose; the code and
   const silent = await runFailure("");
   assert.match(silent.message, /failed with RATE_LIMITED \(1 failed attempt recorded\)\.$/);
 });
+
+/**
+ * A stand-in `codex` executable that reports a usage limit the way `codex exec
+ * --json` does: an `error` and a `turn.failed` event on stdout, then exit 1.
+ */
+async function usageLimitedCodex(): Promise<string> {
+  const dir = await tempRoot("usage-limited-codex");
+  const executable = join(dir, "codex");
+  const limit = "You've hit your usage limit. Upgrade to continue using Codex, or try again in 2 hours 5 minutes.";
+  const events = [{ type: "error", message: limit }, { type: "turn.failed", error: { message: limit } }]
+    .map((event) => JSON.stringify(event)).join("\n");
+  await writeFile(executable, `#!/usr/bin/env node\nprocess.stdin.resume();\nprocess.stdin.on("end", () => { process.stdout.write(${JSON.stringify(`${events}\n`)}); process.exit(1); });\n`);
+  await chmod(executable, 0o755);
+  return executable;
+}
+
+test("a CLI usage limit keeps the reason and reset time Relay reports, and falls back to the next candidate", async () => {
+  const codex = createCodexRuntime({ executable: await usageLimitedCodex(), model: "limited-model" });
+  const failed = await tempRoot("usage-limit-failure");
+  const error = await runFieldwork({
+    taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: failed,
+    runtime: { role: "fieldwork-extraction", candidates: [{ id: "codex", runtime: codex }], budget: { maxAttempts: 3, maxElapsedMs: 60_000 } },
+  }).then(() => undefined, (caught: Error & { code?: string }) => caught);
+  assert.ok(error, "the run was expected to fail");
+  assert.equal(error.code, "RUNTIME_INVOCATION_FAILED");
+  assert.ok(error.message.includes(`runtime ${codex.id} failed with RATE_LIMITED: Codex rate limited: usage limit reached; resets in 2 hours 5 minutes (1 failed attempt recorded).`), error.message);
+  // Relay's fixed phrase for a CLI session usage limit names no credential.
+  assert.equal(runtimeMessageIsPlain("OpenCode rate limited: session limit reached; resets 3pm"), true);
+  assert.equal(runtimeMessageIsPlain("session abc123 expired"), false);
+
+  const fallback = new FakeModelRuntime([modelResultFor("Active")], "fake:after-limit");
+  const recovered = await runFieldwork({
+    taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("usage-limit-fallback"),
+    runtime: { role: "fieldwork-extraction", candidates: [{ id: "codex", runtime: codex }, { id: "fallback", runtime: fallback }], budget: { maxAttempts: 3, maxElapsedMs: 60_000 } },
+  });
+  const attempts = (await readRun(recovered.runDirectory)).run.execution.receipts.flatMap((receipt) => receipt.attempts);
+  assert.deepEqual(attempts.map((attempt) => [attempt.runtimeId, attempt.outcome, attempt.errorCode, attempt.retryable]),
+    [[codex.id, "failed", "RATE_LIMITED", true], ["fake:after-limit", "succeeded", undefined, undefined]]);
+});
+
+function modelResultFor(value: string) {
+  return {
+    provider: "fixture-runtime", model: "fixture-model", outputText: "",
+    toolCalls: [{ id: "tool-1", name: "submit_extraction_proposals", input: { proposals: [{
+      fieldPath: "record.status", value, confidence: 0.97, excerpt: `Status: ${value}`, locator: null, occurrenceHint: null,
+    }] } }],
+    usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12 }, latencyMs: 1, stopReason: "tool_use" as const,
+  };
+}
