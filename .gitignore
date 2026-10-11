@@ -9,3 +9,4 @@ test-results/
 # Local Surface projections emitted by Veritas readiness.
 .surface/runs/
 .DS_Store
+dist-pages/
