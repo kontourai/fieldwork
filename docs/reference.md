@@ -1,0 +1,153 @@
+# Reference
+
+This page lists the `fieldwork` command-line surface and the package entry points. The [README](../README.md) explains what each result means; read its [public contracts](../README.md#public-contracts) for the export, inspection, and loopback-server guarantees.
+
+## Command line
+
+```text
+fieldwork <acquire|run|recheck|open|inspect|export> [options]
+```
+
+Every command writes one JSON object to standard output. Without `--json` it is pretty-printed; with `--json` it is printed on one line. A failure is written as `{ "ok": false, "error": { "code", "message" } }`.
+
+| Exit status | Meaning |
+| --- | --- |
+| `0` | The command succeeded. A partial run (`complete: false`) still exits `0`, because the run is real and reviewable. |
+| `1` | The command failed. `error.code` is a typed code such as `INVALID_ARGUMENT`, `RECHECK_CONFLICT`, or `RUNTIME_INVOCATION_FAILED`. |
+| `2` | Unknown or missing command (`USAGE`). |
+| `3` | `export` wrote a partial export, or one with a claim whose grounding was refused. |
+
+Unless a root is given, Fieldwork keeps local state under `.fieldwork/` in the current directory: runs in `.fieldwork/runs`, and acquired snapshots in `.fieldwork/sources`.
+
+## fieldwork run
+
+Extracts proposals from one or more sources and persists a reviewable run.
+
+```sh
+fieldwork run --task <file> (--source <file> | --snapshot <ref>)... [options]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--task <file>` | Required. The task file (`kind: FieldworkTask`). See the files under `examples/` for complete tasks. |
+| `--source <file>` | A local source file. Repeatable. |
+| `--snapshot <ref>` | An exact Forage snapshot reference, as returned by `acquire`. Repeatable, and may be mixed with `--source`. |
+| `--snapshot-root <dir>` | Where `--snapshot` references are resolved. Default `.fieldwork/sources`. |
+| `--root <dir>` | The run root. Default `.fieldwork/runs`. |
+| `--json` | Print the result on one line. |
+
+At least one `--source` or `--snapshot` is required. With one source the result is a single run; with more than one, it is an ordered batch of independent child runs, one per source. The result carries `ok: true` and `complete`, which is `false` for a partial run, or for a batch unless every source ran and read its whole source.
+
+The runtime options below choose how extraction runs. With none, or with `--runtime fixture` alone, Fieldwork uses its offline deterministic provider.
+
+### Runtime options
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--runtime <profile>` | none | A Relay runtime profile such as `codex:gpt-5` or `claude-code:sonnet`. Repeat it for ordered fallback. `fixture` selects the offline provider and cannot be combined with another runtime. |
+| `--datum-role <role>` | none | Resolve the runtime through a Datum role instead. Mutually exclusive with `--runtime`. Requires `--max-cost-usd` and `--estimated-usd-per-1k-tokens`. |
+| `--role <name>` | `fieldwork-extraction` | The role name recorded for `--runtime` profiles. |
+| `--allow-prompted-structured-output` | off | Accept runtimes that only offer prompted, rather than native, structured output (for example `opencode:...`). |
+| `--max-attempts <n>` | `16` | Durable ceiling on model launches. |
+| `--max-elapsed-ms <n>` | `600000` | Elapsed-time limit for the session. |
+| `--max-total-tokens <n>` | none | Token ceiling. Requires `--max-tokens-per-attempt`. |
+| `--max-cost-usd <n>` | none | Estimated-cost ceiling. Requires `--estimated-usd-per-1k-tokens` and `--max-tokens-per-attempt`. |
+| `--max-tokens-per-attempt <n>` | none | Declared worst-case total tokens for one attempt. |
+| `--estimated-usd-per-1k-tokens <n>` | none | The explicit rate used to estimate cost. |
+| `--max-output-tokens <n>` | `2048` | Output-token limit per call. |
+| `--concurrency <n>` | `1` | Chunk-level work in flight. |
+| `--batch-size <n>` | `1` | Requested chunks per physical call, honoured only when the primary runtime offers native batching. |
+| `--max-provider-calls <n>` | none | Ceiling on physical Traverse provider operations. |
+| `--max-chunks <n>` | Traverse's own (`40`) | Ceiling on prepared chunks. A source that crosses it produces a partial run with reason `max-chunks`. |
+
+Integer options must be positive integers, and `--max-cost-usd` and `--estimated-usd-per-1k-tokens` must be positive numbers; anything else fails with `INVALID_ARGUMENT`. The [runtime choice](../README.md#runtime-choice) section of the README explains how these limits are enforced.
+
+## fieldwork acquire
+
+Fetches web pages through Forage and stores them as exact snapshots.
+
+```sh
+fieldwork acquire --url <url> [options]
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--url <url>` | required | The starting URL. |
+| `--snapshot-root <dir>` | `.fieldwork/sources` | The snapshot store. |
+| `--max-pages <n>` | `20` | Maximum pages to acquire (positive integer). |
+| `--max-depth <n>` | `2` | Maximum link depth (zero or more). |
+| `--discovery <mode>` | `links` | `links`, `sitemap`, or `both`. |
+| `--render <mode>` | `never` | `never`, `on-shell`, or `always`. |
+| `--json` | | Print the result on one line. |
+
+Pass a returned snapshot reference to `run --snapshot`.
+
+## fieldwork recheck
+
+Checks a registered source again and, when its evidence moved, opens a new review round in a new run. The prior run is never modified.
+
+```sh
+fieldwork recheck --source-id <id> --prior-run <run> --task <file> [options]
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--source-id <id>` | required | A source registered in the Lookout registry. |
+| `--prior-run <run>` | required | The run directory to compare against. |
+| `--task <file>` | required | The task file. |
+| `--registry <file>` | Lookout's default | The Lookout registry file. |
+| `--snapshot-root <dir>` | `.fieldwork/lookout/snapshots` | The Lookout snapshot store. |
+| `--root <dir>` | `.fieldwork/runs` | The run root for the new run. |
+| `--observation-root <dir>` | `<root>/.lookout-observations` | Where proposal observations are stored. |
+| `--json` | | Print the result on one line. |
+
+Recheck accepts the same [runtime options](#runtime-options) as `run`. The README's [source rechecks](../README.md#source-rechecks-and-review-rounds) section describes each outcome.
+
+## fieldwork open
+
+Serves the review workbench for one run on `127.0.0.1`.
+
+```sh
+fieldwork open <run> [options]
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--port <port>` | a free port | The loopback port. |
+| `--theme <theme>` | the shell default | `dark` or `light`. |
+| `--reviewer <id>` | none | The reviewer every accepted decision is stamped with. Without it, decisions are recorded as `unattributed`. |
+| `--reviewer-kind <kind>` | `human` | `human` or `agent`. Requires `--reviewer`. |
+| `--json` | | Print the result on one line. |
+
+It prints `{ "ok": true, "url": ..., "loopbackOnly": true }` and keeps serving until interrupted. The URL fragment carries a per-launch capability, so do not share it.
+
+## fieldwork inspect
+
+Writes a read-only inspection artifact for a run.
+
+```sh
+fieldwork inspect <run> --output <file> [--include-prepared-text] [--include-excerpts] [--json]
+```
+
+Prepared text and excerpts are redacted unless the matching flag is given. The result includes `reviewBlocked` when the run cannot be reviewed.
+
+## fieldwork export
+
+Writes the reviewed export for a run.
+
+```sh
+fieldwork export <run> --output <file> [--json]
+```
+
+The output is a `ReviewedExport` whose `bundle` is a Surface trust bundle. When some claims were left out, or an accepted claim's grounding was refused, the file is still written, the result lists `excluded` and `groundingRefused`, and the command exits `3`. Claims whose structure Surface cannot check are listed under `groundingUnchecked` without changing the exit status.
+
+## Package entry points
+
+| Import | Contents |
+| --- | --- |
+| `@kontourai/fieldwork` | `runFieldwork`, `runFieldworkBatch`, `acquireFieldwork`, `recheckFieldwork`, `openRun`, `inspectionExport`, `reviewedExport`, `createFieldworkApplication`, `parseFieldworkTask`, `fieldworkHostDescriptor`, `FIELDWORK_LIMITS`, and the versioned transport schemas (`fieldworkTaskSchema`, `fieldworkRunResultSchema`, `reviewedExportSchema`, and others). |
+| `@kontourai/fieldwork/runtime` | `createProfileRuntimeBinding`, `createDatumRuntimeBinding`, `validateRuntimeBinding`, and `fieldworkStoredExecutionSchema`. |
+| `@kontourai/fieldwork/host-descriptor` | `fieldworkHostDescriptor`, the static discovery descriptor for hosts. |
+| `@kontourai/fieldwork/reviewed-web-source-contract` | Pure parsers and schemas for reviewed web source responses, such as `parseReviewedWebSourceDescriptor` and `parseReviewedWebSourceCurrentness`. |
+
+The package requires Node 22 or newer. `@anthropic-ai/sdk` is an optional peer dependency, needed only for `--datum-role`.
