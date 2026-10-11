@@ -12,10 +12,10 @@ Every command writes one JSON object to standard output. Without `--json` it is 
 
 | Exit status | Meaning |
 | --- | --- |
-| `0` | The command succeeded. A partial run still exits `0` with `ok: true` and `complete: false`, because the run is real and reviewable. So does a batch in which some sources failed: the failed children are listed in `items` with `ok: false`, and the batch reports `complete: false`. |
+| `0` | The command succeeded. A partial run still exits `0` with `ok: true` and `complete: false`, because the run is real and reviewable. So does a batch whose children all ran, even if some are partial. |
 | `1` | The command failed. `error.code` is a typed code such as `INVALID_ARGUMENT`, `RECHECK_CONFLICT`, or `RUNTIME_INVOCATION_FAILED`. |
 | `2` | Unknown or missing command (`USAGE`). |
-| `3` | `export` wrote a partial export, or one with a claim whose grounding was refused. |
+| `3` | `export` wrote a partial export, or one with a claim whose grounding was refused. Or `run` completed a batch in which at least one source failed: the batch is still printed with `ok: true` and `complete: false`, successful children keep their runs, and the failed children are listed in `items` with `ok: false`. |
 
 `open`, `inspect`, and `export` take the run directory as their first argument that does not start with `--`. Put the run directory first, as in the synopses below: in `fieldwork open --port 5 <run>`, `5` would be read as the run.
 
@@ -38,7 +38,7 @@ fieldwork run --task <file> (--source <file> | --snapshot <ref>)... [options]
 | `--root <dir>` | The run root. Default `.fieldwork/runs`. |
 | `--json` | Print the result on one line. |
 
-At least one `--source` or `--snapshot` is required. With one source the result is a single run; with more than one, it is an ordered batch of independent child runs, one per source. The result carries `ok: true` and `complete`, which is `false` for a partial run, or for a batch unless every source ran and read its whole source.
+At least one `--source` or `--snapshot` is required. With one source the result is a single run; with more than one, it is an ordered batch of independent child runs, one per source. The result carries `ok: true` and `complete`, which is `false` for a partial run, or for a batch unless every source ran and read its whole source. A batch in which any source failed exits `3`.
 
 The runtime options below choose how extraction runs. With none, or with `--runtime fixture` alone, Fieldwork uses its offline deterministic provider, and the limit options in the table are not read at all.
 

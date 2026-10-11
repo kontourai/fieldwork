@@ -192,3 +192,20 @@ test("CLI default (non --json) run output is still JSON and surfaces outcome, no
   assert.equal(result.ok, true);
   assert.deepEqual(result.outcome, { status: "success" });
 });
+
+// fieldwork#184: a batch with a failed source exited 0.
+test("CLI batch with a failed source prints the batch and exits 3, keeping successful siblings", async () => {
+  const root = await tempRoot("cli-batch-failed");
+  await assert.rejects(
+    () => exec(process.execPath, ["--import", "tsx", "src/cli.ts", "run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--source", join(root, "does-not-exist.txt"), "--root", root, "--json"]),
+    (error: any) => {
+      assert.equal(error.code, 3);
+      const batch = JSON.parse(error.stdout);
+      assert.equal(batch.ok, true);
+      assert.equal(batch.complete, false);
+      assert.deepEqual(batch.items.map((item: { id: string; ok: boolean }) => [item.id, item.ok]), [["source-1", true], ["source-2", false]]);
+      assert.match(batch.items[0].run.runDirectory, /run-/);
+      return true;
+    },
+  );
+});

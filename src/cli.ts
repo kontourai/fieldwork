@@ -38,7 +38,13 @@ async function main(argv: string[]): Promise<void> {
         });
         // Complete only when every source ran and read its whole source.
         const complete = batch.items.every((item) => item.ok && item.run.outcome.status === "success");
-        return output({ ok: true, complete, ...batch }, has(args, "--json"));
+        output({ ok: true, complete, ...batch }, has(args, "--json"));
+        // A partial child is a real, reviewable run, like a partial single
+        // run, and keeps exit 0. A failed child produced no run at all, so the
+        // batch is still printed but exits 3, as a partial export does, so a
+        // script cannot mistake it for every source having run.
+        if (batch.items.some((item) => !item.ok)) process.exitCode = 3;
+        return;
       }
       const source = sources[0]!;
       // `ok` says the run was extracted and persisted; `complete` says whether
