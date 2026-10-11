@@ -17,7 +17,7 @@ Every command writes one JSON object to standard output. Without `--json` it is 
 | `2` | Unknown or missing command (`USAGE`). |
 | `3` | `export` wrote a partial export, or one with a claim whose grounding was refused. Or `run` completed a batch in which at least one source failed: the batch is still printed with `ok: true` and `complete: false`, successful children keep their runs, and the failed children are listed in `items` with `ok: false`. |
 
-`open`, `inspect`, and `export` take the run directory as their first argument that does not start with `--`. Put the run directory first, as in the synopses below: in `fieldwork open --port 5 <run>`, `5` would be read as the run.
+`open`, `inspect`, and `export` take one run directory, before or after their options: `fieldwork open --port 5 <run>` and `fieldwork open <run> --port 5` are the same. An option missing its value, an option the command does not take, a repeated option, or a second positional argument fails with `INVALID_ARGUMENT`.
 
 Unless a root is given, Fieldwork keeps local state under `.fieldwork/` in the current directory: runs in `.fieldwork/runs`, and acquired snapshots in `.fieldwork/sources`.
 
@@ -40,7 +40,7 @@ fieldwork run --task <file> (--source <file> | --snapshot <ref>)... [options]
 
 At least one `--source` or `--snapshot` is required. With one source the result is a single run; with more than one, it is an ordered batch of independent child runs, one per source. The result carries `ok: true` and `complete`, which is `false` for a partial run, or for a batch unless every source ran and read its whole source. A batch in which any source failed exits `3`.
 
-The runtime options below choose how extraction runs. With none, or with `--runtime fixture` alone, Fieldwork uses its offline deterministic provider, and the limit options in the table are not read at all.
+The runtime options below choose how extraction runs. With none, or with `--runtime fixture` alone, Fieldwork uses its offline deterministic provider, which has no limits to apply, so passing any limit option, `--role`, or `--allow-prompted-structured-output` fails with `INVALID_ARGUMENT`.
 
 ### Runtime options
 
@@ -62,7 +62,7 @@ The runtime options below choose how extraction runs. With none, or with `--runt
 | `--max-provider-calls <n>` | none | Ceiling on physical Traverse provider operations. |
 | `--max-chunks <n>` | Traverse's own (`40`) | Ceiling on prepared chunks. A source that crosses it produces a partial run with reason `max-chunks`. |
 
-The limit options, and their defaults, apply only when `--runtime <profile>` (other than `fixture`) or `--datum-role` is given; otherwise they are silently ignored, even when malformed. When they apply, integer options must be positive integers, and `--max-cost-usd` and `--estimated-usd-per-1k-tokens` must be positive numbers; anything else fails with `INVALID_ARGUMENT`. The [runtime choice](../README.md#runtime-choice) section of the README explains how these limits are enforced.
+The limit options, and their defaults, apply only when `--runtime <profile>` (other than `fixture`) or `--datum-role` is given; without either, each is refused with `INVALID_ARGUMENT` rather than ignored. `--role` and `--allow-prompted-structured-output` apply only to `--runtime` profiles and are refused with `--datum-role`. When the limit options apply, integer options must be positive integers, and `--max-cost-usd` and `--estimated-usd-per-1k-tokens` must be positive numbers; anything else fails with `INVALID_ARGUMENT`. The [runtime choice](../README.md#runtime-choice) section of the README explains how these limits are enforced.
 
 ## fieldwork acquire
 
@@ -74,7 +74,7 @@ fieldwork acquire --url <url> [options]
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--url <url>` | required | The starting URL. The usage text asks for an `https` URL, but `http` URLs are not currently refused. |
+| `--url <url>` | required | The starting URL, `http` or `https`. Forage refuses any other scheme. |
 | `--snapshot-root <dir>` | `.fieldwork/sources` | The snapshot store. |
 | `--max-pages <n>` | `20` | Maximum pages to acquire (positive integer). |
 | `--max-depth <n>` | `2` | Maximum link depth (zero or more). |
@@ -115,7 +115,7 @@ fieldwork open <run> [options]
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--port <port>` | a free port | The loopback port. |
+| `--port <port>` | a free port | The loopback port, an integer from `0` to `65535`; `0` picks a free port. Anything else fails with `INVALID_ARGUMENT`. |
 | `--theme <theme>` | the shell default | `dark` or `light`. |
 | `--reviewer <id>` | none | The reviewer every accepted decision is stamped with. Without it, decisions are recorded as `unattributed`. |
 | `--reviewer-kind <kind>` | `human` | `human` or `agent`. Requires `--reviewer`. |

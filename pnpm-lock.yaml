@@ -46,8 +46,8 @@ importers:
         specifier: ^1.11.1
         version: 1.12.0(react@19.2.8)
       '@kontourai/veritas':
-        specifier: 1.5.6
-        version: 1.5.6(zod@4.4.3)
+        specifier: 1.7.6
+        version: 1.7.6(zod@4.4.3)
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.62.1
@@ -441,8 +441,8 @@ packages:
     peerDependencies:
       react: ^19.0.0
 
-  '@kontourai/veritas@1.5.6':
-    resolution: {integrity: sha512-ItWxM/PBAfqkZ9xRr9jHith3mqPkA50tLMUxK2nUSbmx6cMUz6FDqqfOSSGDeX4gpzMt0BwouIOxPo29JQUXpg==}
+  '@kontourai/veritas@1.7.6':
+    resolution: {integrity: sha512-1BOyT7EbrSFZqVWdpmH65c9Ay8E/uk/4uOxM7Fe24uoax78BjgVB36cTKOS5cp0bxwsFBE9e5OHQJRbthpjViw==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -1855,12 +1855,13 @@ snapshots:
     dependencies:
       react: 19.2.8
 
-  '@kontourai/veritas@1.5.6(zod@4.4.3)':
+  '@kontourai/veritas@1.7.6(zod@4.4.3)':
     dependencies:
       '@kontourai/surface': 2.18.0
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
+      cross-spawn: 7.0.6
       hachure: 0.15.0
       picomatch: 4.0.5
     transitivePeerDependencies:

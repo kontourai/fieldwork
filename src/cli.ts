@@ -62,7 +62,9 @@ async function main(argv: string[]): Promise<void> {
     }
     if (command === "acquire") {
       const url = flag(args, "--url");
-      if (!url) invalid("acquire requires --url <https-url>");
+      // Forage owns the scheme policy and accepts http and https; say so rather
+      // than promise a stricter rule Fieldwork does not apply.
+      if (!url) invalid("acquire requires --url <url> (http or https)");
       const discovery = enumFlag(args, "--discovery", ["links", "sitemap", "both"] as const);
       const render = enumFlag(args, "--render", ["never", "on-shell", "always"] as const);
       return output({
@@ -85,12 +87,14 @@ async function main(argv: string[]): Promise<void> {
       if (!sourceId || !priorRunDirectory || !taskPath) {
         invalid("recheck requires --source-id <id> --prior-run <run> --task <file>");
       }
+      // Settle the runtime options before reading the registry, so a refused
+      // option is reported as such rather than masked by a registry error.
+      const runtime = runtimeBinding(args);
       const registry = await loadRegistry(flag(args, "--registry"));
       const source = registry.get(sourceId);
       if (!source) invalid(`registered source not found: ${sourceId}`);
       const selectedSnapshotRoot = snapshotRoot ?? resolve(".fieldwork/lookout/snapshots");
       const store = createLookoutSnapshotStore(selectedSnapshotRoot);
-      const runtime = runtimeBinding(args);
       return output({
         ok: true,
         ...(await recheckFieldwork({
@@ -108,14 +112,15 @@ async function main(argv: string[]): Promise<void> {
       }, has(args, "--json"));
     }
     if (command === "open") {
-      const run = args.find((value) => !value.startsWith("--"));
-      if (!run) throw Object.assign(new Error("open requires <run>"), { code: "INVALID_ARGUMENT" });
-      const theme = enumFlag(args, "--theme", ["dark", "light"] as const);
-      const reviewerId = flag(args, "--reviewer");
-      const reviewerKind = enumFlag(args, "--reviewer-kind", ["human", "agent"] as const);
+      const parsed = runCommandArguments("open", args, ["--port", "--theme", "--reviewer", "--reviewer-kind"], ["--json"]);
+      const run = parsed.run;
+      if (!run) invalid("open requires <run>");
+      const theme = enumFlag(parsed.values, "--theme", ["dark", "light"] as const);
+      const reviewerId = flag(parsed.values, "--reviewer");
+      const reviewerKind = enumFlag(parsed.values, "--reviewer-kind", ["human", "agent"] as const);
       if (reviewerKind !== undefined && reviewerId === undefined) invalid("--reviewer-kind requires --reviewer <id>");
       const service = await openRun(resolve(run), {
-        port: Number(flag(args, "--port") ?? 0),
+        port: portFlag(parsed.values),
         ...(reviewerId === undefined ? {} : { reviewer: { id: reviewerId, kind: reviewerKind ?? "human" } }),
         ...(theme === undefined ? {} : {
           presentation: {
@@ -133,8 +138,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     if (command === "export") {
-      const run = args.find((value) => !value.startsWith("--")), outputPath = flag(args, "--output");
-      if (!run || !outputPath) throw Object.assign(new Error("export requires <run> --output <file>"), { code: "INVALID_ARGUMENT" });
+      const parsed = runCommandArguments("export", args, ["--output"], ["--json"]);
+      const run = parsed.run, outputPath = flag(parsed.values, "--output");
+      if (!run || !outputPath) invalid("export requires <run> --output <file>");
       const artifact = await reviewedExport(resolve(run));
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
       // A partial export, or one stating an accepted claim its grounding
@@ -159,8 +165,9 @@ async function main(argv: string[]): Promise<void> {
       return output({ ok: true, output: outputPath, complete: true, ...uncheckedSummary }, has(args, "--json"));
     }
     if (command === "inspect") {
-      const run = args.find((value) => !value.startsWith("--")), outputPath = flag(args, "--output");
-      if (!run || !outputPath) throw Object.assign(new Error("inspect requires <run> --output <file>"), { code: "INVALID_ARGUMENT" });
+      const parsed = runCommandArguments("inspect", args, ["--output"], ["--json", "--include-prepared-text", "--include-excerpts"]);
+      const run = parsed.run, outputPath = flag(parsed.values, "--output");
+      if (!run || !outputPath) invalid("inspect requires <run> --output <file>");
       const artifact = await inspectionExport(resolve(run), {
         includePreparedText: has(args, "--include-prepared-text"),
         includeExcerpts: has(args, "--include-excerpts"),
@@ -189,6 +196,44 @@ function sourceArguments(args: string[]): Array<{ kind: "path" | "snapshot"; val
   });
   return sources;
 }
+// `open`, `inspect` and `export` take one positional run directory among their
+// options. Each option is known to take a value or not, so a value is never
+// mistaken for the run, and an option this command does not know is refused
+// rather than guessed at. Returns the run and the options as name/value pairs
+// that `flag` and `enumFlag` read.
+function runCommandArguments(
+  command: string,
+  args: string[],
+  valueOptions: readonly string[],
+  booleanOptions: readonly string[],
+): { run: string | undefined; values: string[] } {
+  const positionals: string[] = [];
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index]!;
+    if (!value.startsWith("--")) { positionals.push(value); continue; }
+    if (booleanOptions.includes(value)) continue;
+    if (!valueOptions.includes(value)) invalid(`${command} does not accept ${value}`);
+    const next = args[index + 1];
+    if (next === undefined || next.startsWith("--")) invalid(`${value} requires a value`);
+    if (seen.has(value)) invalid(`${value} may be given only once`);
+    seen.add(value);
+    values.push(value, next);
+    index += 1;
+  }
+  if (positionals.length > 1) invalid(`${command} takes one <run>, got ${positionals.length} positional arguments`);
+  return { run: positionals[0], values };
+}
+
+function portFlag(args: string[]): number {
+  const value = flag(args, "--port");
+  if (value === undefined) return 0;
+  // Decimal digits only: Number() would read "", " " as 0 and "0x50" as 80.
+  if (!/^\d{1,5}$/.test(value) || Number(value) > 65_535) invalid("--port must be an integer from 0 to 65535");
+  return Number(value);
+}
+
 function has(args: string[], name: string): boolean { return args.includes(name); }
 function output(value: unknown, json: boolean): void { process.stdout.write(json ? `${JSON.stringify(value)}\n` : `${JSON.stringify(value, null, 2)}\n`); }
 
@@ -197,10 +242,18 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
   const datumRole = flag(args, "--datum-role");
   if (profiles.includes("fixture")) {
     if (profiles.length !== 1 || datumRole) invalid("fixture cannot be combined with another runtime");
+    refuseRuntimeOnlyOptions(args);
     return undefined;
   }
   if (profiles.length && datumRole) invalid("--runtime and --datum-role are mutually exclusive");
-  if (!profiles.length && !datumRole) return undefined;
+  if (!profiles.length && !datumRole) {
+    refuseRuntimeOnlyOptions(args);
+    return undefined;
+  }
+  if (datumRole) {
+    const profileOnly = profileOnlyOptions.find((name) => has(args, name));
+    if (profileOnly !== undefined) invalid(`${profileOnly} applies only to --runtime profiles, not --datum-role`);
+  }
   const estimatedUsdPer1kTokens = optionalPositiveNumber(args, "--estimated-usd-per-1k-tokens");
   const maxCostUsd = optionalPositiveNumber(args, "--max-cost-usd");
   if (maxCostUsd !== undefined && estimatedUsdPer1kTokens === undefined) {
@@ -257,6 +310,31 @@ function runtimeBinding(args: string[]): FieldworkRuntimeBinding | undefined {
     } : {}),
     ...(estimatedUsdPer1kTokens === undefined ? {} : { estimatedUsdPer1kTokens }),
   });
+}
+
+const profileOnlyOptions = ["--role", "--allow-prompted-structured-output"] as const;
+const runtimeOnlyOptions = [
+  "--max-attempts",
+  "--max-elapsed-ms",
+  "--max-total-tokens",
+  "--max-tokens-per-attempt",
+  "--max-cost-usd",
+  "--estimated-usd-per-1k-tokens",
+  "--max-output-tokens",
+  "--concurrency",
+  "--batch-size",
+  "--max-provider-calls",
+  "--max-chunks",
+  ...profileOnlyOptions,
+] as const;
+
+// The offline provider has no limits to apply. Refuse them rather than ignore
+// them, so a caller never believes a ceiling is in force when it is not.
+function refuseRuntimeOnlyOptions(args: string[]): void {
+  const inapplicable = runtimeOnlyOptions.find((name) => has(args, name));
+  if (inapplicable !== undefined) {
+    invalid(`${inapplicable} applies only to a model runtime; pass --runtime <profile> or --datum-role <role>`);
+  }
 }
 
 function positiveInteger(args: string[], name: string, fallback: number): number {
