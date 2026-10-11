@@ -74,7 +74,7 @@ fieldwork acquire --url <url> [options]
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--url <url>` | required | The starting `http` or `https` URL. |
+| `--url <url>` | required | The starting URL. The usage text asks for an `https` URL, but `http` URLs are not currently refused. |
 | `--snapshot-root <dir>` | `.fieldwork/sources` | The snapshot store. |
 | `--max-pages <n>` | `20` | Maximum pages to acquire (positive integer). |
 | `--max-depth <n>` | `2` | Maximum link depth (zero or more). |
