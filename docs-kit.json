@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "product": "fieldwork",
+  "title": "Fieldwork",
+  "tagline": "Turn documents into reviewed, source-grounded evidence you can export as a portable trust bundle.",
+  "repo": "kontourai/fieldwork",
+  "landing": "README.md",
+  "documents": [
+    { "source": "CONTEXT.md", "section": "Concepts" },
+    { "source": "docs/reference.md", "section": "Reference", "covers": ["src/cli.ts"] },
+    { "source": "docs/decisions/application-boundary.md", "section": "Design decisions" },
+    { "source": "docs/decisions/source-acquisition-and-replay.md", "section": "Design decisions" },
+    { "source": "docs/decisions/runtime-binding.md", "section": "Design decisions" },
+    { "source": "docs/decisions/local-run-artifacts.md", "section": "Design decisions" },
+    { "source": "docs/decisions/deterministic-fixture-oracles.md", "section": "Design decisions" },
+    { "source": "AGENTS.md", "section": "Contribute" }
+  ],
+  "topics": [
+    { "id": "quickstart", "title": "Quickstart: run, review, and export the vendor-renewal example", "source": "README.md#quickstart" },
+    { "id": "sources-and-replay", "title": "Sources, web snapshots, and multi-source batches", "source": "README.md#sources-and-replay" },
+    { "id": "source-rechecks", "title": "Source rechecks and review rounds", "source": "README.md#source-rechecks-and-review-rounds" },
+    { "id": "runtime-choice", "title": "Choosing a model runtime, fallback, and spending limits", "source": "README.md#runtime-choice" },
+    { "id": "boundaries", "title": "What Fieldwork owns versus Forage, Traverse, Survey, Surface, and @kontourai/ui", "source": "README.md#boundaries" },
+    { "id": "public-contracts", "title": "Loopback server, review locking, reviewed export, inspection, and the TypeScript API", "source": "README.md#public-contracts" },
+    { "id": "reviewed-web-sources", "title": "Read-only reviewed web sources for hosts", "source": "README.md#read-only-reviewed-web-sources" },
+    { "id": "web-source-currentness", "title": "Currentness of a reviewed web source", "source": "README.md#currentness-of-a-reviewed-web-source" },
+    { "id": "limits", "title": "Input, storage, and export size limits", "source": "README.md#limits" },
+    { "id": "cli", "title": "CLI output format and exit statuses", "source": "docs/reference.md#command-line" },
+    { "id": "cli-run", "title": "fieldwork run options, including runtime and budget flags", "source": "docs/reference.md#fieldwork-run" },
+    { "id": "cli-recheck", "title": "fieldwork recheck options", "source": "docs/reference.md#fieldwork-recheck" },
+    { "id": "package-api", "title": "Package entry points", "source": "docs/reference.md#package-entry-points" },
+    { "id": "runtime-binding", "title": "Runtime binding is launch policy (decision)", "source": "docs/decisions/runtime-binding.md#runtime-binding-is-launch-policy" },
+    { "id": "verification", "title": "Verifying a change: npm run verify and visual baselines", "source": "README.md#verification" }
+  ],
+  "exclude": []
+}
