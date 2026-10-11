@@ -12,10 +12,12 @@ Every command writes one JSON object to standard output. Without `--json` it is 
 
 | Exit status | Meaning |
 | --- | --- |
-| `0` | The command succeeded. A partial run (`complete: false`) still exits `0`, because the run is real and reviewable. |
+| `0` | The command succeeded. A partial run still exits `0` with `ok: true` and `complete: false`, because the run is real and reviewable. So does a batch in which some sources failed: the failed children are listed in `items` with `ok: false`, and the batch reports `complete: false`. |
 | `1` | The command failed. `error.code` is a typed code such as `INVALID_ARGUMENT`, `RECHECK_CONFLICT`, or `RUNTIME_INVOCATION_FAILED`. |
 | `2` | Unknown or missing command (`USAGE`). |
 | `3` | `export` wrote a partial export, or one with a claim whose grounding was refused. |
+
+`open`, `inspect`, and `export` take the run directory as their first argument that does not start with `--`. Put the run directory first, as in the synopses below: in `fieldwork open --port 5 <run>`, `5` would be read as the run.
 
 Unless a root is given, Fieldwork keeps local state under `.fieldwork/` in the current directory: runs in `.fieldwork/runs`, and acquired snapshots in `.fieldwork/sources`.
 
@@ -38,7 +40,7 @@ fieldwork run --task <file> (--source <file> | --snapshot <ref>)... [options]
 
 At least one `--source` or `--snapshot` is required. With one source the result is a single run; with more than one, it is an ordered batch of independent child runs, one per source. The result carries `ok: true` and `complete`, which is `false` for a partial run, or for a batch unless every source ran and read its whole source.
 
-The runtime options below choose how extraction runs. With none, or with `--runtime fixture` alone, Fieldwork uses its offline deterministic provider.
+The runtime options below choose how extraction runs. With none, or with `--runtime fixture` alone, Fieldwork uses its offline deterministic provider, and the limit options in the table are not read at all.
 
 ### Runtime options
 
@@ -60,7 +62,7 @@ The runtime options below choose how extraction runs. With none, or with `--runt
 | `--max-provider-calls <n>` | none | Ceiling on physical Traverse provider operations. |
 | `--max-chunks <n>` | Traverse's own (`40`) | Ceiling on prepared chunks. A source that crosses it produces a partial run with reason `max-chunks`. |
 
-Integer options must be positive integers, and `--max-cost-usd` and `--estimated-usd-per-1k-tokens` must be positive numbers; anything else fails with `INVALID_ARGUMENT`. The [runtime choice](../README.md#runtime-choice) section of the README explains how these limits are enforced.
+The limit options, and their defaults, apply only when `--runtime <profile>` (other than `fixture`) or `--datum-role` is given; otherwise they are silently ignored, even when malformed. When they apply, integer options must be positive integers, and `--max-cost-usd` and `--estimated-usd-per-1k-tokens` must be positive numbers; anything else fails with `INVALID_ARGUMENT`. The [runtime choice](../README.md#runtime-choice) section of the README explains how these limits are enforced.
 
 ## fieldwork acquire
 
@@ -72,7 +74,7 @@ fieldwork acquire --url <url> [options]
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--url <url>` | required | The starting URL. |
+| `--url <url>` | required | The starting `http` or `https` URL. |
 | `--snapshot-root <dir>` | `.fieldwork/sources` | The snapshot store. |
 | `--max-pages <n>` | `20` | Maximum pages to acquire (positive integer). |
 | `--max-depth <n>` | `2` | Maximum link depth (zero or more). |
@@ -119,7 +121,7 @@ fieldwork open <run> [options]
 | `--reviewer-kind <kind>` | `human` | `human` or `agent`. Requires `--reviewer`. |
 | `--json` | | Print the result on one line. |
 
-It prints `{ "ok": true, "url": ..., "loopbackOnly": true }` and keeps serving until interrupted. The URL fragment carries a per-launch capability, so do not share it.
+It prints `{ "ok": true, "url": ..., "loopbackOnly": true }` and keeps serving until it receives `SIGINT` (Ctrl-C), which closes the server. The URL fragment carries a per-launch capability, so do not share it.
 
 ## fieldwork inspect
 
@@ -145,9 +147,9 @@ The output is a `ReviewedExport` whose `bundle` is a Surface trust bundle. When 
 
 | Import | Contents |
 | --- | --- |
-| `@kontourai/fieldwork` | `runFieldwork`, `runFieldworkBatch`, `acquireFieldwork`, `recheckFieldwork`, `openRun`, `inspectionExport`, `reviewedExport`, `createFieldworkApplication`, `parseFieldworkTask`, `fieldworkHostDescriptor`, `FIELDWORK_LIMITS`, and the versioned transport schemas (`fieldworkTaskSchema`, `fieldworkRunResultSchema`, `reviewedExportSchema`, and others). |
+| `@kontourai/fieldwork` | `runFieldwork`, `runFieldworkBatch`, `acquireFieldwork`, `recheckFieldwork`, `openRun`, `inspectionExport`, `reviewedExport`, `createFieldworkApplication`, `parseFieldworkTask`, `fieldworkHostDescriptor`, `FIELDWORK_LIMITS`, and the versioned transport schemas (`fieldworkTaskSchema`, `fieldworkRunResultSchema`, `reviewedExportSchema`, and others). It also re-exports `createProfileRuntimeBinding`, `createDatumRuntimeBinding`, and `fieldworkStoredExecutionSchema` from `/runtime`, and the `parseReviewedWebSource*` parsers and `reviewedWebSource*Schema` schemas from `/reviewed-web-source-contract`. |
 | `@kontourai/fieldwork/runtime` | `createProfileRuntimeBinding`, `createDatumRuntimeBinding`, `validateRuntimeBinding`, and `fieldworkStoredExecutionSchema`. |
 | `@kontourai/fieldwork/host-descriptor` | `fieldworkHostDescriptor`, the static discovery descriptor for hosts. |
 | `@kontourai/fieldwork/reviewed-web-source-contract` | Pure parsers and schemas for reviewed web source responses, such as `parseReviewedWebSourceDescriptor` and `parseReviewedWebSourceCurrentness`. |
 
-The package requires Node 22 or newer. `@anthropic-ai/sdk` is an optional peer dependency, needed only for `--datum-role`.
+The package requires Node 22 or newer. `@anthropic-ai/sdk` is declared as an optional peer dependency in `package.json`.
