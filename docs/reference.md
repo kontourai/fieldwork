@@ -8,7 +8,7 @@ This page lists the `fieldwork` command-line surface and the package entry point
 fieldwork <acquire|run|recheck|open|inspect|export> [options]
 ```
 
-Every command writes one JSON object to standard output. Without `--json` it is pretty-printed; with `--json` it is printed on one line. A failure is written as `{ "ok": false, "error": { "code", "message" } }`.
+Every command writes one JSON object to standard output. Without `--json` it is pretty-printed; with `--json` it is printed on one line. A failure is always printed on one line as `{ "ok": false, "error": { "code", "message" } }`.
 
 | Exit status | Meaning |
 | --- | --- |
