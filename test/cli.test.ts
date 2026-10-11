@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { promisify } from "node:util";
@@ -123,7 +123,8 @@ test("CLI acquire requires --url", async () => {
     (error: any) => {
       const result = JSON.parse(error.stdout);
       assert.equal(result.error.code, "INVALID_ARGUMENT");
-      assert.match(result.error.message, /acquire requires --url/);
+      // fieldwork#185: the message promised https only, while http is accepted.
+      assert.equal(result.error.message, "acquire requires --url <url> (http or https)");
       return true;
     },
   );
@@ -140,6 +141,7 @@ test("CLI acquire runs a real forage crawl and returns a typed acquisition resul
       "--json",
     ]);
     const result = JSON.parse(stdout);
+    // A plain http URL is accepted, as the usage text says (fieldwork#185).
     assert.equal(result.ok, true);
     assert.equal(result.kind, "FieldworkAcquisitionResult");
     // The CLI wires the real, non-injectable acquireFieldwork() (default
@@ -191,4 +193,95 @@ test("CLI default (non --json) run output is still JSON and surfaces outcome, no
   const result = JSON.parse(stdout);
   assert.equal(result.ok, true);
   assert.deepEqual(result.outcome, { status: "success" });
+});
+
+const cli = (...args: string[]) => exec(process.execPath, ["--import", "tsx", "src/cli.ts", ...args]);
+
+async function refusedWith(args: string[], message: RegExp): Promise<void> {
+  await assert.rejects(() => cli(...args), (error: any) => {
+    assert.equal(error.code, 1);
+    const result = JSON.parse(error.stdout);
+    assert.equal(result.error.code, "INVALID_ARGUMENT");
+    assert.match(result.error.message, message);
+    return true;
+  });
+}
+
+// fieldwork#181: a flag's value placed before the run was read as the run.
+test("CLI export and inspect find the run directory after flag values", async () => {
+  const root = await tempRoot("cli-arg-order");
+  const run = JSON.parse((await cli("run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", root, "--json")).stdout);
+  const inspection = join(root, "inspection.json");
+  const inspected = JSON.parse((await cli("inspect", "--output", inspection, "--include-excerpts", run.runDirectory, "--json")).stdout);
+  assert.equal(inspected.ok, true);
+  assert.match(await readFile(inspection, "utf8"), /ExtractionInspectorExport/);
+  // Nothing in the fixture run is decided, so export refuses it for that
+  // reason. Reaching the review check means the run directory was found;
+  // before the fix the output path was read as the run (ENOENT).
+  const exported = join(root, "reviewed.json");
+  await assert.rejects(() => cli("export", "--output", exported, run.runDirectory, "--json"), (error: any) => {
+    assert.equal(error.code, 1);
+    assert.equal(JSON.parse(error.stdout).error.code, "EXPORT_UNDECIDED");
+    return true;
+  });
+});
+
+test("CLI open, inspect and export refuse ambiguous arguments instead of guessing the run", async () => {
+  await refusedWith(["export", "a", "b", "--output", "x.json"], /export takes one <run>, got 2/);
+  await refusedWith(["export", "run", "--output"], /--output requires a value/);
+  await refusedWith(["export", "run", "--output", "--json"], /--output requires a value/);
+  await refusedWith(["inspect", "run", "--output", "x.json", "--outptu", "y"], /inspect does not accept --outptu/);
+  await refusedWith(["open", "--theme", "dark", "--json"], /open requires <run>/);
+  await refusedWith(["open", "run", "--port", "1", "--port", "2"], /--port may be given only once/);
+});
+
+// fieldwork#182: --port went through Number() unchecked.
+test("CLI open refuses a --port that is not an integer from 0 to 65535", async () => {
+  for (const port of ["abc", "70000", "", " ", "0x50", "1.5", "-1"]) {
+    await refusedWith(["open", "--port", port, "does-not-exist"], /--port must be an integer from 0 to 65535/);
+  }
+  await refusedWith(["open", "does-not-exist", "--port"], /--port requires a value/);
+});
+
+test("CLI open reads the run after --port and serves it on that port", async () => {
+  const root = await tempRoot("cli-open-port");
+  const run = JSON.parse((await cli("run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--root", root, "--json")).stdout);
+  const probe = createServer();
+  await new Promise<void>((resolveListen) => probe.listen({ host: "127.0.0.1", port: 0 }, () => resolveListen()));
+  const port = (probe.address() as AddressInfo).port;
+  await new Promise<void>((resolveClose) => probe.close(() => resolveClose()));
+  const child = spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "open", "--port", String(port), run.runDirectory, "--json"]);
+  try {
+    const line = await new Promise<string>((resolveLine, reject) => {
+      let stdout = "";
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+        if (stdout.includes("\n")) resolveLine(stdout.split("\n")[0]!);
+      });
+      child.once("exit", (code) => reject(new Error(`open exited ${code} before printing: ${stdout}`)));
+    });
+    const result = JSON.parse(line);
+    assert.equal(result.ok, true);
+    assert.equal(new URL(result.url).port, String(port));
+  } finally {
+    child.kill("SIGINT");
+  }
+});
+
+// fieldwork#183: limit options were ignored, even malformed, without a model runtime.
+test("CLI refuses runtime limit options when no model runtime is selected", async () => {
+  const base = ["run", "--task", "examples/generic/task.json", "--source", "examples/generic/source.txt", "--json"];
+  await refusedWith([...base, "--max-attempts", "abc"], /--max-attempts applies only to a model runtime/);
+  await refusedWith([...base, "--max-attempts", "3"], /--max-attempts applies only to a model runtime/);
+  await refusedWith([...base, "--runtime", "fixture", "--max-chunks", "0"], /--max-chunks applies only to a model runtime/);
+  await refusedWith([...base, "--max-tokens-per-attempt", "100"], /--max-tokens-per-attempt applies only/);
+  await refusedWith([...base, "--role", "extractor"], /--role applies only to a model runtime/);
+  await refusedWith(
+    [...base, "--datum-role", "extraction-default", "--max-cost-usd", "1", "--estimated-usd-per-1k-tokens", "1", "--role", "x"],
+    /--role applies only to --runtime profiles, not --datum-role/,
+  );
+  await refusedWith(
+    ["recheck", "--source-id", "s", "--prior-run", "p", "--task", "examples/generic/task.json", "--registry", join(await tempRoot("cli-recheck-registry"), "registry.json"), "--max-elapsed-ms", "x"],
+    /--max-elapsed-ms applies only to a model runtime/,
+  );
 });
