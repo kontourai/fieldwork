@@ -1,5 +1,14 @@
 # Fieldwork
 
+**Turn documents into reviewed, source-grounded evidence you can recheck and export as a portable trust bundle.**
+
+[![npm version](https://img.shields.io/npm/v/%40kontourai%2Ffieldwork)](https://www.npmjs.com/package/@kontourai/fieldwork)
+[![CI](https://github.com/kontourai/fieldwork/actions/workflows/ci.yml/badge.svg)](https://github.com/kontourai/fieldwork/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-kontourai.github.io-blue)](https://kontourai.github.io/fieldwork/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+[Documentation](https://kontourai.github.io/fieldwork/) · [kontourai.io/fieldwork](https://kontourai.io/fieldwork/)
+
 Fieldwork turns contracts, reports, transcripts, and records into reviewed structured evidence. Every proposed value stays linked to the exact source passage that supports it, so a reviewer can accept or correct the result before exporting a portable trust bundle.
 
 Run the same task again when a source changes and Fieldwork opens a focused review round for values or evidence that moved, changed, appeared, or disappeared. The earlier reviewed run remains intact.
@@ -7,6 +16,10 @@ Run the same task again when a source changes and Fieldwork opens a focused revi
 ## Quickstart
 
 Requires Node 22.
+
+To use the published package, install it with `npm install @kontourai/fieldwork`. It provides the `fieldwork` command (run it as `npm exec -- fieldwork …`), and the examples below ship in the package under `node_modules/@kontourai/fieldwork/examples/`.
+
+From a source checkout:
 
 ```sh
 pnpm install
