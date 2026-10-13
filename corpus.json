@@ -1,5 +1,53 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "purpose": "Turn documents into reviewed, source-grounded evidence you can recheck and export.",
+  "builtOn": [
+    {
+      "product": "datum",
+      "via": "@kontourai/datum",
+      "for": "Resolve model roles and bind configured runtime references."
+    },
+    {
+      "product": "dispatch",
+      "via": "@kontourai/dispatch",
+      "for": "Select extraction runtimes and retain routing attempt receipts."
+    },
+    {
+      "product": "forage",
+      "via": "@kontourai/forage",
+      "for": "Acquire sources safely and replay exact filesystem snapshots."
+    },
+    {
+      "product": "lookout",
+      "via": "@kontourai/lookout",
+      "for": "Check source changes and persist proposal observations for review rounds."
+    },
+    {
+      "product": "relay",
+      "via": "@kontourai/relay",
+      "for": "Invoke model extraction through configured runtime profiles."
+    },
+    {
+      "product": "surface",
+      "via": "@kontourai/surface",
+      "for": "Validate exported trust bundles and restore reviewed extraction evidence."
+    },
+    {
+      "product": "survey",
+      "via": "@kontourai/survey",
+      "for": "Build review queues and apply persisted, attributed reviewer decisions."
+    },
+    {
+      "product": "traverse",
+      "via": "@kontourai/traverse",
+      "for": "Prepare source artifacts and extract proposals with exact grounded locators."
+    },
+    {
+      "product": "ui",
+      "via": "@kontourai/ui",
+      "for": "Render the review application with shared panels and status components."
+    }
+  ],
   "product": "fieldwork",
   "title": "Fieldwork",
   "tagline": "Turn documents into reviewed, source-grounded evidence you can export as a portable trust bundle.",
