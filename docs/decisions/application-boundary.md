@@ -5,6 +5,8 @@ decided: 2026-07-23
 evidence:
   - kind: commit
     ref: 293f305b7f597af8457d99d9ff2e7b230233607d
+  - kind: pr
+    ref: https://github.com/kontourai/fieldwork/pull/10
 ---
 
 # Application boundary

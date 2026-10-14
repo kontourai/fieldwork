@@ -5,6 +5,8 @@ decided: 2026-07-23
 evidence:
   - kind: commit
     ref: ae19ad4db42645ef38a5fc9a16517b44aad35ac9
+  - kind: pr
+    ref: https://github.com/kontourai/fieldwork/pull/18
 ---
 
 # Runtime binding is launch policy
