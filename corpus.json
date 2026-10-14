@@ -56,6 +56,7 @@
   "documents": [
     { "source": "CONTEXT.md", "section": "Concepts" },
     { "source": "docs/reference.md", "section": "Reference", "covers": ["src/cli.ts"] },
+    { "source": "docs/decisions/index.md", "section": "Design decisions" },
     { "source": "docs/decisions/application-boundary.md", "section": "Design decisions" },
     { "source": "docs/decisions/source-acquisition-and-replay.md", "section": "Design decisions" },
     { "source": "docs/decisions/runtime-binding.md", "section": "Design decisions" },
@@ -80,5 +81,6 @@
     { "id": "runtime-binding", "title": "Runtime binding is launch policy (decision)", "source": "docs/decisions/runtime-binding.md#runtime-binding-is-launch-policy" },
     { "id": "verification", "title": "Verifying a change: npm run verify and visual baselines", "source": "README.md#verification" }
   ],
-  "exclude": []
+  "exclude": [],
+  "decisions": {}
 }

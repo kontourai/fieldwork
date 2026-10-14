@@ -1,3 +1,12 @@
+---
+status: current
+subject: Runtime binding
+decided: 2026-07-23
+evidence:
+  - kind: commit
+    ref: ae19ad4db42645ef38a5fc9a16517b44aad35ac9
+---
+
 # Runtime binding is launch policy
 
 Fieldwork tasks describe extraction and review meaning. They do not name a model provider, credential, local executable, fallback order, or spending policy. The same task can therefore run with the offline fixture, a local Relay harness profile, a Datum-resolved SDK target, or a host-supplied Relay runtime without editing durable task semantics.

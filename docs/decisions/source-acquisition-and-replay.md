@@ -1,3 +1,12 @@
+---
+status: current
+subject: Source acquisition and replay
+decided: 2026-07-23
+evidence:
+  - kind: commit
+    ref: 8208ef36ac81c192e03a439391b22a22e76a0848
+---
+
 # Source acquisition and replay
 
 ## Decision

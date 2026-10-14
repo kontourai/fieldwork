@@ -1,3 +1,30 @@
+---
+status: current
+subject: Local run artifacts
+decided: 2026-07-23
+evidence:
+  - kind: commit
+    ref: 293f305b7f597af8457d99d9ff2e7b230233607d
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/65
+  - kind: issue
+    ref: https://github.com/kontourai/survey/issues/188
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/79
+  - kind: issue
+    ref: https://github.com/kontourai/survey/issues/213
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/148
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/149
+  - kind: issue
+    ref: https://github.com/kontourai/survey/issues/234
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/164
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/165
+---
+
 # Local run artifacts
 
 Status: accepted

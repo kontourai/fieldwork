@@ -1,3 +1,12 @@
+---
+status: current
+subject: Application boundary
+decided: 2026-07-23
+evidence:
+  - kind: commit
+    ref: 293f305b7f597af8457d99d9ff2e7b230233607d
+---
+
 # Application boundary
 
 Status: accepted
