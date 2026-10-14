@@ -1,6 +1,6 @@
 # Fieldwork contributor guidance
 
-Read `CONTEXT.md` and the decision records before changing production behavior. Preserve Traverse proposal/locator semantics, Survey review semantics, and Surface validation; do not introduce parallel status or trust schemas. Keep source text local and portable records free of credentials, machine paths, private configuration, and raw diagnostics. Run the relevant `npm` checks and `veritas readiness --working-tree` before handoff.
+Read `CONTEXT.md` and the decision records before changing production behavior. Preserve Traverse proposal/locator semantics, Survey review semantics, and Surface validation; do not introduce parallel status or trust schemas. Keep source text local and portable records free of credentials, machine paths, private configuration, and raw diagnostics. Run the relevant `npm` checks and `npx --no @kontourai/veritas readiness --working-tree` before handoff.
 
 Docs are published with docs-kit: `corpus.json` lists the published docs and MCP topics, `npm run docs:check` is the gate, and when you change code a document `covers` (`src/cli.ts` is covered by `docs/reference.md`), update that document.
 
@@ -8,5 +8,5 @@ For UI, brand, and product copy, follow `DESIGN.md` in `@kontourai/ui` (https://
 
 <!-- veritas:governance-block:start -->
 This repo uses Veritas for AI governance. Read `.veritas/GOVERNANCE.md` before making changes.
-After changes, run `veritas readiness` and address any FAIL lines before finishing.
+After changes, run `npx --no @kontourai/veritas readiness` and address any FAIL lines before finishing.
 <!-- veritas:governance-block:end -->
