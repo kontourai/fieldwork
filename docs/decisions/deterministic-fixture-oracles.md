@@ -1,3 +1,18 @@
+---
+status: current
+subject: Deterministic fixture oracles
+decided: 2026-07-23
+evidence:
+  - kind: commit
+    ref: 293f305b7f597af8457d99d9ff2e7b230233607d
+  - kind: pr
+    ref: https://github.com/kontourai/fieldwork/pull/10
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/9
+  - kind: issue
+    ref: https://github.com/kontourai/dispatch/issues/28
+---
+
 # Deterministic fixture oracles
 
 Status: accepted

@@ -1,3 +1,18 @@
+---
+status: current
+subject: Source acquisition and replay
+decided: 2026-09-28
+evidence:
+  - kind: commit
+    ref: 8208ef36ac81c192e03a439391b22a22e76a0848
+  - kind: pr
+    ref: https://github.com/kontourai/fieldwork/pull/21
+  - kind: pr
+    ref: https://github.com/kontourai/fieldwork/pull/116
+  - kind: pr
+    ref: https://github.com/kontourai/fieldwork/pull/163
+---
+
 # Source acquisition and replay
 
 ## Decision
