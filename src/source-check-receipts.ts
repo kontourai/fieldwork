@@ -750,17 +750,25 @@ function validV2Receipt(receipt: ReceiptV2) {
   if (!exact(receipt, ["version", "sourceId", "generation", "checkedAt", "outcome", "priorProposalHeadId", "resultProposalHeadId", "priorCapture", "currentCapture", "acquisitionHead", "proposalHead", "proposalHeadSnapshotRef"])) throw new StoreError("corrupt");
   const acquisition = receipt.acquisitionHead;
   const proposal = receipt.proposalHead;
+  // A failed acquisition did not produce a new capture. Preserve a legacy
+  // baseline's lower assurance while authenticating its unchanged owner head.
+  // Successful receipts still require the exact envelope digest as before.
+  const legacyFailure = receipt.outcome === "error" &&
+    receipt.priorProposalHeadId === receipt.resultProposalHeadId &&
+    same(receipt.priorCapture, receipt.currentCapture) &&
+    receipt.currentCapture.integrity === "body-and-identity";
   if (!acquisition || acquisition.format !== "forage.source-head-witness/v1" || acquisition.sourceId !== receipt.sourceId ||
     !acquisition.headSnapshotRef || acquisition.headSnapshotRef.sourceId !== receipt.sourceId ||
     typeof acquisition.token !== "string" || acquisition.token.length < 1 || acquisition.token.length > FIELDWORK_CAPTURE_REF_MAX_CHARS ||
-    !sameHeadCapture(receipt.currentCapture, acquisition.headSnapshotRef) ||
+    !sameHeadCapture(receipt.currentCapture, acquisition.headSnapshotRef, legacyFailure) ||
     !proposal || proposal.kind !== "lookout.proposal-head-witness/v1" || proposal.version !== 1 || proposal.sourceId !== receipt.sourceId ||
     proposal.observationId !== receipt.resultProposalHeadId || typeof proposal.token !== "string" || proposal.token.length < 1 || proposal.token.length > FIELDWORK_CAPTURE_REF_MAX_CHARS ||
     typeof receipt.proposalHeadSnapshotRef !== "string" || receipt.proposalHeadSnapshotRef.length < 1 || receipt.proposalHeadSnapshotRef.length > FIELDWORK_CAPTURE_REF_MAX_CHARS) throw new StoreError("corrupt");
 }
-function sameHeadCapture(capture: Capture, head: SourceHeadWitness["headSnapshotRef"]) {
+function sameHeadCapture(capture: Capture, head: SourceHeadWitness["headSnapshotRef"], legacyFailure = false) {
   return capture.sourceId === head.sourceId && capture.url === head.url && capture.bodyHash === head.bodyHash &&
-    capture.fetchedAt === head.fetchedAt && capture.snapshotDigest === head.snapshotDigest;
+    capture.fetchedAt === head.fetchedAt && (capture.snapshotDigest === head.snapshotDigest ||
+      (legacyFailure && capture.snapshotDigest === undefined && HASH.test(head.snapshotDigest)));
 }
 async function unlinkOwned(path: string, owner: Pick<Stats, "dev" | "ino">) {
   try {

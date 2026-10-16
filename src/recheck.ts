@@ -250,6 +250,17 @@ export async function recheckFieldwork(
     };
     await retryReadHead();
     priorCapture = failed.baseline.admittedAcquisition;
+    if (priorCapture.integrity === "body-and-identity") {
+      // Preserve the failure's legacy capture in history. This new operation
+      // resolves the actual owner snapshot and obtains its public exact ref,
+      // which is also the baseline the Lookout runner reports. No prior run,
+      // proposal observation or historical receipt is rebound or rewritten.
+      const exact = await resolveSnapshotSourceRef(snapshotStore, priorCapture.snapshotRef);
+      if (!exact.ok) {
+        throw withCode("RECHECK_OBSERVATION_FAILED", "Failed acquisition baseline could not be resolved", exact.error);
+      }
+      priorCapture = await exactReceiptCapture(snapshotStore, buildSnapshotSourceRef(exact.snapshot));
+    }
   } else if (priorReceipt.kind !== "missing" && priorReceipt.kind !== "legacy") {
     throw withCode("RECHECK_CONFLICT", "Prior source currentness is not available");
   }

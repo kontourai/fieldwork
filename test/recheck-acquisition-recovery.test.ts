@@ -174,3 +174,65 @@ test("a pending writer arriving after failed-baseline read cannot be adopted by 
   assert.equal(await f.receipts.currentPointerToken(f.source.id), supersedingToken);
   assert.equal((await f.receipts.readCurrentWithWitness(f.source.id)).kind, "pending");
 });
+
+for (const failureKind of ["returned-error", "throw"] as const) for (const restoredMode of ["same", "304", "changed"] as const) test(`legacy capture retains lower assurance through ${failureKind} and ordinary ${restoredMode} recovery`, async (t) => {
+  const f = await ownerFixture(t, "response", true);
+  const before = await files(f.prior.runDirectory);
+  f.setMode("error");
+  const failed = await recheckFieldwork({ ...f.options, acquisition: { check: failureKind === "throw"
+    ? async () => { throw new Error("transport unavailable"); } : f.check } });
+  assert.equal(failed.classification, "source-unavailable");
+  assert.equal((await f.receipts.readCurrentWithWitness(f.source.id)).kind, "unavailable");
+  const failure = await f.receipts.readAcquisitionFailureForRetry(f.source.id);
+  assert.ok(failure.kind === "retryable");
+  assert.equal(failure.receipt.priorCapture.integrity, "body-and-identity");
+  assert.equal(failure.receipt.currentCapture.integrity, "body-and-identity");
+  assert.equal(failure.receipt.currentCapture.snapshotDigest, undefined);
+  assert.ok(failure.receipt.acquisitionHead.headSnapshotRef.snapshotDigest);
+  const retained = await files(f.receiptRoot);
+  f.setMode(restoredMode);
+  const restored = await recheckFieldwork({ ...f.options, acquisition: { check: f.check } });
+  assert.equal(restored.classification, restoredMode === "changed" ? "semantic-drift" : "unchanged-source");
+  assert.equal(restored.providerSkipped, restoredMode !== "changed");
+  const current = await f.receipts.readCurrentWithWitness(f.source.id);
+  assert.ok(current.kind === "available");
+  assert.equal(current.receipt.currentCapture.integrity, "snapshot-envelope");
+  const after = await files(f.receiptRoot);
+  for (const [file, bytes] of Object.entries(retained)) if (!file.endsWith("/pointer.json")) assert.equal(after[file], bytes);
+  assert.deepEqual(await files(f.prior.runDirectory), before);
+});
+
+test("a same-observation owner pointer replacement invalidates the failed proposal witness", async (t) => {
+  const f = await ownerFixture(t);
+  f.setMode("error");
+  await recheckFieldwork({ ...f.options, acquisition: { check: f.check } });
+  const failure = await f.receipts.readAcquisitionFailureForRetry(f.source.id);
+  assert.ok(failure.kind === "retryable");
+  const latest = await f.observations.loadLatest(f.source.id);
+  assert.ok(latest.ok && latest.value);
+  const prior = latest.value;
+  const replaced = await f.observations.commit({ observation: {
+    sourceId: prior.sourceId, snapshotRef: prior.snapshotRef, observedAt: prior.observedAt,
+    proposals: prior.proposals,
+  }, recordedAt: prior.recordedAt, check: prior.check }, prior.observationId);
+  assert.ok(replaced.ok);
+  assert.equal(replaced.value.observationId, prior.observationId);
+  assert.notEqual((await f.observations.compareHeadWitness(failure.receipt.proposalHead)).kind, "matches");
+  let checks = 0;
+  await assert.rejects(recheckFieldwork({ ...f.options, acquisition: { async check() { ++checks; return f.check(); } } }),
+    (e: { code?: string }) => e.code === "RECHECK_CONFLICT");
+  assert.equal(checks, 0);
+});
+
+test("legacy failure admission does not allow a successful receipt without its envelope digest", async (t) => {
+  const f = await ownerFixture(t, "response", true);
+  f.setMode("error");
+  await recheckFieldwork({ ...f.options, acquisition: { check: f.check } });
+  const failed = await f.receipts.readAcquisitionFailureForRetry(f.source.id);
+  assert.ok(failed.kind === "retryable");
+  const pending = await f.receipts.begin(f.source.id, failed.baseline, f.readHead);
+  const { version: _version, sourceId: _sourceId, generation: _generation, ...completion } = failed.receipt;
+  const result = await f.receipts.finalize(pending, { ...completion, outcome: "unchanged-304" }, f.readHead);
+  assert.equal(result.kind, "corrupt");
+  assert.equal((await f.receipts.readCurrentWithWitness(f.source.id)).kind, "pending");
+});
