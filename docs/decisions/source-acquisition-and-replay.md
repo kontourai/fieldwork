@@ -1,7 +1,7 @@
 ---
 status: current
 subject: Source acquisition and replay
-decided: 2026-09-28
+decided: 2026-10-16
 evidence:
   - kind: commit
     ref: 8208ef36ac81c192e03a439391b22a22e76a0848
@@ -11,6 +11,8 @@ evidence:
     ref: https://github.com/kontourai/fieldwork/pull/116
   - kind: pr
     ref: https://github.com/kontourai/fieldwork/pull/163
+  - kind: issue
+    ref: https://github.com/kontourai/fieldwork/issues/198
 ---
 
 # Source acquisition and replay
@@ -53,6 +55,26 @@ can require recovery and is not reported as semantic success. These are
 conservative as-of fences, not cross-store atomicity or a promise that a website
 remains unchanged after a check. Source drift does not establish claim falsity,
 and a check does not renew review or independently satisfy an answer policy.
+
+A terminal acquisition error settles only the invocation's own pending token
+as an immutable failed receipt, after both owner witnesses still match. It is
+not currentness. A legacy capture keeps its body-and-identity assurance and
+missing envelope digest in an error receipt; the independently authenticated
+owner witness still binds the actual head. Successful receipts continue to
+require the exact envelope digest. A retry from a legacy failure resolves the
+actual owner snapshot to its public exact reference for the new acquisition
+baseline; the failed receipt, prior observation and run keep their original
+identities and assurance. A later ordinary recheck may begin a new generation from that
+failure only while its exact pointer token, acquisition witness and proposal
+witness remain valid. Error results retain the owner's check time; a thrown
+acquisition uses the invocation clock for the local failure time. No earlier
+review decision is copied or renewed.
+
+Unknown pending operations (including older versions' post-outage pending
+pointers), failures after acquisition has advanced, extraction failures and
+partial commits remain refused. A pending pointer alone cannot distinguish an
+abandoned attempt from a concurrent writer. This change does not automatically
+repair those historical states or authorize deleting or editing owner stores.
 
 ## Consequences
 

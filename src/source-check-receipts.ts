@@ -296,6 +296,32 @@ export class FieldworkSourceCheckReceiptStore {
       return { kind: typed(e).kind };
     }
   }
+  /** A settled acquisition failure is retry input, never source currentness.
+   * Unknown pending operations and failures after acquisition remain closed. */
+  public async readAcquisitionFailureForRetry(sourceId: string): Promise<
+    { readonly kind: "retryable"; readonly receipt: ReceiptV2; readonly baseline: Baseline }
+    | { readonly kind: Failure }
+  > {
+    try {
+      validId(sourceId);
+      const before = await this.readDirectoryIdentities(sourceId);
+      const pointer = await this.pointer(sourceId, false);
+      if (!pointer || pointer.state !== "failed") return { kind: "unavailable" };
+      const receipt = await this.receipt(sourceId, pointer);
+      if (!isReceiptV2(receipt) || receipt.outcome !== "error" ||
+        receipt.priorProposalHeadId !== receipt.resultProposalHeadId ||
+        !same(receipt.priorCapture, receipt.currentCapture)) return { kind: "unavailable" };
+      const after = await this.readDirectoryIdentities(sourceId);
+      if (!sameIdentity(before.root, after.root) || !sameIdentity(before.source, after.source) ||
+        !samePointer(await this.pointer(sourceId, false), pointer)) return { kind: "superseded" };
+      return { kind: "retryable", receipt, baseline: {
+        pointerToken: pointer.token, proposalHeadId: receipt.resultProposalHeadId,
+        admittedAcquisition: receipt.currentCapture,
+      } };
+    } catch (e) {
+      return { kind: typed(e).kind };
+    }
+  }
   /** Compare a private local witness without reading either owner or writing storage. */
   public async compareCurrentWitness(witness: CurrentWitness): Promise<CurrentWitnessComparison> {
     if (!validCurrentWitness(witness)) return { kind: "corrupt" };
@@ -724,17 +750,25 @@ function validV2Receipt(receipt: ReceiptV2) {
   if (!exact(receipt, ["version", "sourceId", "generation", "checkedAt", "outcome", "priorProposalHeadId", "resultProposalHeadId", "priorCapture", "currentCapture", "acquisitionHead", "proposalHead", "proposalHeadSnapshotRef"])) throw new StoreError("corrupt");
   const acquisition = receipt.acquisitionHead;
   const proposal = receipt.proposalHead;
+  // A failed acquisition did not produce a new capture. Preserve a legacy
+  // baseline's lower assurance while authenticating its unchanged owner head.
+  // Successful receipts still require the exact envelope digest as before.
+  const legacyFailure = receipt.outcome === "error" &&
+    receipt.priorProposalHeadId === receipt.resultProposalHeadId &&
+    same(receipt.priorCapture, receipt.currentCapture) &&
+    receipt.currentCapture.integrity === "body-and-identity";
   if (!acquisition || acquisition.format !== "forage.source-head-witness/v1" || acquisition.sourceId !== receipt.sourceId ||
     !acquisition.headSnapshotRef || acquisition.headSnapshotRef.sourceId !== receipt.sourceId ||
     typeof acquisition.token !== "string" || acquisition.token.length < 1 || acquisition.token.length > FIELDWORK_CAPTURE_REF_MAX_CHARS ||
-    !sameHeadCapture(receipt.currentCapture, acquisition.headSnapshotRef) ||
+    !sameHeadCapture(receipt.currentCapture, acquisition.headSnapshotRef, legacyFailure) ||
     !proposal || proposal.kind !== "lookout.proposal-head-witness/v1" || proposal.version !== 1 || proposal.sourceId !== receipt.sourceId ||
     proposal.observationId !== receipt.resultProposalHeadId || typeof proposal.token !== "string" || proposal.token.length < 1 || proposal.token.length > FIELDWORK_CAPTURE_REF_MAX_CHARS ||
     typeof receipt.proposalHeadSnapshotRef !== "string" || receipt.proposalHeadSnapshotRef.length < 1 || receipt.proposalHeadSnapshotRef.length > FIELDWORK_CAPTURE_REF_MAX_CHARS) throw new StoreError("corrupt");
 }
-function sameHeadCapture(capture: Capture, head: SourceHeadWitness["headSnapshotRef"]) {
+function sameHeadCapture(capture: Capture, head: SourceHeadWitness["headSnapshotRef"], legacyFailure = false) {
   return capture.sourceId === head.sourceId && capture.url === head.url && capture.bodyHash === head.bodyHash &&
-    capture.fetchedAt === head.fetchedAt && capture.snapshotDigest === head.snapshotDigest;
+    capture.fetchedAt === head.fetchedAt && (capture.snapshotDigest === head.snapshotDigest ||
+      (legacyFailure && capture.snapshotDigest === undefined && HASH.test(head.snapshotDigest)));
 }
 async function unlinkOwned(path: string, owner: Pick<Stats, "dev" | "ino">) {
   try {
