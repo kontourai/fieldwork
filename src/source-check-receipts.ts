@@ -296,6 +296,32 @@ export class FieldworkSourceCheckReceiptStore {
       return { kind: typed(e).kind };
     }
   }
+  /** A settled acquisition failure is retry input, never source currentness.
+   * Unknown pending operations and failures after acquisition remain closed. */
+  public async readAcquisitionFailureForRetry(sourceId: string): Promise<
+    { readonly kind: "retryable"; readonly receipt: ReceiptV2; readonly baseline: Baseline }
+    | { readonly kind: Failure }
+  > {
+    try {
+      validId(sourceId);
+      const before = await this.readDirectoryIdentities(sourceId);
+      const pointer = await this.pointer(sourceId, false);
+      if (!pointer || pointer.state !== "failed") return { kind: "unavailable" };
+      const receipt = await this.receipt(sourceId, pointer);
+      if (!isReceiptV2(receipt) || receipt.outcome !== "error" ||
+        receipt.priorProposalHeadId !== receipt.resultProposalHeadId ||
+        !same(receipt.priorCapture, receipt.currentCapture)) return { kind: "unavailable" };
+      const after = await this.readDirectoryIdentities(sourceId);
+      if (!sameIdentity(before.root, after.root) || !sameIdentity(before.source, after.source) ||
+        !samePointer(await this.pointer(sourceId, false), pointer)) return { kind: "superseded" };
+      return { kind: "retryable", receipt, baseline: {
+        pointerToken: pointer.token, proposalHeadId: receipt.resultProposalHeadId,
+        admittedAcquisition: receipt.currentCapture,
+      } };
+    } catch (e) {
+      return { kind: typed(e).kind };
+    }
+  }
   /** Compare a private local witness without reading either owner or writing storage. */
   public async compareCurrentWitness(witness: CurrentWitness): Promise<CurrentWitnessComparison> {
     if (!validCurrentWitness(witness)) return { kind: "corrupt" };

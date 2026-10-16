@@ -86,6 +86,14 @@ Lookout owns conditional source checks, proposal-observation continuity, concurr
 - changed source bytes with stable proposals create no review work;
 - added, removed, moved, value-changed, or provenance-changed evidence creates a new Survey review round in a new run.
 
+After a terminal acquisition failure, restore the source and repeat the ordinary
+recheck with the same stores. Fieldwork records a failed check without making it
+current, then permits a new attempt only if both source-owner heads and the
+receipt token still match. Earlier decisions are never renewed. Unknown pending
+writers, including pending checks left by older versions, remain blocked; do not
+edit or delete their stores to force recovery. This retry covers acquisition
+failures, not interrupted extraction or a partially committed review round.
+
 A prior observation stored by Lookout 0.7 from a partial run does not record that the run was incomplete, so it no longer matches the selected prior run and recheck refuses it with `RECHECK_CONFLICT` (reason `prior-observation-unmarked-incomplete`). Re-running the source does not change the observation store. Recover by rechecking with a new, empty `--observation-root`, or by moving that source's directory out of the current one; the prior is then re-established from the selected run.
 
 The prior run is immutable. A new round carries exact old and new snapshot references, observation identities, locators, excerpts, values, and extraction times. Replaying the same observation pair yields the same transition and item identities. Fieldwork persists proposal observations under the selected observation root and rejects a stale concurrent writer with `RECHECK_CONFLICT`.

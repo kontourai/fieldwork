@@ -225,33 +225,69 @@ export async function recheckFieldwork(
   // and compares their opaque witnesses. The top-level Forage store and the
   // Lookout observation store remain independent authorities.
   let priorCapture = await exactReceiptCapture(snapshotStore, priorStored.snapshotRef);
+  // Capture the pointer token before reading its state. begin() must never
+  // adopt a newer pending writer merely because its owner heads still match.
+  const pointerToken = await receipts.currentPointerToken(invocation.source.id);
+  let retryReadHead: (() => Promise<void>) | undefined;
   const priorReceipt = await receipts.readCurrentWithWitness(invocation.source.id);
   if (priorReceipt.kind === "available") priorCapture = priorReceipt.receipt.currentCapture;
   // v1 remains history, never currentness. A newly authenticated v2 operation
   // starts from the actual owner heads instead of treating the legacy bytes as
   // a current receipt.
-  else if (priorReceipt.kind !== "missing" && priorReceipt.kind !== "legacy") {
+  else if (priorReceipt.kind === "unavailable") {
+    const failed = await receipts.readAcquisitionFailureForRetry(invocation.source.id);
+    if (failed.kind !== "retryable" || failed.baseline.pointerToken !== pointerToken) {
+      throw withCode("RECHECK_CONFLICT", "Prior source currentness is not available");
+    }
+    retryReadHead = async () => {
+      const [acquisition, proposal] = await Promise.all([
+        snapshotStore.compareHeadWitness(failed.receipt.acquisitionHead),
+        store.compareHeadWitness(failed.receipt.proposalHead),
+      ]);
+      if (acquisition.kind !== "matches" || proposal.kind !== "matches") {
+        throw withCode("RECHECK_CONFLICT", "Source owners advanced after failed acquisition");
+      }
+    };
+    await retryReadHead();
+    priorCapture = failed.baseline.admittedAcquisition;
+  } else if (priorReceipt.kind !== "missing" && priorReceipt.kind !== "legacy") {
     throw withCode("RECHECK_CONFLICT", "Prior source currentness is not available");
   }
   const baselineHeads = await verifiedOwnerHeads(
     snapshotStore, store, invocation.source.id, priorCapture, priorStored.observationId,
   );
-  const baselineReadHead = ownerWitnessReader(snapshotStore, store, baselineHeads);
+  const readBaselineOwners = ownerWitnessReader(snapshotStore, store, baselineHeads);
+  const baselineReadHead = async () => {
+    await retryReadHead?.();
+    return readBaselineOwners();
+  };
   const pending = await receipts.begin(
     invocation.source.id,
     {
-      pointerToken: await receipts.currentPointerToken(invocation.source.id),
+      pointerToken,
       proposalHeadId: priorStored.observationId,
       admittedAcquisition: priorCapture,
     },
     baselineReadHead,
-  );
+  ).catch((cause: unknown) => {
+    throw withCode(
+      (cause as { kind?: string } | undefined)?.kind === "superseded"
+        ? "RECHECK_CONFLICT" : "RECHECK_OBSERVATION_FAILED",
+      "Source recheck could not start from the selected baseline",
+      cause,
+    );
+  });
   let check: FieldworkCheckResult;
   try {
     // The owner result is data, not a live mutable capability. Freeze its
     // exact identity before Lookout's asynchronous admission starts.
     check = snapshotCheck(await invocation.check(invocation.source));
   } catch {
+    // Only this invocation can settle its pending token. finalize rechecks the
+    // unchanged owner heads and preserves the immutable failure as history.
+    await finalizeReceipt(receipts, pending,
+      receiptCompletionWithHeads("error", priorStored.observationId, priorCapture, priorCapture,
+        invocation.now?.() ?? new Date().toISOString(), baselineHeads), baselineReadHead);
     return portableResult({
       classification: "source-unavailable",
       acquisition: { kind: "failed" },
@@ -262,6 +298,9 @@ export async function recheckFieldwork(
   }
   assertCheckIdentity(check, invocation.source);
   if (check.kind === "error") {
+    await finalizeReceipt(receipts, pending,
+      receiptCompletionWithHeads("error", priorStored.observationId, priorCapture, priorCapture,
+        check.checkedAt, baselineHeads), baselineReadHead);
     return portableResult({
       classification: "source-unavailable",
       acquisition: { kind: "failed" },
