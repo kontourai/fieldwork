@@ -302,8 +302,9 @@ const claimNamed = (copy: Editable, field: string) => copy.bundle.claims.find((c
 const settle = (copy: Editable, field: string, status: string) => {
   const claim = claimNamed(copy, field);
   claim.status = status;
-  const events = copy.bundle.events.filter((event) => event.claimId === claim.id);
-  events.forEach((event) => { event.status = status; });
+  // A dispute is a later event beside the review event: promoting the claim removes it, rewriting the rest.
+  if (status === "verified") copy.bundle.events = copy.bundle.events.filter((event) => !(event.claimId === claim.id && event.status === "disputed"));
+  copy.bundle.events.filter((event) => event.claimId === claim.id).forEach((event) => { event.status = status; });
   copy.reviewedGrounding.gaps = (copy.reviewedGrounding.gaps ?? []).filter((gap) => gap.claimId !== claim.id);
   copy.reviewRound.groundingRefused = (copy.reviewRound.groundingRefused ?? []).filter((entry) => entry.claimId !== claim.id);
 };
@@ -470,6 +471,59 @@ test("the receipt's dispositions and invalid structure, the review events and th
   const date = claimNamed(moved, "doc.publicationDate");
   moved.reviewedGrounding.gaps.forEach((gap) => { if (gap.claimId === date.id) gap.claimId = claimNamed(moved, "doc.title").id; });
   refuses(moved, /which the export calls verified|but its grounding receipt records/);
+});
+
+test("whether a claim is grounded is recomputed from its evidence, so editing the records beside it cannot promote or demote it", async () => {
+  const typedRun = await typedFieldRun("memory-recompute");
+  await decide(typedRun, Object.fromEntries((await queueOf(typedRun)).map((item) => [item.name, "accept-proposed"])));
+  const typed = await reviewedExport(typedRun);
+  const mixed = await reviewedExport(await decidedMixedRun("recompute"));
+  const forgedRun = await forgedUnverifiedConflictRun("memory-recompute-rival");
+  await decide(forgedRun, Object.fromEntries((await queueOf(forgedRun)).map((item) => [item.name, "accept-proposed"])));
+  const rival = await reviewedExport(forgedRun);
+
+  // Promotion: claim, event, receipt gaps and refusal all say verified; only the evidence still says otherwise.
+  for (const [honest, field] of [[typed, "doc.versionNumber"], [typed, "doc.publicationDate"], [rival, "record.status"]] as const) {
+    assert.equal(claimNamed(editable(honest), field).status, "disputed", field);
+    const promoted = editable(honest);
+    settle(promoted, field, "verified");
+    refuses(promoted, /but its evidence does not ground it/);
+  }
+  // Demotion: an honest claim cannot be made disputed with an empty (or structural-only) refusal.
+  const demoted = editable(mixed);
+  settle(demoted, "record.alpha", "disputed");
+  demoted.reviewRound.groundingRefused.push({ claimId: claimNamed(demoted, "record.alpha").id, gaps: [] });
+  refuses(demoted, /but its evidence grounds it/);
+});
+
+test("a receipt dimension is checked by its evidence as well as its claim, and names a claim the export has", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("dimensions"));
+  const dimensions = (copy: Editable) => (copy.reviewedGrounding as unknown as { dimensions: { claimId: string; evidenceId?: string; reviewDisposition: string }[] }).dimensions;
+  const nonexistent = editable(mixed);
+  dimensions(nonexistent).find((dimension) => dimension.claimId === claimNamed(nonexistent, "record.alpha").id)!.claimId = "extraction-envelope.nothing.claim";
+  refuses(nonexistent, /dimension for extraction-envelope.nothing.claim, which is not one of its claims/);
+  const moved = editable(mixed);
+  const alpha = dimensions(moved).find((dimension) => dimension.claimId === claimNamed(moved, "record.alpha").id)!;
+  assert.ok(alpha.evidenceId, "the dimension names its evidence");
+  alpha.claimId = claimNamed(moved, "record.bravo").id;
+  alpha.reviewDisposition = "rejected";
+  refuses(moved, /another review disposition/);
+});
+
+test("an exclusion code Fieldwork does not write is refused, and event times are compared as instants", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("codes"));
+  for (const code of ["", "EXPORT_BOGUS"]) {
+    const copy = editable(mixed);
+    (copy.reviewRound.excluded.find((entry) => entry.fieldPath === "record.delta") as { code: string }).code = code;
+    assert.throws(() => memoryClaimsFromReviewedExport(copy), /code/, code);
+  }
+  // A dispute written one hour before the verification, in a spelling that sorts after it as text, is not the latest.
+  const copy = editable(mixed);
+  const event = copy.bundle.events.find((entry) => entry.claimId === claimNamed(copy, "record.alpha").id)!;
+  const earlier = new Date(Date.parse(event.createdAt) - 3_600_000 + 14 * 3_600_000).toISOString().replace("Z", "+14:00");
+  assert.ok(earlier > event.createdAt, "the earlier instant sorts after the later one as text");
+  copy.bundle.events.push({ ...event, id: `${event.id}.earlier`, status: "disputed", createdAt: earlier });
+  assert.doesNotThrow(() => memoryClaimsFromReviewedExport(copy));
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {

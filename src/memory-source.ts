@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@kontourai/relay";
 import { buildReviewItemsFromExtractionEnvelopeImport } from "@kontourai/survey";
-import { resolverFromBundle, restoreReviewedExtractionEvidence, reviewedExtractionImportRecordDigest, validateTrustBundle } from "@kontourai/surface";
+import { evaluateReviewedGroundingPolicy, resolverFromBundle, restoreReviewedExtractionEvidence, reviewedExtractionImportRecordDigest, validateTrustBundle } from "@kontourai/surface";
 import { z } from "zod";
 import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./api-contracts.js";
+import { reviewedGroundingPolicy } from "./reviewed-evidence.js";
 
 /**
  * A reviewed export as a memory source (kontourai/fieldwork#205).
@@ -179,6 +180,19 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   const importRecord = [...records.values()][0];
 
+  // Whether a claim is grounded is recomputed from the evidence the export carries, under the policy Fieldwork
+  // evaluated it with, rather than read from the receipt beside it: the receipt is a record someone can edit, the
+  // evidence is digest-bound. A claim is disputed exactly when this finds a gap that disputes it, or the cited
+  // proposal does not satisfy its field's schema (Traverse's `evidenceMatch`, which Fieldwork reports the same way).
+  const reviewedEvidence = bundle.evidence.filter((entry) => entry.metadata?.reviewedExtraction !== undefined);
+  const recomputed = reviewedEvidence.length === 0 ? undefined : evaluateReviewedGroundingPolicy({
+    policy: reviewedGroundingPolicy(bundle.claims.map((claim) => claim.id)),
+    evidence: reviewedEvidence,
+    claims: bundle.claims.map((claim) => ({ id: claim.id, value: claim.value })),
+    resolveImportRecord,
+  });
+  const recomputedGaps = recomputed?.outcome === "refused" ? recomputed.gaps : [];
+
   // The round scope has to agree with the bundle it travels with.
   const claimIds = new Set(bundle.claims.map((claim) => claim.id));
   if (round.complete !== (round.excluded.length === 0)) throw new Error("Reviewed export says it is complete but lists exclusions, or lists none but says it is partial.");
@@ -191,6 +205,9 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     attributedItems.add(entry.reviewItemName);
   }
   const statusOf = new Map(bundle.claims.map((claim) => [claim.id, claim.status]));
+  for (const dimension of receipt.dimensions) {
+    if (!claimIds.has(dimension.claimId)) throw new Error(`Reviewed export's grounding receipt has a dimension for ${dimension.claimId}, which is not one of its claims.`);
+  }
   // The receipt and the list derived from it have to say the same thing: a refusal lists exactly the gaps the receipt
   // records for its claim, and a claim the export calls verified has no gap that would have disputed it. A disputed
   // claim with no reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
@@ -230,7 +247,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
         if (reviewed.some((event) => event.actor !== decision.spec.actor?.id)) {
           throw new Error(`Reviewed export claim ${surfaceClaim.id} has a review event by another actor than its Survey decision names.`);
         }
-        if (receipt.dimensions.some((dimension) => dimension.claimId === surfaceClaim.id && dimension.reviewDisposition !== decision.spec.status)) {
+        if (receipt.dimensions.some((dimension) => (dimension.claimId === surfaceClaim.id || dimension.evidenceId === restored?.evidenceId) && dimension.reviewDisposition !== decision.spec.status)) {
           throw new Error(`Reviewed export claim ${surfaceClaim.id}: its grounding receipt records another review disposition than its Survey decision.`);
         }
         assertSameTarget(surfaceClaim, restored!);
@@ -258,6 +275,12 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       continue;
     }
     assertAgreesWithDecision(surfaceClaim, restored);
+    const schema = (proposal as { evidenceMatch?: { schema?: unknown } }).evidenceMatch?.schema;
+    const mustDispute = recomputedGaps.some((gap) => "claimId" in gap && gap.claimId === surfaceClaim.id && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined }))
+      || (typeof schema === "string" && schema !== "ok");
+    if ((surfaceClaim.status === "disputed") !== mustDispute) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, but its evidence ${mustDispute ? "does not ground it" : "grounds it"}.`);
+    }
     const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id)!;
     const gaps = round.groundingRefused.find((entry) => entry.claimId === surfaceClaim.id)?.gaps;
     // Fieldwork disputes exactly the accepted claims whose grounding it refused and lists them in
@@ -429,10 +452,13 @@ type Restored = ReturnType<typeof restoreReviewedExtractionEvidence>;
 type ImportRecord = Restored["importRecord"];
 type Proposal = ImportRecord["spec"]["envelope"]["result"]["proposals"][number];
 
+/** The codes Fieldwork lists exclusions under (`ReviewedExportExclusion` in src/fieldwork.ts). */
+const EXCLUSION_CODES = ["EXPORT_UNDECIDED", "EXPORT_FIELD_UNSETTLED", "EXPORT_UNGROUNDED_SELECTION", "EXPORT_CONFLICTING_DECISIONS", "EXPORT_NOT_PROJECTABLE"] as const;
+
 /** What this projection reads of `reviewedGrounding`: the claim-specific gaps and per-claim dispositions of the receipt Fieldwork's `groundingRefused` is derived from. */
 const reviewedGroundingView = z.object({
   gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional(), structuralTrust: z.string().optional() }).passthrough()).default([]),
-  dimensions: z.array(z.object({ claimId: z.string(), reviewDisposition: z.string() }).passthrough()).default([]),
+  dimensions: z.array(z.object({ claimId: z.string(), evidenceId: z.string().optional(), reviewDisposition: z.string() }).passthrough()).default([]),
 }).passthrough();
 
 /** Gaps that mean Surface could not check a verified claim's structure; they leave it verified (see classifyGroundingRefusals). */
@@ -450,7 +476,7 @@ const reviewRoundView = z.object({
   revision: z.number().int().nonnegative(),
   complete: z.boolean(),
   // Fieldwork writes `excluded` and `decisions` on every export, empty or not; an export without them has lost something.
-  excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()).min(1), code: z.string() })),
+  excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()).min(1), code: z.enum(EXCLUSION_CODES) })),
   decisions: z.array(z.object({ claimId: z.string(), reviewItemName: z.string(), decidedAt: z.string(), actor: z.object({ id: z.string() }).passthrough() }).passthrough()),
   groundingRefused: z.array(z.object({ claimId: z.string(), gaps: z.array(z.string()) }).passthrough()).default([]),
 }).passthrough();
