@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { cp, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { projectReviewedExtractionEvidence, restoreReviewedExtractionEvidence, reviewedExtractionEvidenceChoiceProfile } from "@kontourai/surface";
+import { evaluateReviewedGroundingPolicy, projectReviewedExtractionEvidence, resolverFromBundle, restoreReviewedExtractionEvidence, reviewedExtractionEvidenceChoiceProfile } from "@kontourai/surface";
+import { reviewedGroundingPolicy } from "../src/reviewed-evidence.js";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1, ReviewedExportV1 } from "../src/api-contracts.js";
 import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
@@ -201,9 +202,11 @@ test("source authority stays per source: the same field and value from two snaps
 
 test("an export edited after the fact is mapped conservatively and every omission is reported", async () => {
   const honest = await reviewedExport(await decidedMixedRun("edited"));
-  const edit = (change: (bundle: Bundle, scope: Scope) => void): MemorySourceProjection => {
-    const copy = clone(honest) as unknown as { bundle: Bundle; reviewRound: Scope } & ReviewedExportV1;
+  const edit = (change: (bundle: Bundle, scope: Scope) => void, evidenceRemoved = false): MemorySourceProjection => {
+    const copy = clone(honest) as unknown as { bundle: Bundle; reviewRound: Scope; reviewedGrounding: unknown } & ReviewedExportV1;
     change(copy.bundle, copy.reviewRound);
+    // Removing evidence while the receipt still carries what it yielded is a partial edit; these cases remove both.
+    if (evidenceRemoved) rebindReceipt(copy);
     return memoryClaimsFromReviewedExport(copy);
   };
   const propertiesOf = (projection: MemorySourceProjection) => projection.claims.map((entry) => entry.claim.property);
@@ -217,14 +220,20 @@ test("an export edited after the fact is mapped conservatively and every omissio
   const bare = edit((bundle) => {
     const charlie = bundle.claims.find((claim) => claim.fieldOrBehavior === "record.charlie")!;
     bundle.evidence = bundle.evidence.filter((entry) => !(entry.claimId === charlie.id && entry.metadata?.reviewedExtraction));
-  });
+  }, true);
   assert.equal(propertiesOf(bare).includes("record.charlie"), false);
   assert.deepEqual(bare.withheld.filter((item) => item.reason === "no-reviewed-evidence").map((item) => item.fieldPath), ["record.charlie"]);
 
   // With no evidence at all there is no import record, so no undecided item can be recovered either.
-  const none = edit((bundle) => { bundle.evidence = bundle.evidence.filter((entry) => !entry.metadata?.reviewedExtraction); });
+  const none = edit((bundle) => { bundle.evidence = bundle.evidence.filter((entry) => !entry.metadata?.reviewedExtraction); }, true);
   assert.deepEqual(none.claims, []);
   assert.equal(none.withheld.filter((item) => item.reason === "no-import-record").length, 2);
+
+  // Removing a claim's evidence but leaving what the receipt records for it is a partial edit.
+  assert.throws(() => edit((bundle) => {
+    const charlie = bundle.claims.find((claim) => claim.fieldOrBehavior === "record.charlie")!;
+    bundle.evidence = bundle.evidence.filter((entry) => !(entry.claimId === charlie.id && entry.metadata?.reviewedExtraction));
+  }), /grounding receipt records a dimension for .* that its own evidence does not yield/);
 
   // An undecided item the import record does not hold is an export that disagrees with itself.
   assert.throws(() => edit((_bundle, scope) => { scope.excluded.find((entry) => entry.fieldPath === "record.delta")!.itemNames = ["extraction-envelope.not-an-item"]; }), /holds no such review item/);
@@ -309,6 +318,19 @@ const settle = (copy: Editable, field: string, status: string) => {
   copy.reviewRound.groundingRefused = (copy.reviewRound.groundingRefused ?? []).filter((entry) => entry.claimId !== claim.id);
 };
 const refuses = (copy: Editable, message: RegExp) => assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
+/**
+ * After a test replaces evidence (re-projected through Surface so its digest binding is valid), carry the receipt
+ * dimensions that evidence yields, so only the rule under test can refuse the export.
+ */
+const rebindReceipt = (copy: { bundle: Bundle; reviewedGrounding: unknown }): void => {
+  const evidence = copy.bundle.evidence.filter((entry) => entry.metadata?.reviewedExtraction !== undefined) as never[];
+  (copy.reviewedGrounding as { dimensions: unknown }).dimensions = evidence.length === 0 ? [] : JSON.parse(JSON.stringify(evaluateReviewedGroundingPolicy({
+    policy: reviewedGroundingPolicy(copy.bundle.claims.map((claim) => claim.id)),
+    evidence,
+    claims: copy.bundle.claims.map((claim) => ({ id: claim.id, value: claim.value })),
+    resolveImportRecord: resolverFromBundle({ evidence }),
+  }).dimensions));
+};
 
 test("a bundle claim that disagrees with the Survey decision its evidence carries is refused, not mapped", async () => {
   const honest = await reviewedExport(await decidedMixedRun("disagree"));
@@ -397,6 +419,7 @@ test("a claim that disagrees with its decision, its events or the grounding rece
   const heldInput = restoreReviewedExtractionEvidence(held.bundle.evidence[heldIndex] as never);
   (heldInput.reviewDecision!.spec as { resolution?: string }).resolution = "held";
   held.bundle.evidence[heldIndex] = projectReviewedExtractionEvidence(heldInput).evidence as never;
+  rebindReceipt(held);
   refuses(held, /stated as accepted but its Survey decision is held/);
 
   // Two evidence entries for one claim are two decisions: neither may silently win.
@@ -407,6 +430,7 @@ test("a claim that disagrees with its decision, its events or the grounding rece
   second.evidenceId = `${second.evidenceId}.second`;
   (second.reviewDecision!.spec as { status: string }).status = "rejected";
   doubled.bundle.evidence.unshift(projectReviewedExtractionEvidence(second).evidence as never);
+  rebindReceipt(doubled);
   refuses(doubled, /more than one reviewed-extraction evidence entry/);
 });
 
@@ -434,10 +458,10 @@ test("the receipt's dispositions and invalid structure, the review events and th
   // The receipt's per-claim review disposition is the decision's.
   const accepted = editable(mixed);
   (accepted.reviewedGrounding as unknown as { dimensions: { claimId: string; reviewDisposition: string }[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(accepted, "record.alpha").id)!.reviewDisposition = "rejected";
-  refuses(accepted, /grounding receipt records another review disposition/);
+  refuses(accepted, /grounding receipt records a dimension for .* that its own evidence does not yield/);
   const rejected = editable(mixed);
   (rejected.reviewedGrounding as unknown as { dimensions: { claimId: string; reviewDisposition: string }[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(rejected, "record.bravo").id)!.reviewDisposition = "verified";
-  refuses(rejected, /grounding receipt records another review disposition/);
+  refuses(rejected, /grounding receipt records a dimension for .* that its own evidence does not yield/);
 
   // The review event is by the actor the decision names, and the attribution carries the decision's time.
   const actor = editable(mixed);
@@ -496,6 +520,7 @@ test("whether a claim is grounded is recomputed from its evidence, so editing th
   const alphaInput = restoreReviewedExtractionEvidence(invalid.bundle.evidence[alphaIndex] as never);
   alphaInput.structuralTrust = "invalid";
   invalid.bundle.evidence[alphaIndex] = projectReviewedExtractionEvidence(alphaInput).evidence as never;
+  rebindReceipt(invalid);
   refuses(invalid, /but its evidence does not ground it/);
   // Demotion: an honest claim cannot be made disputed with an empty (or structural-only) refusal.
   const demoted = editable(mixed);
@@ -509,13 +534,13 @@ test("a receipt dimension is checked by its evidence as well as its claim, and n
   const dimensions = (copy: Editable) => (copy.reviewedGrounding as unknown as { dimensions: { claimId: string; evidenceId?: string; reviewDisposition: string }[] }).dimensions;
   const nonexistent = editable(mixed);
   dimensions(nonexistent).find((dimension) => dimension.claimId === claimNamed(nonexistent, "record.alpha").id)!.claimId = "extraction-envelope.nothing.claim";
-  refuses(nonexistent, /dimension for extraction-envelope.nothing.claim, which is not one of its claims/);
+  refuses(nonexistent, /records a dimension for extraction-envelope.nothing.claim that its own evidence does not yield/);
   const moved = editable(mixed);
   const alpha = dimensions(moved).find((dimension) => dimension.claimId === claimNamed(moved, "record.alpha").id)!;
   assert.ok(alpha.evidenceId, "the dimension names its evidence");
   alpha.claimId = claimNamed(moved, "record.bravo").id;
   alpha.reviewDisposition = "rejected";
-  refuses(moved, /another review disposition/);
+  refuses(moved, /records a dimension for .* that its own evidence does not yield/);
 });
 
 test("an exclusion code Fieldwork does not write is refused, and event times are compared as instants", async () => {
@@ -532,6 +557,75 @@ test("an exclusion code Fieldwork does not write is refused, and event times are
   assert.ok(earlier > event.createdAt, "the earlier instant sorts after the later one as text");
   copy.bundle.events.push({ ...event, id: `${event.id}.earlier`, status: "disputed", createdAt: earlier });
   assert.doesNotThrow(() => memoryClaimsFromReviewedExport(copy));
+});
+
+/** Re-project every reviewed-extraction entry through Surface after `change` edits its restored input, so each digest binding is valid. */
+const regenerateAll = (copy: Editable, change: (input: ReturnType<typeof restoreReviewedExtractionEvidence>, claimId: string) => void): void => {
+  copy.bundle.evidence = copy.bundle.evidence.map((entry) => {
+    if (entry.metadata?.reviewedExtraction === undefined) return entry;
+    const input = restoreReviewedExtractionEvidence(entry as never, { resolveImportRecord: resolverFromBundle(copy.bundle as never) });
+    change(input, entry.claimId);
+    return projectReviewedExtractionEvidence(input).evidence as never;
+  });
+};
+
+test("evidence regenerated through Surface cannot contradict its own candidate, the claim's target or the receipt's value digest", async () => {
+  const typedRun = await typedFieldRun("memory-contradict");
+  await decide(typedRun, Object.fromEntries((await queueOf(typedRun)).map((item) => [item.name, "accept-proposed"])));
+  const typed = await reviewedExport(typedRun);
+  const mixed = await reviewedExport(await decidedMixedRun("contradict"));
+
+  // The proposal says its value satisfies the schema; the candidate the reviewer selected still says it does not.
+  const dateIndex = (copy: Editable) => {
+    const entry = copy.bundle.evidence.find((item) => item.claimId === claimNamed(copy, "doc.publicationDate").id && item.metadata?.reviewedExtraction)!;
+    return restoreReviewedExtractionEvidence(entry as never).proposalIndex;
+  };
+  const schema = editable(typed);
+  const index = dateIndex(schema);
+  settle(schema, "doc.publicationDate", "verified");
+  regenerateAll(schema, (input) => {
+    (input.importRecord.spec.envelope.result.proposals[index] as { evidenceMatch: { schema: string } }).evidenceMatch.schema = "ok";
+  });
+  rebindReceipt(schema);
+  refuses(schema, /carries one schema match on its proposal and another on the candidate/);
+
+  // The value changes in the claim, the selected candidate and the proposal; the receipt keeps the digest of the value it graded.
+  const value = editable(mixed);
+  const alpha = claimNamed(value, "record.alpha");
+  const alphaIndex = restoreReviewedExtractionEvidence(value.bundle.evidence.find((item) => item.claimId === alpha.id && item.metadata?.reviewedExtraction) as never).proposalIndex;
+  alpha.value = "Changed";
+  regenerateAll(value, (input, claimId) => {
+    (input.importRecord.spec.envelope.result.proposals[alphaIndex] as { candidateValue: unknown }).candidateValue = "Changed";
+    if (claimId === alpha.id) for (const candidate of input.reviewItem!.spec.candidates) (candidate as { value: unknown }).value = "Changed";
+  });
+  refuses(value, /records a dimension for .* that its own evidence does not yield/);
+});
+
+test("every candidate of the decided item states the claim's target, not only the first", async () => {
+  const run = await conflictRun("memory-target");
+  const service = await openRun(run);
+  let snapshot: ReviewQueueSessionState;
+  try {
+    snapshot = (await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1).review.snapshot as unknown as ReviewQueueSessionState;
+  } finally { await service.close(); }
+  const conflict = snapshot.items.find((item) => item.spec.candidates.length > 1)!;
+  const chosen = conflict.spec.candidates[1]!;
+  await decide(run, {
+    [conflict.metadata.name]: "select-proposed",
+    ...Object.fromEntries(snapshot.items.filter((item) => item !== conflict).map((item) => [item.metadata.name, "accept-proposed"])),
+  }, { [conflict.metadata.name]: chosen.id });
+  const exported = await reviewedExport(run);
+  for (const key of ["subjectType", "subjectId", "claimType", "fieldOrBehavior"] as const) {
+    const copy = editable(exported);
+    const status = claimNamed(copy, "record.status");
+    const index = copy.bundle.evidence.findIndex((item) => item.claimId === status.id && item.metadata?.reviewedExtraction);
+    const input = restoreReviewedExtractionEvidence(copy.bundle.evidence[index] as never);
+    const selected = input.reviewItem!.spec.candidates.find((candidate) => candidate.id === input.reviewDecision!.spec.candidateId)!;
+    (selected.claimTarget as unknown as Record<string, string>)[key] = "somewhere-else";
+    copy.bundle.evidence[index] = projectReviewedExtractionEvidence(input, { profile: reviewedExtractionEvidenceChoiceProfile, includeImportRecord: true }).evidence as never;
+    rebindReceipt(copy);
+    refuses(copy, /claim target other than the one its Survey decision accepted/);
+  }
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
@@ -605,6 +699,7 @@ test("an export that disagrees with itself about who decided what, or what it le
     const bravo = claimIdOf(copy, "record.bravo");
     const reviewItem = decisionOf(copy, "record.bravo").reviewItemName;
     copy.bundle.evidence = copy.bundle.evidence.filter((entry) => !(entry.claimId === bravo && entry.metadata?.reviewedExtraction));
+    rebindReceipt(copy as never);
     const entry = exclusionOf(copy, "record.delta");
     entry.fieldPath = "record.bravo";
     entry.itemNames = [reviewItem];
@@ -654,6 +749,7 @@ test("a complete round says so, and the evidence has to cite the proposal the de
   const rivalIndex = (rival!.producer!["survey.kontourai.io/extraction-envelope"] as { proposalIndex: number }).proposalIndex;
   restored.proposalIndex = rivalIndex;
   copy.bundle.evidence[index] = projectReviewedExtractionEvidence(restored, { profile: reviewedExtractionEvidenceChoiceProfile, includeImportRecord: true }).evidence as never;
+  rebindReceipt(copy as never);
   assert.throws(() => memoryClaimsFromReviewedExport(copy), /cites a proposal other than the candidate its Survey decision selected/);
 
   // A decision that names no candidate cannot state a value.
@@ -662,6 +758,7 @@ test("a complete round says so, and the evidence has to cite the proposal the de
   const single = restoreReviewedExtractionEvidence(none.bundle.evidence[entry] as never);
   delete (single.reviewDecision!.spec as { candidateId?: string }).candidateId;
   none.bundle.evidence[entry] = projectReviewedExtractionEvidence(single).evidence as never;
+  rebindReceipt(none as never);
   assert.throws(() => memoryClaimsFromReviewedExport(none), /selects no candidate/);
 });
 

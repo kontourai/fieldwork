@@ -5,6 +5,7 @@ import { evaluateReviewedGroundingPolicy, resolverFromBundle, restoreReviewedExt
 import { z } from "zod";
 import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./api-contracts.js";
 import { reviewedGroundingPolicy } from "./reviewed-evidence.js";
+import { candidateSchemaMismatch } from "./schema-match.js";
 
 /**
  * A reviewed export as a memory source (kontourai/fieldwork#205).
@@ -192,6 +193,14 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     resolveImportRecord,
   });
   const recomputedGaps = recomputed?.outcome === "refused" ? recomputed.gaps : [];
+  // The receipt's per-claim dimensions say what the policy derived from the same evidence. The fields that bind the
+  // receipt to a claim (its evidence, the reviewer's disposition, the exact locator and the digest of the value it
+  // states) have to be the ones recomputed; other fields are not compared, so a later Surface can add to a dimension.
+  const bound = (dimension: Readonly<Record<string, unknown>>) => canonicalJson([dimension.claimId, dimension.evidenceId, dimension.reviewDisposition, dimension.exactLocator, dimension.candidateValueDigest]);
+  const recomputedDimensions = new Set((recomputed?.dimensions ?? []).map((dimension) => bound(dimension as unknown as Record<string, unknown>)));
+  for (const dimension of receipt.dimensions) {
+    if (!recomputedDimensions.has(bound(dimension))) throw new Error(`Reviewed export's grounding receipt records a dimension for ${String(dimension.claimId)} that its own evidence does not yield.`);
+  }
 
   // The round scope has to agree with the bundle it travels with.
   const claimIds = new Set(bundle.claims.map((claim) => claim.id));
@@ -205,9 +214,6 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     attributedItems.add(entry.reviewItemName);
   }
   const statusOf = new Map(bundle.claims.map((claim) => [claim.id, claim.status]));
-  for (const dimension of receipt.dimensions) {
-    if (!claimIds.has(dimension.claimId)) throw new Error(`Reviewed export's grounding receipt has a dimension for ${dimension.claimId}, which is not one of its claims.`);
-  }
   // The receipt and the list derived from it have to say the same thing: a refusal lists exactly the gaps the receipt
   // records for its claim, and a claim the export calls verified has no gap that would have disputed it. A disputed
   // claim with no reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
@@ -242,13 +248,10 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
         throw new Error(`Reviewed export claim ${surfaceClaim.id} has no round attribution that names the review item, actor and time of its Survey decision.`);
       }
       if (decision !== undefined) {
-        // The review events and the receipt's disposition for this claim speak to the same decision.
+        // The review events speak to the same decision.
         const reviewed = bundle.events.filter((event) => event.claimId === surfaceClaim.id && event.status === decision.spec.status);
         if (reviewed.some((event) => event.actor !== decision.spec.actor?.id)) {
           throw new Error(`Reviewed export claim ${surfaceClaim.id} has a review event by another actor than its Survey decision names.`);
-        }
-        if (receipt.dimensions.some((dimension) => (dimension.claimId === surfaceClaim.id || dimension.evidenceId === restored?.evidenceId) && dimension.reviewDisposition !== decision.spec.status)) {
-          throw new Error(`Reviewed export claim ${surfaceClaim.id}: its grounding receipt records another review disposition than its Survey decision.`);
         }
         assertSameTarget(surfaceClaim, restored!);
       }
@@ -275,7 +278,12 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       continue;
     }
     assertAgreesWithDecision(surfaceClaim, restored);
+    // Traverse's schema match is carried twice, on the proposal and on the candidate Fieldwork reads it from.
     const schema = (proposal as { evidenceMatch?: { schema?: unknown } }).evidenceMatch?.schema;
+    const selectedCandidate = restored.reviewItem?.spec.candidates.find((candidate) => candidate.id === decision.spec.candidateId);
+    if ((candidateSchemaMismatch(selectedCandidate ?? { producer: undefined })?.schema ?? "ok") !== (typeof schema === "string" ? schema : "ok")) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} carries one schema match on its proposal and another on the candidate its Survey decision selected.`);
+    }
     const mustDispute = recomputedGaps.some((gap) => "claimId" in gap && gap.claimId === surfaceClaim.id && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined }))
       || (typeof schema === "string" && schema !== "ok");
     if ((surfaceClaim.status === "disputed") !== mustDispute) {
@@ -436,8 +444,12 @@ function assertSameTarget(
   claim: { readonly id: string; readonly subjectType: string; readonly subjectId: string; readonly claimType: string; readonly fieldOrBehavior: string },
   restored: Restored,
 ): void {
-  const target = restored.reviewItem?.spec.candidates[0]?.claimTarget;
-  if (target?.subjectType !== claim.subjectType || target.subjectId !== claim.subjectId || target.claimType !== claim.claimType || target.fieldOrBehavior !== claim.fieldOrBehavior) {
+  // Survey groups proposals by claim slot, so every candidate of an item (the selected one included) states the item's target.
+  const candidates = restored.reviewItem?.spec.candidates ?? [];
+  if (candidates.length === 0 || candidates.some((candidate) => {
+    const target = candidate.claimTarget;
+    return target?.subjectType !== claim.subjectType || target.subjectId !== claim.subjectId || target.claimType !== claim.claimType || target.fieldOrBehavior !== claim.fieldOrBehavior;
+  })) {
     throw new Error(`Reviewed export claim ${claim.id} states a claim target other than the one its Survey decision accepted.`);
   }
 }
@@ -458,7 +470,7 @@ const EXCLUSION_CODES = ["EXPORT_UNDECIDED", "EXPORT_FIELD_UNSETTLED", "EXPORT_U
 /** What this projection reads of `reviewedGrounding`: the claim-specific gaps and per-claim dispositions of the receipt Fieldwork's `groundingRefused` is derived from. */
 const reviewedGroundingView = z.object({
   gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional(), structuralTrust: z.string().optional() }).passthrough()).default([]),
-  dimensions: z.array(z.object({ claimId: z.string(), evidenceId: z.string().optional(), reviewDisposition: z.string() }).passthrough()).default([]),
+  dimensions: z.array(z.record(z.string(), z.unknown())).default([]),
 }).passthrough();
 
 /** Gaps that mean Surface could not check a verified claim's structure; they leave it verified (see classifyGroundingRefusals). */
