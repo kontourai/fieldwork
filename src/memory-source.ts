@@ -21,7 +21,7 @@ import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./ap
 export const MEMORY_CLAIM_SCHEMA_PIN = Object.freeze({
   repo: "kontourai/flow-agents",
   /** Head of kontourai/flow-agents#1574 (branch feat/1571-memory-claims-routing) when this mapping was written. */
-  commit: "441d894074775ad0ecb3b8d1594a176fb334a28e",
+  commit: "ad11082a7b9364fd114680018a1a7e011868c550",
   schema: "kits/knowledge/schemas/knowledge/memory-claim.schema.json",
   schemaVersion: "1.0",
 });
@@ -47,9 +47,10 @@ export type MemoryArrival = "reviewed" | "proposed";
 
 /**
  * A memory claim as the pinned schema defines it, restricted to the fields
- * this mapping fills. `validTime`, `qualifiers`, `supersedes` and `audience`
- * are never emitted: nothing in a reviewed export asserts them, and an absent
- * audience inherits the source's, so omission never widens.
+ * this mapping fills. `validTime`, `qualifiers`, `supersedes` and `visibility`
+ * are never emitted: nothing in a reviewed export asserts them. An absent
+ * `visibility` reads as sealed, the narrowest, so omission never widens; a host
+ * that wants wider visibility stamps it.
  */
 export interface FieldworkMemoryClaim {
   readonly schema_version: "1.0";
@@ -337,7 +338,7 @@ function sourceOf(record: ImportRecord, proposal: Proposal): { readonly source: 
  * sha256 of the canonical JSON of every other field of the claim, provenance
  * included. The Kit recomputes it on read and refuses a claim whose id differs,
  * so this must match it exactly. Every field this mapping fills is in the
- * digest; the Kit's ordering of `supersedes` and `audience` does not apply
+ * digest; the Kit's ordering of `supersedes` and `visibility` does not apply
  * because neither is emitted. test/memory-source.test.ts pins ids the Kit's own
  * builder produced.
  */

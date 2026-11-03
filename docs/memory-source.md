@@ -10,7 +10,7 @@ The claims follow the Knowledge Kit memory claim schema. Fieldwork references it
 | --- | --- |
 | Repository | `kontourai/flow-agents` |
 | Pull request | [#1574](https://github.com/kontourai/flow-agents/pull/1574), branch `feat/1571-memory-claims-routing` |
-| Commit | `441d894074775ad0ecb3b8d1594a176fb334a28e` |
+| Commit | `ad11082a7b9364fd114680018a1a7e011868c550` |
 | Schema | `kits/knowledge/schemas/knowledge/memory-claim.schema.json`, `schema_version` `1.0` |
 | Contract | `kits/knowledge/docs/memory-claims.md` at the same commit |
 
@@ -59,7 +59,7 @@ Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speak
 | `source.extractor` | the proposal's extractor |
 | `posture` | `stated` always (see above) |
 | `speaker` | the source ref. Fieldwork knows no author; naming the snapshot keeps each snapshot's authority its own |
-| `validTime`, `qualifiers`, `supersedes`, `audience` | never emitted. Nothing in a reviewed export asserts them, and an absent `audience` inherits the source's, so omission never widens |
+| `validTime`, `qualifiers`, `supersedes`, `visibility` | never emitted. Nothing in a reviewed export asserts them. An absent `visibility` reads as sealed (the narrowest), so omission never widens; a host that wants wider visibility stamps it |
 
 The proposal comes from the reviewed-extraction evidence the export carries (the evidence Surface's restore reads, bound to the extraction by digest). A reviewed claim with no such evidence cannot be grounded and is withheld as `no-reviewed-evidence`; a recheck round's export carries none today (see `reviewedGrounding` `not-evaluated`).
 
