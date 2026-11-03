@@ -197,6 +197,11 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     assertAgreesWithDecision(surfaceClaim, restored);
     const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id);
     const gaps = round.groundingRefused.find((entry) => entry.claimId === surfaceClaim.id)?.gaps;
+    // Fieldwork disputes exactly the accepted claims whose grounding it refused and lists them in
+    // `groundingRefused`, so the status and the list must say the same thing.
+    if ((surfaceClaim.status === "disputed") !== (gaps !== undefined)) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, which disagrees with the export's grounding refusals.`);
+    }
     claims.push({
       arrival: surfaceClaim.status === "verified" ? "reviewed" : "proposed",
       claim: memoryClaim({
@@ -226,6 +231,8 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   // Survey owns which proposals an item holds: rebuild the items from the
   // import record, as Fieldwork does when it reads a run, and take exactly the
   // candidates of the items the export names as undecided.
+  const decidedItems = new Set([...restoredByClaim.values()].flatMap((restored) => restored.reviewDecision ? [restored.reviewDecision.spec.reviewItemName] : []));
+  const undecidedItems = new Set<string>();
   const items = importRecord === undefined ? undefined : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
   for (const exclusion of round.excluded) {
     if (exclusion.code !== "EXPORT_UNDECIDED") {
@@ -239,6 +246,13 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     for (const itemName of exclusion.itemNames) {
       const item = items.get(itemName);
       if (item === undefined) throw new Error(`Reviewed export lists ${itemName} as undecided, but its import record holds no such review item.`);
+      // An undecided item is one the export holds no decision for, listed once, under its own field.
+      if (decidedItems.has(itemName)) throw new Error(`Reviewed export lists ${itemName} as undecided, but it carries a decision for it.`);
+      if (undecidedItems.has(itemName)) throw new Error(`Reviewed export lists ${itemName} as undecided more than once.`);
+      undecidedItems.add(itemName);
+      if (item.spec.candidates[0]?.claimTarget?.fieldOrBehavior !== exclusion.fieldPath) {
+        throw new Error(`Reviewed export lists ${itemName} as undecided under ${exclusion.fieldPath}, which is not its field.`);
+      }
       for (const candidate of item.spec.candidates) {
         const index = (candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndex?: unknown } | undefined)?.proposalIndex;
         const proposal = typeof index === "number" ? importRecord.spec.envelope.result.proposals[index] : undefined;
@@ -277,20 +291,27 @@ const SURVEY_EXTRACTION_ENVELOPE_PRODUCER = "survey.kontourai.io/extraction-enve
 
 /**
  * A bundle claim is only as good as the decision its evidence carries. Accepting
- * means the decision is `verified` and selects the candidate whose value the
- * claim states; anything else is an export that disagrees with itself.
+ * means the decision is `verified` and accepted (not held), and selects the
+ * candidate whose claim target and value the bundle claim states; anything else
+ * is an export that disagrees with itself. Surface refuses an edited value on a
+ * non-editable review, so the selected candidate's value is the decided one.
  */
-function assertAgreesWithDecision(claim: { readonly id: string; readonly value: unknown }, restored: Restored): void {
+function assertAgreesWithDecision(
+  claim: { readonly id: string; readonly value: unknown; readonly subjectType: string; readonly subjectId: string; readonly claimType: string; readonly fieldOrBehavior: string },
+  restored: Restored,
+): void {
   const { reviewDecision, reviewItem } = restored;
   if (reviewDecision === undefined || reviewItem === undefined) throw new Error(`Reviewed export claim ${claim.id} carries no review item or decision.`);
-  if (reviewDecision.spec.status !== "verified") {
-    throw new Error(`Reviewed export claim ${claim.id} is stated as accepted but its Survey decision is ${reviewDecision.spec.status}.`);
+  if (reviewDecision.spec.status !== "verified" || (reviewDecision.spec.resolution !== undefined && reviewDecision.spec.resolution !== "accepted")) {
+    throw new Error(`Reviewed export claim ${claim.id} is stated as accepted but its Survey decision is ${reviewDecision.spec.resolution ?? reviewDecision.spec.status}.`);
   }
   const selected = reviewItem.spec.candidates.find((candidate) => candidate.id === reviewDecision.spec.candidateId);
-  if (selected === undefined) throw new Error(`Reviewed export claim ${claim.id}: its Survey decision selects no candidate of its review item.`);
-  const decided = reviewDecision.spec.editedValue !== undefined ? reviewDecision.spec.editedValue : selected.value;
-  if (canonicalJson(decided) !== canonicalJson(claim.value)) {
+  const target = selected?.claimTarget;
+  if (selected === undefined || target === undefined || canonicalJson(selected.value) !== canonicalJson(claim.value)) {
     throw new Error(`Reviewed export claim ${claim.id} states a value that is not the one its Survey decision accepted.`);
+  }
+  if (target.subjectType !== claim.subjectType || target.subjectId !== claim.subjectId || target.claimType !== claim.claimType || target.fieldOrBehavior !== claim.fieldOrBehavior) {
+    throw new Error(`Reviewed export claim ${claim.id} states a claim target other than the one its Survey decision accepted.`);
   }
 }
 
@@ -308,8 +329,9 @@ type Proposal = ImportRecord["spec"]["envelope"]["result"]["proposals"][number];
 const reviewRoundView = z.object({
   revision: z.number().int().nonnegative(),
   complete: z.boolean(),
-  excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()), code: z.string() })).default([]),
-  decisions: z.array(z.object({ claimId: z.string() }).passthrough()).default([]),
+  // Fieldwork writes `excluded` and `decisions` on every export, empty or not; an export without them has lost something.
+  excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()), code: z.string() })),
+  decisions: z.array(z.object({ claimId: z.string() }).passthrough()),
   groundingRefused: z.array(z.object({ claimId: z.string(), gaps: z.array(z.string()) }).passthrough()).default([]),
 }).passthrough();
 

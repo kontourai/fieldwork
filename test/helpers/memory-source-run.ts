@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { createFilesystemSnapshotStore, type Snapshot } from "@kontourai/forage";
+import { buildSnapshotSourceRef } from "@kontourai/forage/fetch";
 import type { ModelRuntime } from "@kontourai/relay";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../../src/api-contracts.js";
@@ -150,4 +153,21 @@ export async function indexedItemsRun(label: string): Promise<string> {
   };
   const binding: FieldworkRuntimeBinding = { role: "fieldwork-extraction", candidates: [{ id: "scripted", runtime }], budget: { maxAttempts: 4, maxElapsedMs: 60_000 } };
   return (await runFieldwork({ taskPath, sourcePath, root, runtime: binding })).runDirectory;
+}
+
+/** A run over an exact web-page snapshot (a Forage snapshot ref, not a local file), with its one item accepted. */
+export async function snapshotRun(label: string, fetchedAt: string): Promise<{ readonly run: string; readonly snapshotRef: string }> {
+  const root = await tempRoot(`memory-source-${label}`);
+  const body = "<html><body><main><h1>Record</h1><p>Status: Active</p></main></body></html>";
+  const snapshot: Snapshot = {
+    sourceId: "generic-record-source", url: "https://example.invalid/generic-record", status: 200,
+    fetchedAt, body, bodyHash: createHash("sha256").update(body).digest("hex"),
+    headers: { "content-type": "text/html; charset=utf-8" },
+  };
+  const snapshotRoot = join(root, "snapshots");
+  await createFilesystemSnapshotStore({ root: snapshotRoot }).put(snapshot);
+  const snapshotRef = buildSnapshotSourceRef(snapshot);
+  const run = (await runFieldwork({ taskPath: "examples/generic/task.json", snapshotRef, snapshotRoot, root: join(root, "runs") })).runDirectory;
+  await decide(run, Object.fromEntries((await queueOf(run)).map((item) => [item.name, "accept-proposed"])));
+  return { run, snapshotRef };
 }

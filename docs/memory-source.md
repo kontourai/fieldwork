@@ -31,16 +31,16 @@ The review posture rides beside the claim, as `arrival`:
 | --- | --- | --- |
 | Bundle claim `verified` | `reviewed` | `reviewed-claim`: the Surface claim id and status, the Survey `ReviewDecision` (name, status, resolution, actor id, time), and Fieldwork's `reviewRound.decisions` entry |
 | Bundle claim `disputed` (the reviewer accepted it, but its grounding was refused) | `proposed` | `reviewed-claim` as above, with `groundingGaps` from `reviewRound.groundingRefused` |
-| `reviewRound.excluded` entry `EXPORT_UNDECIDED` | `proposed`, one claim per proposal in each item it names | `unreviewed-item`: the export's exclusion entry |
+| `reviewRound.excluded` entry `EXPORT_UNDECIDED` | `proposed`, one claim per candidate of each item it names (Survey groups identical proposals into one candidate) | `unreviewed-item`: the export's exclusion entry |
 | Bundle claim `rejected` | no claim | listed in `withheld` as `rejected-in-review` |
 | Bundle claim in any other status | no claim | `withheld` as `unsupported-status` |
 | Any other exclusion code (`EXPORT_FIELD_UNSETTLED`, `EXPORT_CONFLICTING_DECISIONS`, `EXPORT_UNGROUNDED_SELECTION`, `EXPORT_NOT_PROJECTABLE`) | no claim | `withheld` as `excluded-after-review` with the code |
 
 A reviewed claim is never downgraded to `proposed` for being re-read, and an unreviewed item is never promoted. Nothing is dropped silently: everything the export holds that is not a claim is in `withheld` with the export's own reason. `reviewRound.complete` is passed through so a consumer can tell a partial export from a complete one.
 
-Undecided items are taken by item. The export names the items it lists as undecided; the projection rebuilds the review items from the import record with Survey's own builder and takes the proposals of exactly those items, so a rejected or unsettled sibling on the same field is not remembered. A proposal Survey excluded because its excerpt did not verify was never a candidate and is reported as `excerpt-not-verified`.
+Undecided items are taken by item. The export names the items it lists as undecided; the projection rebuilds the review items from the import record with Survey's own builder and takes the proposals of exactly those items, so a rejected or unsettled sibling on the same field is not remembered. A proposal Survey excluded because its excerpt did not verify was never a candidate. When it sits on an undecided item's field it is reported as `excerpt-not-verified`; beside a decided claim it appears in that claim's `groundingGaps`.
 
-The export has to agree with itself. A bundle claim is refused (the projection throws) when its status or value disagrees with the Survey decision its evidence carries: stated as accepted but decided `rejected`, `rejected` but decided `verified`, or a value other than the one the decision selected. Surface's digest binding stops the evidence being edited; this check stops the bundle claim being edited away from it.
+The export has to agree with itself, and the projection throws when it does not. A bundle claim is refused when its status, value or claim target disagrees with the Survey decision its evidence carries (stated as accepted but decided `rejected`, `rejected` but decided `verified`, a decision that was held, a value or subject, claim type or field other than the one the decision selected), or when `disputed` and `reviewRound.groundingRefused` disagree. An `EXPORT_UNDECIDED` entry is refused when it names an item the import record does not hold, an item that carries a decision, an item twice, or an item under another field. `reviewRound.excluded` and `decisions` are always written by Fieldwork, so an export without them is refused rather than read as empty. Surface's digest binding stops the evidence being edited; these checks stop the rest of the export being edited away from it.
 
 Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speaker spoke hypothetically or withdrew a statement, so the mapping never emits them. A rejected review is not a speaker's retraction. Why `stated` for an unreviewed field: the document states the value; whether the extraction is right is exactly what review decides, and that is what `arrival` says.
 
@@ -52,7 +52,7 @@ Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speak
 | `claimType` | the bundle claim's `claimType`, unchanged. The Kit assigns `knowledge.memory-claim` to claims it distills; other producers supply their own, so Fieldwork's claims do not share a slot with them |
 | `property` | `fieldOrBehavior` |
 | `value` | the bundle claim's `value`; for an unreviewed item, the proposal's `candidateValue`. A reviewer-edited value is not representable: Surface's reviewed-extraction contract refuses one, so the bundle's value is always the selected candidate's |
-| `source.ref` | the run's source snapshot ref (`fieldwork-source:v1:...`) |
+| `source.ref` | the run's source snapshot ref: `fieldwork-source:v1:...` for a local file, the Forage snapshot ref for a web snapshot |
 | `source.locator` | the proposal's `chars:<start>-<end>` locator |
 | `source.excerpt` | the proposal's verbatim excerpt |
 | `source.observedAt` | when Traverse extracted it (part of the Kit identity, so a re-run of the same source gives new ids) |

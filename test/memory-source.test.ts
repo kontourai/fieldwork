@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { projectReviewedExtractionEvidence, restoreReviewedExtractionEvidence } from "@kontourai/surface";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1, ReviewedExportV1 } from "../src/api-contracts.js";
 import { reviewedExport } from "../src/fieldwork.js";
@@ -8,7 +9,7 @@ import { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimId, memoryClaimsFromReviewedExport,
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
 import { conflictRun } from "./helpers/conflict-run.js";
-import { decide, decidedMixedRun, forgedUnverifiedConflictRun, indexedItemsRun, mixedRun, queueOf } from "./helpers/memory-source-run.js";
+import { decide, decidedMixedRun, forgedUnverifiedConflictRun, indexedItemsRun, mixedRun, queueOf, snapshotRun } from "./helpers/memory-source-run.js";
 import { typedFieldRun } from "./helpers/real-run.js";
 
 /*
@@ -304,6 +305,73 @@ test("evidence moved onto another claim is refused by Surface's integrity bindin
   const [alpha, charlie] = ["record.alpha", "record.charlie"].map((field) => copy.bundle.claims.find((claim) => claim.fieldOrBehavior === field)!);
   copy.bundle.evidence.find((entry) => entry.claimId === alpha!.id && entry.metadata?.reviewedExtraction)!.claimId = charlie!.id;
   assert.throws(() => memoryClaimsFromReviewedExport(copy), /integrity binding is invalid/);
+});
+
+test("a claim that disagrees with its decision or the export's grounding refusals is refused, whichever field was edited", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("disagree-more"));
+  const typedRun = await typedFieldRun("memory-disagree-typed", { versionAsNumber: true });
+  await decide(typedRun, Object.fromEntries((await queueOf(typedRun)).map((item) => [item.name, "accept-proposed"])));
+  const typed = await reviewedExport(typedRun);
+  const refuses = (honest: ReviewedExportV1, change: (copy: { bundle: Bundle; reviewRound: Scope & Record<string, unknown> }) => void, message: RegExp) => {
+    const copy = clone(honest) as unknown as ReviewedExportV1 & { bundle: Bundle; reviewRound: Scope & Record<string, unknown> };
+    change(copy);
+    assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
+  };
+  const named = (bundle: Bundle, field: string) => bundle.claims.find((claim) => claim.fieldOrBehavior === field)!;
+
+  // The claim target is part of what the reviewer accepted.
+  for (const [key, value] of [["subjectType", "other"], ["subjectId", "someone-else"], ["claimType", "other"], ["fieldOrBehavior", "record.other"]] as const) {
+    refuses(mixed, (copy) => { (named(copy.bundle, "record.alpha") as unknown as Record<string, unknown>)[key] = value; }, /claim target other than the one its Survey decision accepted/);
+  }
+  // The status has to match the export's grounding refusals, in both directions.
+  const disputed = typed.bundle as unknown as Bundle;
+  assert.deepEqual(disputed.claims.filter((claim) => claim.status === "disputed").map((claim) => claim.fieldOrBehavior), ["doc.publicationDate"]);
+  refuses(typed, (copy) => { named(copy.bundle, "doc.publicationDate").status = "verified"; }, /disagrees with the export's grounding refusals/);
+  refuses(typed, (copy) => { named(copy.bundle, "doc.title").status = "disputed"; }, /disagrees with the export's grounding refusals/);
+  // A decision that was held is not an accepted one, whatever its status says. The evidence is re-projected
+  // through Surface so its digest binding is valid: only Fieldwork's own check can refuse it.
+  refuses(mixed, (copy) => {
+    const alpha = named(copy.bundle, "record.alpha");
+    const index = copy.bundle.evidence.findIndex((item) => item.claimId === alpha.id && item.metadata?.reviewedExtraction);
+    const restored = restoreReviewedExtractionEvidence(copy.bundle.evidence[index] as never);
+    (restored.reviewDecision!.spec as { resolution?: string }).resolution = "held";
+    copy.bundle.evidence[index] = projectReviewedExtractionEvidence(restored).evidence as never;
+  }, /stated as accepted but its Survey decision is held/);
+});
+
+test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
+  const honest = await reviewedExport(await decidedMixedRun("exclusions"));
+  const itemOf = (bundle: Bundle, field: string) => {
+    const claim = bundle.claims.find((entry) => entry.fieldOrBehavior === field)!;
+    const evidence = bundle.evidence.find((entry) => entry.claimId === claim.id && entry.metadata?.reviewedExtraction)!;
+    return (evidence.metadata!.reviewedExtraction as { input: { reviewItem: { metadata: { name: string } } } }).input.reviewItem.metadata.name;
+  };
+  const refuses = (change: (bundle: Bundle, scope: Scope) => void, message: RegExp) => {
+    const copy = clone(honest) as unknown as ReviewedExportV1 & { bundle: Bundle; reviewRound: Scope };
+    change(copy.bundle, copy.reviewRound);
+    assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
+  };
+  const delta = (scope: Scope) => scope.excluded.find((entry) => entry.fieldPath === "record.delta")!;
+  refuses((bundle, scope) => { delta(scope).itemNames = [itemOf(bundle, "record.alpha")]; }, /carries a decision for it/);
+  refuses((bundle, scope) => { delta(scope).itemNames = [itemOf(bundle, "record.bravo")]; }, /carries a decision for it/);
+  refuses((_bundle, scope) => { delta(scope).itemNames = [...delta(scope).itemNames, ...delta(scope).itemNames]; }, /undecided more than once/);
+  refuses((_bundle, scope) => { delta(scope).fieldPath = "record.charlie"; }, /which is not its field/);
+  refuses((_bundle, scope) => { delete (scope as Partial<Scope>).excluded; }, /excluded/);
+  refuses((_bundle, scope) => { delete (scope as Partial<Scope>).decisions; }, /decisions/);
+});
+
+test("a web snapshot's claims carry its Forage snapshot ref as source and speaker, and two fetches stay two authorities", async () => {
+  const first = await snapshotRun("snapshot-a", "2026-07-23T10:00:00.000Z");
+  const second = await snapshotRun("snapshot-b", "2026-07-24T10:00:00.000Z");
+  const [a, b] = [one(memoryClaimsFromReviewedExport(await reviewedExport(first.run)), "record.status"), one(memoryClaimsFromReviewedExport(await reviewedExport(second.run)), "record.status")];
+  assert.notEqual(first.snapshotRef, second.snapshotRef);
+  for (const [entry, { snapshotRef }] of [[a, first], [b, second]] as const) {
+    assert.equal(entry.claim.source.ref, snapshotRef);
+    assert.equal(entry.claim.speaker, snapshotRef);
+    assert.equal(entry.arrival, "reviewed");
+  }
+  assert.deepEqual([a.claim.property, a.claim.value], [b.claim.property, b.claim.value]);
+  assert.notEqual(a.claim.id, b.claim.id);
 });
 
 test("an export that carries two sources' import records is refused rather than attributed to one", async () => {
