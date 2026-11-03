@@ -706,6 +706,39 @@ test("a changed target, a conflicting type declaration or a receipt that records
   refuses(evidence, /records a dimension for .* that its own evidence does not yield/);
 });
 
+test("each source of doubt alone keeps a claim from arriving reviewed, and structure left unchecked does not", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("doubt"));
+  const doubtOf = (copy: Editable) => {
+    const entry = memoryClaimsFromReviewedExport(copy).claims.find((item) => item.claim.property === "record.alpha")!;
+    return [entry.arrival, entry.origin.kind === "reviewed-claim" ? entry.origin.groundingGaps ?? [] : []] as const;
+  };
+  assert.deepEqual(doubtOf(editable(mixed)), ["reviewed", []]);
+
+  // The receipt alone records a gap that disputes the claim.
+  const gap = editable(mixed);
+  gap.reviewedGrounding.gaps = [...(gap.reviewedGrounding.gaps ?? []), { kind: "hidden-conflict", claimId: claimNamed(gap, "record.alpha").id }];
+  assert.deepEqual(doubtOf(gap), ["proposed", ["hidden-conflict"]]);
+  // A structural gap leaves it verified unless Surface found the structure invalid.
+  const unchecked = editable(mixed);
+  unchecked.reviewedGrounding.gaps = [{ kind: "structure-not-validated", structuralTrust: "unvalidated", claimId: claimNamed(unchecked, "record.alpha").id }];
+  assert.deepEqual(doubtOf(unchecked), ["reviewed", []]);
+  const invalid = editable(mixed);
+  invalid.reviewedGrounding.gaps = [{ kind: "structure-not-validated", structuralTrust: "invalid", claimId: claimNamed(invalid, "record.alpha").id }];
+  assert.deepEqual(doubtOf(invalid), ["proposed", ["structure-not-validated"]]);
+
+  // The evidence alone yields invalid structure (re-projected through Surface; the receipt says validated and records no gap).
+  const evidence = editable(mixed);
+  const index = evidence.bundle.evidence.findIndex((item) => item.claimId === claimNamed(evidence, "record.alpha").id && item.metadata?.reviewedExtraction);
+  const input = restoreReviewedExtractionEvidence(evidence.bundle.evidence[index] as never);
+  input.structuralTrust = "invalid";
+  evidence.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
+  rebindReceipt(evidence);
+  (evidence.reviewedGrounding as unknown as { dimensions: { structuralTrust?: string }[] }).dimensions.forEach((dimension) => { dimension.structuralTrust = "validated"; });
+  evidence.reviewedGrounding.gaps = [];
+  assert.equal(doubtOf(evidence)[0], "proposed");
+  assert.ok(doubtOf(evidence)[1].includes("structure-not-validated"), JSON.stringify(doubtOf(evidence)));
+});
+
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
   const honest = await reviewedExport(await decidedMixedRun("exclusions"));
   const itemOf = (bundle: Bundle, field: string) => {
