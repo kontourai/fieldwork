@@ -255,15 +255,16 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     }
   }
 
-  // Fieldwork 0.11 and 0.12 never recorded whether excerpts were checked against the prepared text, so the check
-  // recomputed today is not one that writer made. The evidence says so: the review item it carries has no
-  // `excerptVerification` (the receipt is not asked, since it can be thinned out). An item that records `unverified`
-  // stays doubt. An export rewritten into the shape those writers produced (item without the record, import unverified) is
-  // the same data as one they wrote, so it is read as theirs: this check cannot be recomputed for it, which the docs
-  // list under what the projection cannot tell.
+  // Fieldwork 0.11 and 0.12 never recorded whether excerpts were checked against the prepared text: their review items
+  // have no `excerptVerification` and their imports say `provenance: "unverified"`. The check recomputed today is not
+  // one those writers made, so for that shape (and only that shape) the gap is not doubt. The evidence says so, not
+  // the receipt, which can be thinned out. An item that records `unverified`, or a missing record under an import
+  // that says `verified`, is doubt. An export rewritten into exactly the 0.11/0.12 shape is the same data as one they
+  // wrote and is read as theirs; the docs list that under what the projection cannot tell.
   const legacyEvidence = (claimId: string): boolean => {
-    const producer = restoredByClaim.get(claimId)?.reviewItem?.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { excerptVerification?: unknown } | undefined;
-    return restoredByClaim.has(claimId) && producer?.excerptVerification === undefined;
+    const restored = restoredByClaim.get(claimId);
+    const producer = restored?.reviewItem?.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { excerptVerification?: unknown } | undefined;
+    return restored !== undefined && producer?.excerptVerification === undefined && restored.importRecord.status.provenance === "unverified";
   };
   /** What a receipt dimension records against its claim, as the policy would read it (src: Surface reviewed-grounding-policy). */
   const dimensionDoubts = (dimension: Readonly<Record<string, unknown>>): string[] => {

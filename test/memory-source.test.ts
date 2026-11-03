@@ -983,11 +983,45 @@ test("a dimension may omit a key the policy yields, but not state one it does no
   const extra = editable(mixed);
   const index = extra.bundle.evidence.findIndex((item) => item.claimId === claimNamed(extra, "record.alpha").id && item.metadata?.reviewedExtraction);
   const input = restoreReviewedExtractionEvidence(extra.bundle.evidence[index] as never);
-  for (const candidate of input.reviewItem!.spec.candidates) (candidate.producer!["survey.kontourai.io/extraction-envelope"] as Record<string, unknown>).laterSurveyFact = "x";
-  extra.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
-  rebindReceipt(extra);
-  assert.ok(read(extra)[1].includes("candidate-differs"), JSON.stringify(read(extra)));
-  assert.equal(read(extra)[0], "proposed");
+  for (const value of ["x", null]) {
+    const copy = editable(mixed);
+    const at = copy.bundle.evidence.findIndex((item) => item.claimId === claimNamed(copy, "record.alpha").id && item.metadata?.reviewedExtraction);
+    const restored = restoreReviewedExtractionEvidence(copy.bundle.evidence[at] as never);
+    for (const candidate of restored.reviewItem!.spec.candidates) (candidate.producer!["survey.kontourai.io/extraction-envelope"] as Record<string, unknown>).laterSurveyFact = value;
+    copy.bundle.evidence[at] = projectReviewedExtractionEvidence(restored).evidence as never;
+    rebindReceipt(copy);
+    assert.ok(read(copy)[1].includes("candidate-differs"), JSON.stringify([value, read(copy)]));
+    assert.equal(read(copy)[0], "proposed");
+  }
+  void input;
+  void index;
+});
+
+test("the missing excerpt record is only forgiven in the shape Fieldwork 0.11 and 0.12 wrote: an import that says unverified", async () => {
+  const old = JSON.parse(await readFile(join(import.meta.dirname, "fixtures", "published-writers", "fieldwork-0.11.0-generic-accept.json"), "utf8")) as ReviewedExportV1;
+  const arrival = (copy: Editable) => memoryClaimsFromReviewedExport(copy).claims.map((entry) => [entry.arrival, entry.origin.kind === "reviewed-claim" ? entry.origin.groundingGaps ?? [] : []]);
+  const legacy = clone(old) as unknown as Editable;
+  const evidenceIndex = legacy.bundle.evidence.findIndex((item) => item.metadata?.reviewedExtraction);
+  const restored = restoreReviewedExtractionEvidence(legacy.bundle.evidence[evidenceIndex] as never);
+  assert.equal(restored.importRecord.status.provenance, "unverified", "0.11 imports say unverified");
+  assert.equal((restored.reviewItem!.metadata.producer!["survey.kontourai.io/extraction-envelope"] as Record<string, unknown>).excerptVerification, undefined, "and its items carry no record");
+  assert.deepEqual(arrival(legacy), [["reviewed", []]]);
+
+  // The same data with the import saying verified is the current shape missing its record: that is doubt.
+  const current = clone(old) as unknown as Editable;
+  const input = restoreReviewedExtractionEvidence(current.bundle.evidence[evidenceIndex] as never);
+  (input.importRecord.status as { provenance?: string }).provenance = "verified";
+  current.bundle.evidence[evidenceIndex] = projectReviewedExtractionEvidence(input).evidence as never;
+  rebindReceipt(current);
+  assert.deepEqual(arrival(current), [["proposed", ["excerpt-not-verified"]]]);
+
+  // And an item that records unverified is doubt under either import.
+  const recorded = clone(old) as unknown as Editable;
+  const again = restoreReviewedExtractionEvidence(recorded.bundle.evidence[evidenceIndex] as never);
+  (again.reviewItem!.metadata.producer!["survey.kontourai.io/extraction-envelope"] as Record<string, unknown>).excerptVerification = "unverified";
+  recorded.bundle.evidence[evidenceIndex] = projectReviewedExtractionEvidence(again).evidence as never;
+  rebindReceipt(recorded);
+  assert.deepEqual(arrival(recorded), [["proposed", ["excerpt-not-verified"]]]);
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
