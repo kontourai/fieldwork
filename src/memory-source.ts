@@ -305,12 +305,13 @@ function assertAgreesWithDecision(
   if (reviewDecision.spec.status !== "verified" || (reviewDecision.spec.resolution !== undefined && reviewDecision.spec.resolution !== "accepted")) {
     throw new Error(`Reviewed export claim ${claim.id} is stated as accepted but its Survey decision is ${reviewDecision.spec.resolution ?? reviewDecision.spec.status}.`);
   }
-  const selected = reviewItem.spec.candidates.find((candidate) => candidate.id === reviewDecision.spec.candidateId);
-  const target = selected?.claimTarget;
-  if (selected === undefined || target === undefined || canonicalJson(selected.value) !== canonicalJson(claim.value)) {
+  // Surface refuses a decision whose candidate is not in its item, so the selected candidate is present.
+  const selected = reviewItem.spec.candidates.find((candidate) => candidate.id === reviewDecision.spec.candidateId)!;
+  if (canonicalJson(selected.value) !== canonicalJson(claim.value)) {
     throw new Error(`Reviewed export claim ${claim.id} states a value that is not the one its Survey decision accepted.`);
   }
-  if (target.subjectType !== claim.subjectType || target.subjectId !== claim.subjectId || target.claimType !== claim.claimType || target.fieldOrBehavior !== claim.fieldOrBehavior) {
+  const target = selected.claimTarget;
+  if (target?.subjectType !== claim.subjectType || target.subjectId !== claim.subjectId || target.claimType !== claim.claimType || target.fieldOrBehavior !== claim.fieldOrBehavior) {
     throw new Error(`Reviewed export claim ${claim.id} states a claim target other than the one its Survey decision accepted.`);
   }
 }
@@ -342,7 +343,8 @@ const reviewRoundView = z.object({
  */
 function sourceOf(record: ImportRecord, proposal: Proposal): { readonly source: FieldworkMemoryClaim["source"]; readonly speaker: string } {
   const { source, result } = record.spec.envelope;
-  const ref = source.snapshotRef ?? source.ref;
+  // Fieldwork writes the same snapshot ref to both fields of the envelope source.
+  const ref = source.ref;
   return {
     speaker: ref,
     source: {
