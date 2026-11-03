@@ -489,6 +489,14 @@ test("whether a claim is grounded is recomputed from its evidence, so editing th
     settle(promoted, field, "verified");
     refuses(promoted, /but its evidence does not ground it/);
   }
+  // Structure Surface found invalid disputes a claim even when Traverse's schema match for the proposal says ok. The
+  // evidence is re-projected through Surface so its digest binding is valid: only the recomputation can refuse it.
+  const invalid = editable(mixed);
+  const alphaIndex = invalid.bundle.evidence.findIndex((item) => item.claimId === claimNamed(invalid, "record.alpha").id && item.metadata?.reviewedExtraction);
+  const alphaInput = restoreReviewedExtractionEvidence(invalid.bundle.evidence[alphaIndex] as never);
+  alphaInput.structuralTrust = "invalid";
+  invalid.bundle.evidence[alphaIndex] = projectReviewedExtractionEvidence(alphaInput).evidence as never;
+  refuses(invalid, /but its evidence does not ground it/);
   // Demotion: an honest claim cannot be made disputed with an empty (or structural-only) refusal.
   const demoted = editable(mixed);
   settle(demoted, "record.alpha", "disputed");
