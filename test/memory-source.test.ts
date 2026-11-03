@@ -492,11 +492,13 @@ test("the receipt's dispositions and invalid structure, the review events and th
   const alphaAttribution = twice.reviewRound.decisions.find((entry) => entry.claimId === claimNamed(twice, "record.alpha").id)!;
   twice.reviewRound.decisions.find((entry) => entry.claimId === claimNamed(twice, "record.charlie").id)!.reviewItemName = alphaAttribution.reviewItemName;
   refuses(twice, /more than one decision/);
-  // A receipt gap is against the claim it names, not any other.
+  // A receipt gap with two addresses is about both claims: moving its claim id onto another claim leaves the evidence
+  // address on the first, so both are doubted rather than one being cleared.
   const moved = editable(typed);
   const date = claimNamed(moved, "doc.publicationDate");
   moved.reviewedGrounding.gaps.forEach((gap) => { if (gap.claimId === date.id) gap.claimId = claimNamed(moved, "doc.title").id; });
-  refuses(moved, /but its grounding receipt records nothing for it/);
+  assert.equal(arrivalOf(moved, "doc.publicationDate"), "proposed");
+  assert.equal(arrivalOf(moved, "doc.title"), "proposed");
 });
 
 test("whether a claim is grounded is recomputed from its evidence, so editing the records beside it cannot promote or demote it", async () => {
@@ -900,6 +902,64 @@ test("an exclusion listed twice is one exclusion", async () => {
   const unsettled = doubled.reviewRound.excluded.find((entry) => entry.code === "EXPORT_FIELD_UNSETTLED")!;
   doubled.reviewRound.excluded.push({ ...unsettled });
   assert.deepEqual(memoryClaimsFromReviewedExport(doubled), once);
+});
+
+test("doubt held in the evidence survives thinning the receipt: unverified excerpts, a gap with contradictory addresses, an extraction outcome the import no longer states", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("tenth"));
+  const read = (copy: Editable, field = "record.alpha") => {
+    const entry = memoryClaimsFromReviewedExport(copy).claims.find((item) => item.claim.property === field)!;
+    return [entry.arrival, entry.origin.kind === "reviewed-claim" ? entry.origin.groundingGaps ?? [] : []] as const;
+  };
+  const evidenceOf = (copy: Editable, field = "record.alpha") => copy.bundle.evidence.findIndex((item) => item.claimId === claimNamed(copy, field).id && item.metadata?.reviewedExtraction);
+  const KEY = "survey.kontourai.io/extraction-envelope";
+
+  // The item says its excerpts were NOT verified. Deleting every other dimension, and the key from this one, must not make
+  // the receipt look like an older writer's: the evidence still says what it says.
+  const unverified = editable(mixed);
+  const index = evidenceOf(unverified);
+  const input = restoreReviewedExtractionEvidence(unverified.bundle.evidence[index] as never);
+  (input.reviewItem!.metadata.producer![KEY] as Record<string, unknown>).excerptVerification = "unverified";
+  unverified.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
+  rebindReceipt(unverified);
+  assert.ok(read(unverified)[1].includes("excerpt-not-verified"));
+  const dimensions = (unverified.reviewedGrounding as unknown as { dimensions: Record<string, unknown>[] }).dimensions;
+  const alphaId = claimNamed(unverified, "record.alpha").id;
+  (unverified.reviewedGrounding as unknown as { dimensions: Record<string, unknown>[] }).dimensions = dimensions.filter((dimension) => dimension.claimId === alphaId);
+  delete dimensions.find((dimension) => dimension.claimId === alphaId)!.excerptVerification;
+  assert.deepEqual(read(unverified)[0], "proposed");
+  assert.ok(read(unverified)[1].includes("excerpt-not-verified"), JSON.stringify(read(unverified)));
+
+  // A gap that names a claim and evidence is about both, and one whose claim id is edited away stays about its evidence.
+  const alphaEvidenceId = (mixed.bundle as unknown as Bundle).evidence.find((item) => item.claimId === claimNamed(editable(mixed), "record.alpha").id && item.metadata?.reviewedExtraction) as unknown as { id: string };
+  for (const claimId of [claimNamed(editable(mixed), "record.alpha").id, "extraction-envelope.nothing.claim", claimNamed(editable(mixed), "record.charlie").id]) {
+    const gap = editable(mixed);
+    gap.reviewedGrounding.gaps = [{ kind: "missing-prepared-artifact", claimId, evidenceId: alphaEvidenceId.id } as never];
+    assert.deepEqual(read(gap), ["proposed", ["missing-prepared-artifact"]], claimId);
+  }
+  const unresolvable = editable(mixed);
+  unresolvable.reviewedGrounding.gaps = [{ kind: "missing-prepared-artifact", claimId: "extraction-envelope.nothing.claim" } as never];
+  assert.deepEqual(read(unresolvable, "record.charlie"), ["proposed", ["missing-prepared-artifact"]]);
+
+  // The extraction outcome is stated on the import and again on the candidate: a candidate that says partial under an
+  // import that says success is a candidate the import did not yield.
+  const outcome = editable(mixed);
+  const outcomeIndex = evidenceOf(outcome);
+  const outcomeInput = restoreReviewedExtractionEvidence(outcome.bundle.evidence[outcomeIndex] as never);
+  for (const candidate of outcomeInput.reviewItem!.spec.candidates) (candidate.producer![KEY] as Record<string, unknown>).outcome = { status: "partial", reason: "max-chunks" };
+  outcome.bundle.evidence[outcomeIndex] = projectReviewedExtractionEvidence(outcomeInput).evidence as never;
+  rebindReceipt(outcome);
+  const [outcomeArrival, outcomeGaps] = read(outcome);
+  assert.equal(outcomeArrival, "proposed");
+  assert.ok(outcomeGaps.includes("candidate-differs"), JSON.stringify(outcomeGaps));
+});
+
+test("a key the receipt's dimension states that the evidence does not yield is doubt, whether or not a later Surface would add it", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("added-key"));
+  const copy = editable(mixed);
+  (copy.reviewedGrounding as unknown as { dimensions: Record<string, unknown>[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(copy, "record.alpha").id)!.laterSurfaceFact = "x";
+  const entry = memoryClaimsFromReviewedExport(copy).claims.find((item) => item.claim.property === "record.alpha")!;
+  assert.equal(entry.arrival, "proposed");
+  assert.ok(entry.origin.kind === "reviewed-claim" && entry.origin.groundingGaps?.includes("receipt-differs"));
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {

@@ -187,6 +187,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     throw new Error(`Reviewed export carries ${records.size} import records; one export covers one source, so project each source's export on its own.`);
   }
   const importRecord = [...records.values()][0];
+  const rebuiltItems = importRecord === undefined ? new Map<string, ReturnType<typeof buildReviewItemsFromExtractionEnvelopeImport>[number]>() : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
 
   // A claim is `reviewed` only when nothing the export carries casts doubt on its grounding. The grounding is
   // recomputed from the digest-bound evidence under the policy Fieldwork evaluated it with, and also read from the
@@ -204,7 +205,8 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   const recomputedGaps = recomputed?.outcome === "refused" ? recomputed.gaps : [];
   // The receipt's per-claim dimensions say what the policy derived from the same evidence. The fields that bind the
   // receipt to a claim (its evidence, the reviewer's disposition, the exact locator and the digest of the value it
-  // states) have to be the ones recomputed; other fields are not compared, so a later Surface can add to a dimension.
+  // states) have to be the ones recomputed or the export is refused; any other key the dimension states that the policy
+  // does not yield is doubt (below). A key only the policy yields is not stated, so a later Surface can add to a dimension.
   const bound = (dimension: Readonly<Record<string, unknown>>) => canonicalJson([dimension.claimId, dimension.evidenceId, dimension.reviewDisposition, dimension.exactLocator, dimension.candidateValueDigest]);
   const recomputedDimensionFor = new Map((recomputed?.dimensions ?? []).map((dimension) => [bound(dimension as unknown as Record<string, unknown>), dimension] as const));
   const recomputedDimensions = new Set(recomputedDimensionFor.keys());
@@ -224,17 +226,25 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     attributedItems.add(entry.reviewItemName);
   }
   const claimOfEvidence = new Map(bundle.evidence.map((entry) => [entry.id, entry.claimId]));
-  /** Whether a gap names the claim, by its claim id or else by the evidence it names. */
-  const namesClaim = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean =>
-    (typeof gap.claimId === "string" ? gap.claimId : typeof gap.evidenceId === "string" ? claimOfEvidence.get(gap.evidenceId) : undefined) === claimId;
-  /** The claim a gap is about: by its claim id, else by the evidence it names. A gap that names neither is about every claim. */
+  /**
+   * The claims a gap names, by its claim id and by the evidence it names. A name that resolves to nothing the export
+   * has is `undefined`, and a gap that names nothing at all has no names: both are about every claim, so a gap
+   * cannot be made to point elsewhere by editing one of its addresses.
+   */
+  const gapNames = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }): (string | undefined)[] => [
+    ...(typeof gap.claimId === "string" ? [claimIds.has(gap.claimId) ? gap.claimId : undefined] : []),
+    ...(typeof gap.evidenceId === "string" ? [claimOfEvidence.get(gap.evidenceId)] : []),
+  ];
+  /** Whether a gap names the claim (for reconciling a refusal list, where only a named claim counts). */
+  const namesClaim = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean => gapNames(gap).includes(claimId);
+  /** Whether a gap is about the claim: it names it, or names nothing that resolves, or names nothing. */
   const gapIsAbout = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean => {
-    const named = typeof gap.claimId === "string" ? gap.claimId : typeof gap.evidenceId === "string" ? claimOfEvidence.get(gap.evidenceId) : undefined;
-    return named === undefined ? typeof gap.claimId !== "string" && typeof gap.evidenceId !== "string" : named === claimId;
+    const names = gapNames(gap);
+    return names.length === 0 || names.includes(undefined) || names.includes(claimId);
   };
   const statusOf = new Map(bundle.claims.map((claim) => [claim.id, claim.status]));
   // The receipt and the list derived from it have to say the same thing: a refusal lists exactly the gaps the receipt
-  // records for its claim, and and a disputed claim with no
+  // records for its claim, and a disputed claim with no
   // reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
   const receiptKinds = (claimId: string) => new Set(groundingGaps.filter((gap) => namesClaim(gap, claimId)).map((gap) => gap.kind));
   for (const entry of round.groundingRefused) {
@@ -245,9 +255,13 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     }
   }
 
-  // A receipt written before Fieldwork 0.13 never recorded whether excerpts were checked against the prepared text, so
-  // the check recomputed today is not one that writer made. When no dimension records it, that gap is not doubt.
-  const legacyReceipt = receipt.dimensions.length > 0 && receipt.dimensions.every((dimension) => !("excerptVerification" in dimension));
+  // Fieldwork 0.11 and 0.12 never recorded whether excerpts were checked against the prepared text, so the check
+  // recomputed today is not one that writer made. The evidence says which writer it is: the review item it carries has
+  // an `excerptVerification` or it does not. (Not the receipt, which is the record someone can thin out.)
+  const legacyEvidence = (claimId: string): boolean => {
+    const producer = restoredByClaim.get(claimId)?.reviewItem?.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { excerptVerification?: unknown } | undefined;
+    return restoredByClaim.has(claimId) && producer?.excerptVerification === undefined;
+  };
   /** What a receipt dimension records against its claim, as the policy would read it (src: Surface reviewed-grounding-policy). */
   const dimensionDoubts = (dimension: Readonly<Record<string, unknown>>): string[] => {
     const kinds: string[] = [];
@@ -264,7 +278,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   const doubtsAbout = (claimId: string, schema: unknown): string[] => {
     const kinds = new Set<string>();
     for (const gap of recomputedGaps) {
-      if (gapIsAbout(gap as { claimId?: unknown; evidenceId?: unknown }, claimId) && !(legacyReceipt && gap.kind === "excerpt-not-verified")
+      if (gapIsAbout(gap as { claimId?: unknown; evidenceId?: unknown }, claimId) && !(legacyEvidence(claimId) && gap.kind === "excerpt-not-verified")
         && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined, gap: "gap" in gap ? (gap.gap as { kind?: unknown; status?: unknown }) : undefined })) kinds.add(gap.kind);
     }
     for (const gap of groundingGaps) if (gapIsAbout(gap, claimId) && disputes(gap)) kinds.add(gap.kind);
@@ -273,10 +287,21 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       for (const kind of dimensionDoubts(dimension)) kinds.add(kind);
       // The dimension is what the policy derives from the evidence. Any key on which the carried one differs (the
       // choice, the source state, a field a later Surface adds) is a receipt that no longer says what the evidence does.
-      const yielded = recomputedDimensionFor.get(bound(dimension));
-      if (yielded !== undefined && canonicalJson(JSON.parse(JSON.stringify(yielded))) !== canonicalJson(dimension)) kinds.add("receipt-differs");
+      // Every key the carried dimension states has to be what the policy yields; a key only a later Surface yields is not
+      // stated, so it is not in dispute.
+      const yielded = recomputedDimensionFor.get(bound(dimension)) as Record<string, unknown> | undefined;
+      if (yielded !== undefined && Object.keys(dimension).some((key) => canonicalJson(JSON.parse(JSON.stringify(yielded[key] ?? null))) !== canonicalJson(dimension[key] ?? null))) kinds.add("receipt-differs");
     }
     if (typeof schema === "string" && schema !== "ok") kinds.add("schema-mismatch");
+    // The carried candidate's provenance (the extraction outcome, the evidence match, the occurrence) is what Survey derives
+    // from the import record. Every key it states has to be the one Survey yields again.
+    const restored = restoredByClaim.get(claimId);
+    const fresh = restored === undefined ? undefined : rebuiltItems.get(restored.reviewItem?.metadata.name ?? "");
+    for (const candidate of restored?.reviewItem?.spec.candidates ?? []) {
+      const stated = candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as Record<string, unknown> | undefined;
+      const rebuilt = fresh?.spec.candidates.find((entry) => entry.id === candidate.id)?.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as Record<string, unknown> | undefined;
+      if (stated !== undefined && Object.keys(stated).some((key) => canonicalJson(stated[key] ?? null) !== canonicalJson(rebuilt?.[key] ?? null))) kinds.add("candidate-differs");
+    }
     return [...kinds].sort();
   };
 
@@ -383,7 +408,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     ...round.decisions.map((entry) => entry.reviewItemName),
   ]);
   const undecidedItems = new Set<string>();
-  const items = importRecord === undefined ? undefined : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
+  const items = importRecord === undefined ? undefined : rebuiltItems;
   const seenExclusions = new Set<string>();
   for (const exclusion of round.excluded) {
     // The same exclusion listed twice is one exclusion.
