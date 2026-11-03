@@ -20,37 +20,44 @@ Fieldwork builds the claim `id` itself (the Kit's identity rule at this commit: 
 
 ## Review posture
 
-The Kit's `posture` says how a claim was asserted, and the Kit keeps it apart from whether anyone reviewed the claim. The Kit's `posture` is part of the claim's identity, so a claim could not change posture when a reviewer decides it without becoming a different claim. Fieldwork therefore carries the two as the Kit does:
+Every claim is posture `stated`. The Kit's `posture` says how a claim was asserted, and the Kit keeps it apart from whether anyone reviewed the claim, so Fieldwork does not write review state into it. There is also a practical reason: the Kit's conflict routing skips `proposed` and `hypothetical` claims, so an unreviewed assertion marked `proposed` would escape conflict detection against what is already known.
 
-- `claim.posture` is `stated` or `proposed`. This is the review posture the export supports. `stated` means a reviewer accepted the value and the export verifies it. `proposed` means the export does not vouch for the value as reviewed.
+The review posture rides beside the claim, as `arrival`:
+
+- `arrival` is `reviewed` or `proposed`. It is derived from the export's own facts and nothing else, and it is the Kit's store-level arrival: a `proposed` claim is stored as a pending create proposal; a `reviewed` one is a claim a reviewer already accepted. It is not part of the claim, so a claim keeps its `id` when a reviewer decides it.
 - `origin` holds what the export said, copied and not reinterpreted, so a consumer can route on the Survey decision and the Surface status rather than on a Fieldwork word.
 
-| The export says | Arrives as | `origin` |
+| The export says | `arrival` | `origin` |
 | --- | --- | --- |
-| Bundle claim `verified` | `stated` | `reviewed-claim`: the Surface claim id and status, the Survey `ReviewDecision` (name, status, resolution, actor id, time), and Fieldwork's `reviewRound.decisions` entry |
+| Bundle claim `verified` | `reviewed` | `reviewed-claim`: the Surface claim id and status, the Survey `ReviewDecision` (name, status, resolution, actor id, time), and Fieldwork's `reviewRound.decisions` entry |
 | Bundle claim `disputed` (the reviewer accepted it, but its grounding was refused) | `proposed` | `reviewed-claim` as above, with `groundingGaps` from `reviewRound.groundingRefused` |
-| `reviewRound.excluded` entry `EXPORT_UNDECIDED` | `proposed`, one claim per verified proposal for the field | `unreviewed-item`: the export's exclusion entry |
+| `reviewRound.excluded` entry `EXPORT_UNDECIDED` | `proposed`, one claim per proposal in each item it names | `unreviewed-item`: the export's exclusion entry |
 | Bundle claim `rejected` | no claim | listed in `withheld` as `rejected-in-review` |
 | Bundle claim in any other status | no claim | `withheld` as `unsupported-status` |
 | Any other exclusion code (`EXPORT_FIELD_UNSETTLED`, `EXPORT_CONFLICTING_DECISIONS`, `EXPORT_UNGROUNDED_SELECTION`, `EXPORT_NOT_PROJECTABLE`) | no claim | `withheld` as `excluded-after-review` with the code |
 
 A reviewed claim is never downgraded to `proposed` for being re-read, and an unreviewed item is never promoted. Nothing is dropped silently: everything the export holds that is not a claim is in `withheld` with the export's own reason. `reviewRound.complete` is passed through so a consumer can tell a partial export from a complete one.
 
-Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speaker spoke hypothetically or withdrew a statement, so the mapping never emits them. A rejected review is not a speaker's retraction.
+Undecided items are taken by item. The export names the items it lists as undecided; the projection rebuilds the review items from the import record with Survey's own builder and takes the proposals of exactly those items, so a rejected or unsettled sibling on the same field is not remembered. A proposal Survey excluded because its excerpt did not verify was never a candidate and is reported as `excerpt-not-verified`.
+
+The export has to agree with itself. A bundle claim is refused (the projection throws) when its status or value disagrees with the Survey decision its evidence carries: stated as accepted but decided `rejected`, `rejected` but decided `verified`, or a value other than the one the decision selected. Surface's digest binding stops the evidence being edited; this check stops the bundle claim being edited away from it.
+
+Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speaker spoke hypothetically or withdrew a statement, so the mapping never emits them. A rejected review is not a speaker's retraction. Why `stated` for an unreviewed field: the document states the value; whether the extraction is right is exactly what review decides, and that is what `arrival` says.
 
 ## Field mapping
 
 | Memory claim | From the export |
 | --- | --- |
-| `subject.type`, `subject.id` | the bundle claim's `subjectType`, `subjectId` (for an unreviewed item, the import record's claim target for the field) |
+| `subject.type`, `subject.id` | the bundle claim's `subjectType`, `subjectId` (for an unreviewed item, the claim target of its review item) |
 | `claimType` | the bundle claim's `claimType`, unchanged. The Kit assigns `knowledge.memory-claim` to claims it distills; other producers supply their own, so Fieldwork's claims do not share a slot with them |
 | `property` | `fieldOrBehavior` |
-| `value` | the bundle claim's `value`; for an unreviewed item, the proposal's `candidateValue` |
+| `value` | the bundle claim's `value`; for an unreviewed item, the proposal's `candidateValue`. A reviewer-edited value is not representable: Surface's reviewed-extraction contract refuses one, so the bundle's value is always the selected candidate's |
 | `source.ref` | the run's source snapshot ref (`fieldwork-source:v1:...`) |
 | `source.locator` | the proposal's `chars:<start>-<end>` locator |
 | `source.excerpt` | the proposal's verbatim excerpt |
 | `source.observedAt` | when Traverse extracted it (part of the Kit identity, so a re-run of the same source gives new ids) |
 | `source.extractor` | the proposal's extractor |
+| `posture` | `stated` always (see above) |
 | `speaker` | the source ref. Fieldwork knows no author; naming the snapshot keeps each snapshot's authority its own |
 | `validTime`, `qualifiers`, `supersedes`, `audience` | never emitted. Nothing in a reviewed export asserts them, and an absent `audience` inherits the source's, so omission never widens |
 
@@ -58,7 +65,7 @@ The proposal comes from the reviewed-extraction evidence the export carries (the
 
 ## Source authority stays per source
 
-One export covers one run's review authority, and so does one projection. The claim's `source.ref` and `speaker` are that run's source snapshot, and both are in the Kit's claim identity, so the same field and value from two snapshots are two claims with two ids. The function takes one export and has no way to merge two. A batch of sources is an ordered collection of independent child runs; project each export on its own and keep the results apart.
+One export covers one run's review authority, and so does one projection; an export that carries more than one source's import record is refused rather than attributed to one. The claim's `source.ref` and `speaker` are that run's source snapshot, and both are in the Kit's claim identity, so the same field and value from two snapshots are two claims with two ids. The function takes one export and has no way to merge two. A batch of sources is an ordered collection of independent child runs; project each export on its own and keep the results apart.
 
 ## What this does not do
 

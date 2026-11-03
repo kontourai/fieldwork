@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@kontourai/relay";
-import { resolverFromBundle, restoreReviewedExtractionEvidence, validateTrustBundle } from "@kontourai/surface";
+import { buildReviewItemsFromExtractionEnvelopeImport } from "@kontourai/survey";
+import { resolverFromBundle, restoreReviewedExtractionEvidence, reviewedExtractionImportRecordDigest, validateTrustBundle } from "@kontourai/surface";
 import { z } from "zod";
 import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./api-contracts.js";
 
@@ -25,8 +26,24 @@ export const MEMORY_CLAIM_SCHEMA_PIN = Object.freeze({
   schemaVersion: "1.0",
 });
 
-/** The Kit's `posture` values this mapping emits. The Kit has two more (`hypothetical`, `retracted`) that no export fact supports. */
-export type FieldworkMemoryPosture = "stated" | "proposed";
+/**
+ * The only Kit `posture` this mapping emits: a field a document states is
+ * asserted as true now. The Kit has three more (`proposed`, `hypothetical`,
+ * `retracted`) that no export fact supports. Review state is never written
+ * into `posture`: the Kit keeps the two apart, and its conflict routing skips
+ * `proposed` claims, so an unreviewed assertion marked that way would escape it.
+ */
+export type FieldworkMemoryPosture = "stated";
+
+/**
+ * How the export vouches for a claim, derived from the export's own facts and
+ * nothing else (see docs/memory-source.md): `reviewed` when a reviewer's
+ * accepted decision is verified by the export, `proposed` otherwise. It is the
+ * store's arrival state in the Kit's contract (a `proposed` claim is stored as
+ * a pending create proposal), not a Fieldwork trust status, and it is not part
+ * of the claim, so a claim keeps its id when a reviewer decides it.
+ */
+export type MemoryArrival = "reviewed" | "proposed";
 
 /**
  * A memory claim as the pinned schema defines it, restricted to the fields
@@ -57,7 +74,7 @@ export interface ReviewedClaimOrigin {
   readonly kind: "reviewed-claim";
   /** The Surface bundle claim this memory claim projects. */
   readonly surfaceClaimId: string;
-  /** The bundle claim's own status. `verified` maps to `stated`; `disputed` maps to `proposed`. */
+  /** The bundle claim's own status. `verified` arrives `reviewed`; `disputed` arrives `proposed`. */
   readonly surfaceStatus: "verified" | "disputed";
   readonly reviewItemName: string;
   /** The Survey ReviewDecision the export carries for the claim. */
@@ -82,6 +99,7 @@ export interface UnreviewedItemOrigin {
 }
 
 export interface MemorySourceClaim {
+  readonly arrival: MemoryArrival;
   readonly claim: FieldworkMemoryClaim;
   readonly origin: ReviewedClaimOrigin | UnreviewedItemOrigin;
 }
@@ -114,16 +132,24 @@ export interface MemorySourceProjection {
 /**
  * Project one reviewed export into memory claims.
  *
- * - A `verified` bundle claim arrives with posture `stated`.
- * - A `disputed` bundle claim (reviewed, but its grounding was refused) and an
- *   item the export lists as `EXPORT_UNDECIDED` arrive with posture `proposed`.
+ * - A `verified` bundle claim arrives `reviewed`.
+ * - A `disputed` bundle claim (reviewed, but its grounding was refused) and
+ *   every proposal of an item the export lists as `EXPORT_UNDECIDED` arrive
+ *   `proposed`.
  * - A `rejected` claim, and any item the export excluded for another reason,
  *   becomes no claim and is listed in `withheld`.
  *
+ * Every claim is posture `stated`; the arrival is carried beside it.
+ *
+ * The export must agree with itself. Surface's digest binding stops evidence
+ * being edited, but not the bundle claim being edited away from it, so a claim
+ * whose value or status disagrees with the Survey decision its evidence carries
+ * is refused, not mapped.
+ *
  * One export covers one run's review authority, and so does one projection:
  * `source.ref` and `speaker` are the run's source snapshot, so claims from
- * different snapshots never share an identity and this function has no way to
- * merge two exports.
+ * different snapshots never share an identity. An export that carries more
+ * than one source's import record is refused rather than attributed to one.
  */
 export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): MemorySourceProjection {
   const output = parseReviewedExport(exported);
@@ -132,10 +158,29 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   const round = reviewRoundView.parse(output.reviewRound);
   const claims: MemorySourceClaim[] = [];
   const withheld: WithheldMemoryItem[] = [];
-  let importRecord: ImportRecord | undefined;
+
+  // Every reviewed-extraction evidence entry, rejected claims' included: they
+  // carry the same import record the undecided items need.
+  const restoredByClaim = new Map<string, Restored>();
+  const records = new Map<string, ImportRecord>();
+  for (const evidence of bundle.evidence) {
+    if (evidence.metadata?.reviewedExtraction === undefined) continue;
+    const restored = restoreReviewedExtractionEvidence(evidence, { resolveImportRecord });
+    restoredByClaim.set(evidence.claimId, restored);
+    records.set(reviewedExtractionImportRecordDigest(restored.importRecord), restored.importRecord);
+  }
+  if (records.size > 1) {
+    throw new Error(`Reviewed export carries ${records.size} import records; one export covers one source, so project each source's export on its own.`);
+  }
+  const importRecord = [...records.values()][0];
 
   for (const surfaceClaim of bundle.claims) {
+    const restored = restoredByClaim.get(surfaceClaim.id);
+    const decision = restored?.reviewDecision;
     if (surfaceClaim.status === "rejected") {
+      if (decision !== undefined && decision.spec.status !== "rejected") {
+        throw new Error(`Reviewed export claim ${surfaceClaim.id} is rejected but its Survey decision is ${decision.spec.status}.`);
+      }
       withheld.push({ reason: "rejected-in-review", surfaceClaimId: surfaceClaim.id, fieldPath: surfaceClaim.fieldOrBehavior });
       continue;
     }
@@ -143,24 +188,21 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       withheld.push({ reason: "unsupported-status", surfaceClaimId: surfaceClaim.id, fieldPath: surfaceClaim.fieldOrBehavior, detail: surfaceClaim.status });
       continue;
     }
-    const evidence = bundle.evidence.find((entry) => entry.claimId === surfaceClaim.id && entry.metadata?.reviewedExtraction !== undefined);
-    const restored = evidence === undefined ? undefined : restoreReviewedExtractionEvidence(evidence, { resolveImportRecord });
     const proposal = restored?.importRecord.spec.envelope.result.proposals[restored.proposalIndex];
-    if (restored === undefined || proposal === undefined || restored.reviewDecision === undefined) {
+    if (restored === undefined || proposal === undefined || decision === undefined) {
       withheld.push({ reason: "no-reviewed-evidence", surfaceClaimId: surfaceClaim.id, fieldPath: surfaceClaim.fieldOrBehavior });
       continue;
     }
-    importRecord ??= restored.importRecord;
-    const decision = restored.reviewDecision;
+    assertAgreesWithDecision(surfaceClaim, restored);
     const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id);
     const gaps = round.groundingRefused.find((entry) => entry.claimId === surfaceClaim.id)?.gaps;
     claims.push({
+      arrival: surfaceClaim.status === "verified" ? "reviewed" : "proposed",
       claim: memoryClaim({
         subject: { type: surfaceClaim.subjectType, id: surfaceClaim.subjectId },
         claimType: surfaceClaim.claimType,
         property: surfaceClaim.fieldOrBehavior,
         value: surfaceClaim.value as JsonValue,
-        posture: surfaceClaim.status === "verified" ? "stated" : "proposed",
       }, sourceOf(restored.importRecord, proposal)),
       origin: {
         kind: "reviewed-claim",
@@ -180,43 +222,44 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     });
   }
 
+  // Survey owns which proposals an item holds: rebuild the items from the
+  // import record, as Fieldwork does when it reads a run, and take exactly the
+  // candidates of the items the export names as undecided.
+  const items = importRecord === undefined ? undefined : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
   for (const exclusion of round.excluded) {
     if (exclusion.code !== "EXPORT_UNDECIDED") {
       withheld.push({ reason: "excluded-after-review", fieldPath: exclusion.fieldPath, detail: exclusion.code });
       continue;
     }
-    if (importRecord === undefined) {
+    if (importRecord === undefined || items === undefined) {
       withheld.push({ reason: "no-import-record", fieldPath: exclusion.fieldPath, detail: exclusion.code });
       continue;
     }
-    const { proposals } = importRecord.spec.envelope.result;
-    // Fieldwork refuses a task that declares a field twice, so the import record
-    // names exactly one claim target per field. An export without one is not
-    // one Fieldwork wrote, and is refused rather than guessed at.
-    const target = importRecord.spec.claimTargets.find((entry) => entry.fieldOrBehavior === exclusion.fieldPath);
-    if (!isNonEmptyString(target?.subjectType) || !isNonEmptyString(target.subjectId) || !isNonEmptyString(target.claimType)) {
-      throw new Error(`Reviewed export has no claim target for ${exclusion.fieldPath}, so its undecided item cannot be mapped.`);
-    }
-    // An excerpt Survey could not match to the prepared text was never a review
-    // candidate and is not grounded, so it is no proposal worth remembering.
-    const unverified = new Set(importRecord.status.diagnostics.flatMap((diagnostic) => diagnostic.kind === "excerpt-mismatch" ? [diagnostic.proposalIndex as number] : []));
-    proposals.forEach((proposal, index) => {
-      if (proposal.fieldPath !== exclusion.fieldPath) return;
-      if (unverified.has(index)) {
-        withheld.push({ reason: "excerpt-not-verified", fieldPath: exclusion.fieldPath, detail: exclusion.code });
-        return;
+    for (const itemName of exclusion.itemNames) {
+      const item = items.get(itemName);
+      if (item === undefined) throw new Error(`Reviewed export lists ${itemName} as undecided, but its import record holds no such review item.`);
+      for (const candidate of item.spec.candidates) {
+        const index = (candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndex?: unknown } | undefined)?.proposalIndex;
+        const proposal = typeof index === "number" ? importRecord.spec.envelope.result.proposals[index] : undefined;
+        if (proposal === undefined || candidate.claimTarget === undefined) throw new Error(`Review item ${itemName} has a candidate that names no proposal or claim target.`);
+        claims.push({
+          arrival: "proposed",
+          claim: memoryClaim({
+            subject: { type: candidate.claimTarget.subjectType, id: candidate.claimTarget.subjectId },
+            claimType: candidate.claimTarget.claimType,
+            property: candidate.claimTarget.fieldOrBehavior,
+            value: proposal.candidateValue as JsonValue,
+          }, sourceOf(importRecord, proposal)),
+          origin: { kind: "unreviewed-item", exclusion: { code: "EXPORT_UNDECIDED", fieldPath: exclusion.fieldPath, itemNames: exclusion.itemNames } },
+        });
       }
-      claims.push({
-        claim: memoryClaim({
-          subject: { type: target.subjectType as string, id: target.subjectId as string },
-          claimType: target.claimType as string,
-          property: exclusion.fieldPath,
-          value: proposal.candidateValue as JsonValue,
-          posture: "proposed",
-        }, sourceOf(importRecord!, proposal)),
-        origin: { kind: "unreviewed-item", exclusion: { code: "EXPORT_UNDECIDED", fieldPath: exclusion.fieldPath, itemNames: exclusion.itemNames } },
-      });
-    });
+    }
+    // A proposal Survey could not match to the prepared text was never a review
+    // candidate and is not grounded, so there is nothing to remember: say so.
+    for (const diagnostic of importRecord.status.diagnostics) {
+      const unverified = diagnostic.kind === "excerpt-mismatch" ? importRecord.spec.envelope.result.proposals[diagnostic.proposalIndex as number] : undefined;
+      if (unverified?.fieldPath === exclusion.fieldPath) withheld.push({ reason: "excerpt-not-verified", fieldPath: exclusion.fieldPath, detail: exclusion.code });
+    }
   }
 
   return {
@@ -229,7 +272,35 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   };
 }
 
-type ImportRecord = NonNullable<ReturnType<typeof restoreReviewedExtractionEvidence>>["importRecord"];
+const SURVEY_EXTRACTION_ENVELOPE_PRODUCER = "survey.kontourai.io/extraction-envelope";
+
+/**
+ * A bundle claim is only as good as the decision its evidence carries. Accepting
+ * means the decision is `verified` and selects the candidate whose value the
+ * claim states; anything else is an export that disagrees with itself.
+ */
+function assertAgreesWithDecision(claim: { readonly id: string; readonly value: unknown }, restored: Restored): void {
+  const { reviewDecision, reviewItem } = restored;
+  if (reviewDecision === undefined || reviewItem === undefined) throw new Error(`Reviewed export claim ${claim.id} carries no review item or decision.`);
+  if (reviewDecision.spec.status !== "verified") {
+    throw new Error(`Reviewed export claim ${claim.id} is stated as accepted but its Survey decision is ${reviewDecision.spec.status}.`);
+  }
+  const selected = reviewItem.spec.candidates.find((candidate) => candidate.id === reviewDecision.spec.candidateId);
+  if (selected === undefined) throw new Error(`Reviewed export claim ${claim.id}: its Survey decision selects no candidate of its review item.`);
+  const decided = reviewDecision.spec.editedValue !== undefined ? reviewDecision.spec.editedValue : selected.value;
+  if (canonicalJson(decided) !== canonicalJson(claim.value)) {
+    throw new Error(`Reviewed export claim ${claim.id} states a value that is not the one its Survey decision accepted.`);
+  }
+}
+
+/**
+ * Surface restores the record under its own declaration of Survey's shape. The two are the same
+ * record (Survey exports adapters one way, to Surface, with a field-assignability guard; see src/reviewed-evidence.ts), and
+ * Surface declares the looser shapes, so the reverse direction needs this cast until Survey exports an adapter for it.
+ */
+type SurveyImportRecord = Parameters<typeof buildReviewItemsFromExtractionEnvelopeImport>[0];
+type Restored = ReturnType<typeof restoreReviewedExtractionEvidence>;
+type ImportRecord = Restored["importRecord"];
 type Proposal = ImportRecord["spec"]["envelope"]["result"]["proposals"][number];
 
 /** The parts of `reviewRound` this projection reads; the rest of the scope passes through untouched. */
@@ -240,10 +311,6 @@ const reviewRoundView = z.object({
   decisions: z.array(z.object({ claimId: z.string() }).passthrough()).default([]),
   groundingRefused: z.array(z.object({ claimId: z.string(), gaps: z.array(z.string()) }).passthrough()).default([]),
 }).passthrough();
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value !== "";
-}
 
 /**
  * The source fields, from the proposal as Traverse recorded it. The source is
@@ -279,9 +346,9 @@ export function memoryClaimId(claim: Omit<FieldworkMemoryClaim, "id">): string {
 }
 
 function memoryClaim(
-  fields: Pick<FieldworkMemoryClaim, "subject" | "claimType" | "property" | "value" | "posture">,
+  fields: Pick<FieldworkMemoryClaim, "subject" | "claimType" | "property" | "value">,
   from: { readonly source: FieldworkMemoryClaim["source"]; readonly speaker: string },
 ): FieldworkMemoryClaim {
-  const content = { schema_version: "1.0" as const, ...fields, speaker: from.speaker, source: from.source };
+  const content = { schema_version: "1.0" as const, ...fields, speaker: from.speaker, source: from.source, posture: "stated" as const };
   return { id: memoryClaimId(content), ...content };
 }

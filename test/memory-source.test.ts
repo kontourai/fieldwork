@@ -8,7 +8,7 @@ import { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimId, memoryClaimsFromReviewedExport,
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
 import { conflictRun } from "./helpers/conflict-run.js";
-import { decide, decidedMixedRun, forgedUnverifiedConflictRun, queueOf } from "./helpers/memory-source-run.js";
+import { decide, decidedMixedRun, forgedUnverifiedConflictRun, indexedItemsRun, mixedRun, queueOf } from "./helpers/memory-source-run.js";
 import { typedFieldRun } from "./helpers/real-run.js";
 
 /*
@@ -27,9 +27,9 @@ const FIXED_OBSERVED_AT = "2026-01-01T00:00:00.000Z";
 const KIT_IDS = {
   alpha: "sha256:4d18d10d307357ae7d72099d789e677084fe68b3c36addd209721d510cdf4205",
   charlie: "sha256:64bec28e1013ac8c9e325108b53dc8daf2dfd52b16f86f214d10e239609fdb8d",
-  delta: "sha256:f77445e84dbe007c9eb9985c8ff831d4585883ce71f03c97cc4a8406af07a888",
-  statusActive: "sha256:19e42d1d34ec8a7916dabe5d2ef2716af82648f8e8ac45f1d9af3d19bbfcad89",
-  statusPaused: "sha256:4e057a7a8885201c8fbd9a1a7bc38d98371c7ed36cc11c95207750fb96052201",
+  delta: "sha256:7929bb0a0f5c60412f30c43e6148573dc71832e2fcd4226c82be965804828450",
+  statusActive: "sha256:2a742a3427851ab684f62dadcd1881662d2292b65e3c79b15543d73a3ce420cc",
+  statusPaused: "sha256:cd97eff803912b8eeaf40ecb0b08bb025d2d45b536c46991e8f748aee072ded0",
 };
 
 /** Every top-level key of the pinned schema this mapping may fill; the schema forbids any other. */
@@ -38,7 +38,7 @@ const SOURCE_KEYS = ["ref", "locator", "excerpt", "observedAt", "extractor"];
 
 interface Bundle {
   claims: { id: string; fieldOrBehavior: string; value: unknown; status: string; subjectType: string; subjectId: string; claimType: string }[];
-  evidence: { claimId: string; evidenceType: string; sourceRef: string; sourceLocator: string; excerptOrSummary: string; metadata?: Record<string, unknown> }[];
+  evidence: { claimId: string; evidenceType: string; observedAt: string; sourceRef: string; sourceLocator: string; excerptOrSummary: string; metadata?: Record<string, unknown> }[];
 }
 interface Scope { revision: number; complete: boolean; excluded: { fieldPath: string; itemNames: string[]; code: string }[]; decisions: { claimId: string }[] }
 
@@ -50,40 +50,40 @@ const one = (projection: MemorySourceProjection, property: string) => {
 };
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
-test("a mixed round maps reviewed claims as stated and unreviewed items as proposed, and the round trips back to the export", async () => {
+test("a mixed round maps reviewed claims as reviewed and unreviewed items as proposed, and the round trips back to the export", async () => {
   const exported = await reviewedExport(await decidedMixedRun("round-trip"));
   const projection = memoryClaimsFromReviewedExport(exported);
   const bundle = exported.bundle as unknown as Bundle;
   const scope = exported.reviewRound as unknown as Scope;
 
-  // The posture each property arrives with, and the id the Kit gives the same claim.
+  // The arrival each property gets, and the id the Kit gives the same claim. Every claim is posture `stated`.
   const kitIdOf = (entry: MemorySourceProjection["claims"][number]) => {
     const { id: _id, ...content } = entry.claim;
     assert.equal(entry.claim.id, memoryClaimId(content), "the id is the digest of the claim as emitted");
     return memoryClaimId({ ...content, source: { ...content.source, observedAt: FIXED_OBSERVED_AT } });
   };
   assert.deepEqual(
-    projection.claims.map((entry) => [entry.claim.property, entry.claim.value, entry.claim.posture, kitIdOf(entry)]),
+    projection.claims.map((entry) => [entry.claim.property, entry.claim.value, entry.arrival, entry.claim.posture, kitIdOf(entry)]),
     [
-      ["record.alpha", "alpha-value", "stated", KIT_IDS.alpha],
-      ["record.charlie", "charlie-value", "stated", KIT_IDS.charlie],
-      ["record.delta", "delta-value", "proposed", KIT_IDS.delta],
-      ["record.status", "Active", "proposed", KIT_IDS.statusActive],
-      ["record.status", "Paused", "proposed", KIT_IDS.statusPaused],
+      ["record.alpha", "alpha-value", "reviewed", "stated", KIT_IDS.alpha],
+      ["record.charlie", "charlie-value", "reviewed", "stated", KIT_IDS.charlie],
+      ["record.delta", "delta-value", "proposed", "stated", KIT_IDS.delta],
+      ["record.status", "Active", "proposed", "stated", KIT_IDS.statusActive],
+      ["record.status", "Paused", "proposed", "stated", KIT_IDS.statusPaused],
     ],
   );
 
   // Round trip: what the export said about each field is what the claims say, derived from the export
-  // itself and not from the constants above. Verified claims are stated, undecided items proposed,
+  // itself and not from the constants above. Verified claims arrive reviewed, undecided items proposed,
   // and a rejected claim is not remembered at all.
   const fromExport = new Map<string, string>();
-  for (const claim of bundle.claims) if (claim.status === "verified") fromExport.set(claim.fieldOrBehavior, "stated");
+  for (const claim of bundle.claims) if (claim.status === "verified") fromExport.set(claim.fieldOrBehavior, "reviewed");
   for (const exclusion of scope.excluded) {
     assert.equal(exclusion.code, "EXPORT_UNDECIDED");
     fromExport.set(exclusion.fieldPath, "proposed");
   }
   assert.deepEqual(
-    new Map(projection.claims.map((entry) => [entry.claim.property, entry.claim.posture])),
+    new Map(projection.claims.map((entry) => [entry.claim.property, entry.arrival])),
     fromExport,
   );
   assert.deepEqual(
@@ -102,6 +102,7 @@ test("a mixed round maps reviewed claims as stated and unreviewed items as propo
   assert.equal(alpha.claim.source.excerpt, evidence.excerptOrSummary);
   assert.deepEqual(alpha.claim.subject, { type: surfaceAlpha.subjectType, id: surfaceAlpha.subjectId });
   assert.equal(alpha.claim.claimType, surfaceAlpha.claimType);
+  assert.equal(alpha.claim.source.observedAt, evidence.observedAt, "the extraction time the export carries, before the golden ids fix it");
 
   // The review facts travel verbatim beside the claim.
   assert.equal(alpha.origin.kind, "reviewed-claim");
@@ -130,14 +131,14 @@ test("a mixed round maps reviewed claims as stated and unreviewed items as propo
 test("the two proposals of an undecided conflict arrive as two proposed claims, never as one value", async () => {
   const projection = memoryClaimsFromReviewedExport(await reviewedExport(await decidedMixedRun("undecided-conflict")));
   const status = byProperty(projection, "record.status");
-  assert.deepEqual(status.map((entry) => [entry.claim.value, entry.claim.posture, entry.claim.source.excerpt]), [
+  assert.deepEqual(status.map((entry) => [entry.claim.value, entry.arrival, entry.claim.source.excerpt]), [
     ["Active", "proposed", "Status: Active"],
     ["Paused", "proposed", "Status: Paused"],
   ]);
   assert.notEqual(status[0]!.claim.source.locator, status[1]!.claim.source.locator);
 });
 
-test("a chosen conflict value arrives stated on its own span, and the rival is not remembered", async () => {
+test("a chosen conflict value arrives reviewed on its own span, and the rival is not remembered", async () => {
   const run = await conflictRun("memory-chosen");
   const service = await openRun(run);
   let snapshot: ReviewQueueSessionState;
@@ -155,10 +156,10 @@ test("a chosen conflict value arrives stated on its own span, and the rival is n
   const projection = memoryClaimsFromReviewedExport(await reviewedExport(run));
   const status = one(projection, "record.status");
   assert.equal(status.claim.value, "Paused");
-  assert.equal(status.claim.posture, "stated");
+  assert.equal(status.arrival, "reviewed");
   assert.equal(status.claim.source.excerpt, "Status: Paused");
   assert.equal(projection.claims.some((entry) => entry.claim.value === "Active"), false);
-  assert.equal(one(projection, "record.alpha").claim.posture, "stated");
+  assert.equal(one(projection, "record.alpha").arrival, "reviewed");
   assert.deepEqual(projection.withheld, []);
 });
 
@@ -172,12 +173,12 @@ test("a reviewed claim whose grounding the export refused arrives as proposed, w
 
   const projection = memoryClaimsFromReviewedExport(exported);
   const date = one(projection, "doc.publicationDate");
-  assert.equal(date.claim.posture, "proposed");
+  assert.equal(date.arrival, "proposed");
   assert.ok(date.origin.kind === "reviewed-claim");
   assert.equal(date.origin.surfaceStatus, "disputed");
   assert.equal(date.origin.reviewDecision.status, "verified", "the reviewer accepted it; the export still disputes it");
   assert.deepEqual(date.origin.groundingGaps, ["schema-mismatch"]);
-  assert.equal(projection.claims.filter((entry) => entry.claim.posture === "stated").length, 2);
+  assert.equal(projection.claims.filter((entry) => entry.arrival === "reviewed").length, 2);
 });
 
 test("source authority stays per source: the same field and value from two snapshots never share an identity", async () => {
@@ -222,13 +223,16 @@ test("an export edited after the fact is mapped conservatively and every omissio
   assert.deepEqual(none.claims, []);
   assert.equal(none.withheld.filter((item) => item.reason === "no-import-record").length, 2);
 
+  // An undecided item the import record does not hold is an export that disagrees with itself.
+  assert.throws(() => edit((_bundle, scope) => { scope.excluded.find((entry) => entry.fieldPath === "record.delta")!.itemNames = ["extraction-envelope.not-an-item"]; }), /holds no such review item/);
+
   // An exclusion for any reason but "no one decided it" is not an unreviewed item.
   const conflicting = edit((_bundle, scope) => { scope.excluded.find((entry) => entry.fieldPath === "record.delta")!.code = "EXPORT_CONFLICTING_DECISIONS"; });
   assert.equal(propertiesOf(conflicting).includes("record.delta"), false);
   assert.deepEqual(conflicting.withheld.filter((item) => item.reason === "excluded-after-review").map((item) => [item.fieldPath, item.detail]), [["record.delta", "EXPORT_CONFLICTING_DECISIONS"]]);
 });
 
-test("a proposal Survey excluded for an unverifiable excerpt is not remembered, and the verified one beside it is", async () => {
+test("a proposal Survey excluded for an unverifiable excerpt is not remembered, and the verified one beside it arrives proposed", async () => {
   const run = await forgedUnverifiedConflictRun("memory-unverified");
   const items = await queueOf(run);
   await decide(run, { [items.find((item) => item.fieldPath === "record.alpha")!.name]: "accept-proposed" });
@@ -236,10 +240,78 @@ test("a proposal Survey excluded for an unverifiable excerpt is not remembered, 
   assert.deepEqual((exported.reviewRound as unknown as Scope).excluded.map((entry) => [entry.fieldPath, entry.code]), [["record.status", "EXPORT_UNDECIDED"]]);
 
   const projection = memoryClaimsFromReviewedExport(exported);
-  assert.deepEqual(byProperty(projection, "record.status").map((entry) => [entry.claim.value, entry.claim.posture, entry.claim.source.excerpt]), [["Paused", "proposed", "Status: Paused"]]);
+  assert.deepEqual(byProperty(projection, "record.status").map((entry) => [entry.claim.value, entry.arrival, entry.claim.source.excerpt]), [["Paused", "proposed", "Status: Paused"]]);
   assert.equal(projection.claims.some((entry) => entry.claim.value === "Actiff"), false);
   assert.deepEqual(projection.withheld.map((item) => [item.reason, item.fieldPath]), [["excerpt-not-verified", "record.status"]]);
-  assert.equal(one(projection, "record.alpha").claim.posture, "stated");
+  assert.equal(one(projection, "record.alpha").arrival, "reviewed");
+});
+
+test("an undecided item brings only its own proposals: a rejected sibling on the same field is not remembered", async () => {
+  const run = await indexedItemsRun("memory-indexed-rejected");
+  const queue = await queueOf(run);
+  const [first, second] = queue.filter((item) => item.fieldPath === "record.items[]");
+  assert.equal(first!.fieldPath, second!.fieldPath, "the siblings share a field");
+  await decide(run, { [queue.find((item) => item.fieldPath === "record.status")!.name]: "accept-proposed", [first!.name]: "reject-proposed" });
+  const exported = await reviewedExport(run);
+  const scope = exported.reviewRound as unknown as Scope;
+  // The export lists the undecided sibling by item, and the decided one as unsettled because its field is not.
+  assert.deepEqual(scope.excluded.map((entry) => [entry.code, entry.itemNames]), [["EXPORT_UNDECIDED", [second!.name]], ["EXPORT_FIELD_UNSETTLED", [first!.name]]]);
+
+  const projection = memoryClaimsFromReviewedExport(exported);
+  assert.deepEqual(byProperty(projection, "record.items[]").map((entry) => [entry.claim.value, entry.arrival]), [["two", "proposed"]]);
+  assert.deepEqual(projection.withheld.map((item) => [item.reason, item.detail]), [["excluded-after-review", "EXPORT_FIELD_UNSETTLED"]]);
+  assert.equal(projection.claims.some((entry) => entry.claim.value === "one"), false, "the rejected sibling is not a proposal");
+});
+
+test("two undecided siblings on one field each arrive once, and no two claims share an id", async () => {
+  const run = await indexedItemsRun("memory-indexed-undecided");
+  const queue = await queueOf(run);
+  await decide(run, { [queue.find((item) => item.fieldPath === "record.status")!.name]: "accept-proposed" });
+  const projection = memoryClaimsFromReviewedExport(await reviewedExport(run));
+  assert.deepEqual(byProperty(projection, "record.items[]").map((entry) => entry.claim.value), ["one", "two"]);
+  assert.equal(new Set(projection.claims.map((entry) => entry.claim.id)).size, projection.claims.length);
+});
+
+test("undecided items still arrive when the only decided claim is a rejected one", async () => {
+  const run = await mixedRun("memory-only-rejected");
+  const queue = await queueOf(run);
+  await decide(run, { [queue.find((item) => item.fieldPath === "record.alpha")!.name]: "reject-proposed" });
+  const projection = memoryClaimsFromReviewedExport(await reviewedExport(run));
+  assert.deepEqual(projection.claims.map((entry) => [entry.claim.property, entry.arrival]).sort(), [
+    ["record.bravo", "proposed"], ["record.charlie", "proposed"], ["record.delta", "proposed"],
+    ["record.status", "proposed"], ["record.status", "proposed"],
+  ]);
+  assert.deepEqual(projection.withheld.map((item) => item.reason), ["rejected-in-review"]);
+});
+
+test("a bundle claim that disagrees with the Survey decision its evidence carries is refused, not mapped", async () => {
+  const honest = await reviewedExport(await decidedMixedRun("disagree"));
+  const edited = (change: (bundle: Bundle) => void): ReviewedExportV1 => {
+    const copy = clone(honest) as unknown as ReviewedExportV1 & { bundle: Bundle };
+    change(copy.bundle);
+    return copy;
+  };
+  const claim = (bundle: Bundle, field: string) => bundle.claims.find((entry) => entry.fieldOrBehavior === field)!;
+
+  // Evidence is digest-bound; the bundle claim beside it is not.
+  assert.throws(() => memoryClaimsFromReviewedExport(edited((bundle) => { claim(bundle, "record.alpha").value = "NOT THE ACCEPTED VALUE"; })), /not the one its Survey decision accepted/);
+  assert.throws(() => memoryClaimsFromReviewedExport(edited((bundle) => { claim(bundle, "record.bravo").status = "verified"; })), /stated as accepted but its Survey decision is rejected/);
+  assert.throws(() => memoryClaimsFromReviewedExport(edited((bundle) => { claim(bundle, "record.alpha").status = "rejected"; })), /rejected but its Survey decision is verified/);
+});
+
+test("evidence moved onto another claim is refused by Surface's integrity binding", async () => {
+  const copy = clone(await reviewedExport(await decidedMixedRun("moved-evidence"))) as unknown as ReviewedExportV1 & { bundle: Bundle };
+  const [alpha, charlie] = ["record.alpha", "record.charlie"].map((field) => copy.bundle.claims.find((claim) => claim.fieldOrBehavior === field)!);
+  copy.bundle.evidence.find((entry) => entry.claimId === alpha!.id && entry.metadata?.reviewedExtraction)!.claimId = charlie!.id;
+  assert.throws(() => memoryClaimsFromReviewedExport(copy), /integrity binding is invalid/);
+});
+
+test("an export that carries two sources' import records is refused rather than attributed to one", async () => {
+  const first = clone(await reviewedExport(await decidedMixedRun("two-sources-a"))) as unknown as ReviewedExportV1 & { bundle: Bundle & Record<string, unknown[]>; reviewRound: Scope };
+  const second = await reviewedExport(await decidedMixedRun("two-sources-b", "a second snapshot\n")) as unknown as { bundle: Record<string, unknown[]>; reviewRound: Scope };
+  for (const key of ["claims", "evidence", "events"]) first.bundle[key]!.push(...second.bundle[key]!);
+  first.reviewRound.excluded = second.reviewRound.excluded;
+  assert.throws(() => memoryClaimsFromReviewedExport(first), /carries 2 import records/);
 });
 
 test("a value that is not a reviewed export is refused", () => {

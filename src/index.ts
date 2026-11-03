@@ -77,7 +77,7 @@ export function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> 
 }
 export { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimsFromReviewedExport } from "./memory-source.js";
 export type {
-  FieldworkMemoryClaim, FieldworkMemoryPosture, MemorySourceClaim, MemorySourceProjection,
+  FieldworkMemoryClaim, FieldworkMemoryPosture, MemoryArrival, MemorySourceClaim, MemorySourceProjection,
   ReviewedClaimOrigin, UnreviewedItemOrigin, WithheldMemoryItem,
 } from "./memory-source.js";
 export function inspectionExport(

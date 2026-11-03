@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ModelRuntime } from "@kontourai/relay";
 import { buildReviewSessionEvents, type ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1 } from "../../src/api-contracts.js";
 import { bindExtraction, importNameFor, newReviewRound, runFieldwork } from "../../src/fieldwork.js";
 import { readRun, type StoredRun } from "../../src/run-store.js";
+import type { FieldworkRuntimeBinding } from "../../src/runtime-contracts.js";
 import { openRun } from "../../src/server.js";
 import { apiFetch, tempRoot } from "../helpers.js";
 import { conflictRun } from "./conflict-run.js";
@@ -107,4 +109,45 @@ export async function forgedUnverifiedConflictRun(label: string): Promise<string
   await writeFile(envelopePath, JSON.stringify(envelope, null, 2));
   await writeFile(runPath, JSON.stringify({ ...stored, extraction, review: newReviewRound(imported.reviewItems, stored.createdAt) }, null, 2));
   return run;
+}
+
+/**
+ * A run whose model answers `record.status` and two values of one multi-valued
+ * field, `record.items[]`, which Survey reviews as two items (one per indexed
+ * proposal) that share a field. Used to tell sibling items apart.
+ */
+export async function indexedItemsRun(label: string): Promise<string> {
+  const root = await tempRoot(`memory-source-${label}`);
+  const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));
+  task.spec.traverse.targetSchema = [
+    { path: "record.status", type: "string", inferenceType: "explicit" },
+    { path: "record.items[]", type: "string", inferenceType: "explicit" },
+  ];
+  task.spec.projections.push({ ...task.spec.projections[0], fieldPath: "record.items[]" });
+  const taskPath = join(root, "task.json");
+  const sourcePath = join(root, "source.txt");
+  await writeFile(taskPath, JSON.stringify(task));
+  await writeFile(sourcePath, "Status: Active\nValue: one\nValue: two\n");
+  const proposal = (fieldPath: string, value: string, excerpt: string) => ({ fieldPath, value, confidence: 1, excerpt, locator: null, occurrenceHint: null });
+  const runtime: ModelRuntime = {
+    id: "fake:indexed-items",
+    capabilities: () => ({
+      structuredTools: true, structuredToolsFidelity: "native", outputTokenLimitFidelity: "native",
+      streaming: false, abort: true, usage: true,
+    }),
+    invoke: async () => ({
+      provider: "fixture-runtime", model: "fixture-model", outputText: "",
+      toolCalls: [{
+        id: "tool-indexed", name: "submit_extraction_proposals",
+        input: { proposals: [
+          proposal("record.status", "Active", "Status: Active"),
+          proposal("record.items[0]", "one", "Value: one"),
+          proposal("record.items[1]", "two", "Value: two"),
+        ] },
+      }],
+      usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 }, latencyMs: 1, stopReason: "tool_use",
+    }),
+  };
+  const binding: FieldworkRuntimeBinding = { role: "fieldwork-extraction", candidates: [{ id: "scripted", runtime }], budget: { maxAttempts: 4, maxElapsedMs: 60_000 } };
+  return (await runFieldwork({ taskPath, sourcePath, root, runtime: binding })).runDirectory;
 }
