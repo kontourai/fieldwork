@@ -20,7 +20,7 @@ import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./ap
 export const MEMORY_CLAIM_SCHEMA_PIN = Object.freeze({
   repo: "kontourai/flow-agents",
   /** Head of kontourai/flow-agents#1574 (branch feat/1571-memory-claims-routing) when this mapping was written. */
-  commit: "5e11b1ca719dd7ad082ec133452dee6163bdf77a",
+  commit: "441d894074775ad0ecb3b8d1594a176fb334a28e",
   schema: "kits/knowledge/schemas/knowledge/memory-claim.schema.json",
   schemaVersion: "1.0",
 });
@@ -267,25 +267,21 @@ function sourceOf(record: ImportRecord, proposal: Proposal): { readonly source: 
 
 /**
  * The Kit's identity rule, pinned at {@link MEMORY_CLAIM_SCHEMA_PIN}: `id` is the
- * sha256 of the canonical JSON of the claim's identity fields, which for the
- * fields this mapping fills are the ones below. The Kit recomputes it on read
- * and refuses a claim whose id differs, so this must match it exactly.
- * test/memory-source.test.ts pins ids the Kit's own builder produced.
+ * sha256 of the canonical JSON of every other field of the claim, provenance
+ * included. The Kit recomputes it on read and refuses a claim whose id differs,
+ * so this must match it exactly. Every field this mapping fills is in the
+ * digest; the Kit's ordering of `supersedes` and `audience` does not apply
+ * because neither is emitted. test/memory-source.test.ts pins ids the Kit's own
+ * builder produced.
  */
+export function memoryClaimId(claim: Omit<FieldworkMemoryClaim, "id">): string {
+  return `sha256:${createHash("sha256").update(canonicalJson(claim)).digest("hex")}`;
+}
+
 function memoryClaim(
   fields: Pick<FieldworkMemoryClaim, "subject" | "claimType" | "property" | "value" | "posture">,
   from: { readonly source: FieldworkMemoryClaim["source"]; readonly speaker: string },
 ): FieldworkMemoryClaim {
-  const identity = {
-    schema_version: "1.0",
-    subject: fields.subject,
-    claimType: fields.claimType,
-    property: fields.property,
-    value: fields.value,
-    speaker: from.speaker,
-    posture: fields.posture,
-    source: { ref: from.source.ref },
-  };
-  const id = `sha256:${createHash("sha256").update(canonicalJson(identity)).digest("hex")}`;
-  return { schema_version: "1.0", id, ...fields, speaker: from.speaker, source: from.source };
+  const content = { schema_version: "1.0" as const, ...fields, speaker: from.speaker, source: from.source };
+  return { id: memoryClaimId(content), ...content };
 }

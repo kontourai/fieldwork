@@ -4,7 +4,7 @@ import test from "node:test";
 import type { ReviewQueueSessionState } from "@kontourai/survey/review-workbench";
 import type { FieldworkRunViewV1, ReviewedExportV1 } from "../src/api-contracts.js";
 import { reviewedExport } from "../src/fieldwork.js";
-import { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimsFromReviewedExport, type MemorySourceProjection } from "../src/memory-source.js";
+import { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimId, memoryClaimsFromReviewedExport, type MemorySourceProjection } from "../src/memory-source.js";
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
 import { conflictRun } from "./helpers/conflict-run.js";
@@ -22,12 +22,14 @@ import { typedFieldRun } from "./helpers/real-run.js";
  * with the procedure in docs/memory-source.md.
  */
 
-const IDS = {
-  alpha: "sha256:50208aa11dcad42e2872b629267f8eb3af75cf42caa1b4e99158c8f91a209e79",
-  charlie: "sha256:ca083b9e4c9320643f47ae0c0744d38a80027c15d90558436cfa00cca6ff6966",
-  delta: "sha256:40c6ec7240c2d332decda79e6aad152423973df987417d83a89400ef6b8603a8",
-  statusActive: "sha256:a5247438e35f8b08587b32fd5d8023ac02dfcb0ab50a5fbf3b1d57e232839023",
-  statusPaused: "sha256:eaffebb136b90638eae6287efc9249a7e8c8935c0328ae81b4a02a8c7177548a",
+const FIXED_OBSERVED_AT = "2026-01-01T00:00:00.000Z";
+/** The Kit's own `memoryClaim(...).id` for each claim below, with `source.observedAt` fixed (a run's extraction time differs per run). */
+const KIT_IDS = {
+  alpha: "sha256:4d18d10d307357ae7d72099d789e677084fe68b3c36addd209721d510cdf4205",
+  charlie: "sha256:64bec28e1013ac8c9e325108b53dc8daf2dfd52b16f86f214d10e239609fdb8d",
+  delta: "sha256:f77445e84dbe007c9eb9985c8ff831d4585883ce71f03c97cc4a8406af07a888",
+  statusActive: "sha256:19e42d1d34ec8a7916dabe5d2ef2716af82648f8e8ac45f1d9af3d19bbfcad89",
+  statusPaused: "sha256:4e057a7a8885201c8fbd9a1a7bc38d98371c7ed36cc11c95207750fb96052201",
 };
 
 /** Every top-level key of the pinned schema this mapping may fill; the schema forbids any other. */
@@ -54,15 +56,20 @@ test("a mixed round maps reviewed claims as stated and unreviewed items as propo
   const bundle = exported.bundle as unknown as Bundle;
   const scope = exported.reviewRound as unknown as Scope;
 
-  // The posture each property arrives with, against literals the Kit's ids were built from.
+  // The posture each property arrives with, and the id the Kit gives the same claim.
+  const kitIdOf = (entry: MemorySourceProjection["claims"][number]) => {
+    const { id: _id, ...content } = entry.claim;
+    assert.equal(entry.claim.id, memoryClaimId(content), "the id is the digest of the claim as emitted");
+    return memoryClaimId({ ...content, source: { ...content.source, observedAt: FIXED_OBSERVED_AT } });
+  };
   assert.deepEqual(
-    projection.claims.map((entry) => [entry.claim.property, entry.claim.value, entry.claim.posture, entry.claim.id]),
+    projection.claims.map((entry) => [entry.claim.property, entry.claim.value, entry.claim.posture, kitIdOf(entry)]),
     [
-      ["record.alpha", "alpha-value", "stated", IDS.alpha],
-      ["record.charlie", "charlie-value", "stated", IDS.charlie],
-      ["record.delta", "delta-value", "proposed", IDS.delta],
-      ["record.status", "Active", "proposed", IDS.statusActive],
-      ["record.status", "Paused", "proposed", IDS.statusPaused],
+      ["record.alpha", "alpha-value", "stated", KIT_IDS.alpha],
+      ["record.charlie", "charlie-value", "stated", KIT_IDS.charlie],
+      ["record.delta", "delta-value", "proposed", KIT_IDS.delta],
+      ["record.status", "Active", "proposed", KIT_IDS.statusActive],
+      ["record.status", "Paused", "proposed", KIT_IDS.statusPaused],
     ],
   );
 

@@ -10,13 +10,13 @@ The claims follow the Knowledge Kit memory claim schema. Fieldwork references it
 | --- | --- |
 | Repository | `kontourai/flow-agents` |
 | Pull request | [#1574](https://github.com/kontourai/flow-agents/pull/1574), branch `feat/1571-memory-claims-routing` |
-| Commit | `5e11b1ca719dd7ad082ec133452dee6163bdf77a` |
+| Commit | `441d894074775ad0ecb3b8d1594a176fb334a28e` |
 | Schema | `kits/knowledge/schemas/knowledge/memory-claim.schema.json`, `schema_version` `1.0` |
 | Contract | `kits/knowledge/docs/memory-claims.md` at the same commit |
 
 The same values are exported as `MEMORY_CLAIM_SCHEMA_PIN` and returned in each projection's `mapping`. Moving to a newer Kit commit is a deliberate change to the pin, the mapping below and the test.
 
-Fieldwork builds the claim `id` itself (the Kit's identity rule: the sha256 of the canonical JSON of the claim's identity fields) because the Kit does not yet export a builder a package can import. The Kit recomputes the id on read and refuses a mismatch, so `test/memory-source.test.ts` pins ids that the Kit's own `memoryClaim` produced for these claims, and the Kit's `assertMemoryClaim` accepted every claim at the pinned commit.
+Fieldwork builds the claim `id` itself (the Kit's identity rule at this commit: the sha256 of the canonical JSON of every other field of the claim, provenance included, so an edited excerpt or time is a different claim) because the Kit does not yet export a builder a package can import. The Kit recomputes the id on read and refuses a mismatch, so `test/memory-source.test.ts` pins ids that the Kit's own `memoryClaim` produced for these claims (with `source.observedAt` fixed, since a run's extraction time differs per run), and the Kit's `assertMemoryClaim` accepted every claim at the pinned commit.
 
 ## Review posture
 
@@ -49,7 +49,7 @@ Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speak
 | `source.ref` | the run's source snapshot ref (`fieldwork-source:v1:...`) |
 | `source.locator` | the proposal's `chars:<start>-<end>` locator |
 | `source.excerpt` | the proposal's verbatim excerpt |
-| `source.observedAt` | when Traverse extracted it |
+| `source.observedAt` | when Traverse extracted it (part of the Kit identity, so a re-run of the same source gives new ids) |
 | `source.extractor` | the proposal's extractor |
 | `speaker` | the source ref. Fieldwork knows no author; naming the snapshot keeps each snapshot's authority its own |
 | `validTime`, `qualifiers`, `supersedes`, `audience` | never emitted. Nothing in a reviewed export asserts them, and an absent `audience` inherits the source's, so omission never widens |
