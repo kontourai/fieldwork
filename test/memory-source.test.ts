@@ -286,19 +286,40 @@ test("undecided items still arrive when the only decided claim is a rejected one
   assert.deepEqual(projection.withheld.map((item) => item.reason), ["rejected-in-review"]);
 });
 
+/** The export a test edits: bundle, receipt and round scope as plain JSON. */
+type Editable = ReviewedExportV1 & {
+  bundle: Bundle & { events: { id: string; claimId: string; status: string; createdAt: string }[] };
+  reviewedGrounding: { gaps: { kind: string; claimId?: string }[] };
+  reviewRound: Scope & { groundingRefused: { claimId: string; gaps: string[] }[] };
+};
+const editable = (honest: ReviewedExportV1): Editable => clone(honest) as unknown as Editable;
+const claimNamed = (copy: Editable, field: string) => copy.bundle.claims.find((claim) => claim.fieldOrBehavior === field)!;
+/**
+ * Set a claim's status where every record that states it agrees (the claim, its latest event, the grounding receipt
+ * and the refusal list), so a test can then break exactly one rule.
+ */
+const settle = (copy: Editable, field: string, status: string) => {
+  const claim = claimNamed(copy, field);
+  claim.status = status;
+  const events = copy.bundle.events.filter((event) => event.claimId === claim.id);
+  events.forEach((event) => { event.status = status; });
+  copy.reviewedGrounding.gaps = (copy.reviewedGrounding.gaps ?? []).filter((gap) => gap.claimId !== claim.id);
+  copy.reviewRound.groundingRefused = (copy.reviewRound.groundingRefused ?? []).filter((entry) => entry.claimId !== claim.id);
+};
+const refuses = (copy: Editable, message: RegExp) => assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
+
 test("a bundle claim that disagrees with the Survey decision its evidence carries is refused, not mapped", async () => {
   const honest = await reviewedExport(await decidedMixedRun("disagree"));
-  const edited = (change: (bundle: Bundle) => void): ReviewedExportV1 => {
-    const copy = clone(honest) as unknown as ReviewedExportV1 & { bundle: Bundle };
-    change(copy.bundle);
-    return copy;
-  };
-  const claim = (bundle: Bundle, field: string) => bundle.claims.find((entry) => entry.fieldOrBehavior === field)!;
-
   // Evidence is digest-bound; the bundle claim beside it is not.
-  assert.throws(() => memoryClaimsFromReviewedExport(edited((bundle) => { claim(bundle, "record.alpha").value = "NOT THE ACCEPTED VALUE"; })), /not the one its Survey decision accepted/);
-  assert.throws(() => memoryClaimsFromReviewedExport(edited((bundle) => { claim(bundle, "record.bravo").status = "verified"; })), /stated as accepted but its Survey decision is rejected/);
-  assert.throws(() => memoryClaimsFromReviewedExport(edited((bundle) => { claim(bundle, "record.alpha").status = "rejected"; })), /rejected but its Survey decision is verified/);
+  const value = editable(honest);
+  claimNamed(value, "record.alpha").value = "NOT THE ACCEPTED VALUE";
+  refuses(value, /not the one its Survey decision accepted/);
+  const accepted = editable(honest);
+  settle(accepted, "record.bravo", "verified");
+  refuses(accepted, /stated as accepted but its Survey decision is rejected/);
+  const rejected = editable(honest);
+  settle(rejected, "record.alpha", "rejected");
+  refuses(rejected, /rejected but its Survey decision is verified/);
 });
 
 test("evidence moved onto another claim is refused by Surface's integrity binding", async () => {
@@ -308,41 +329,83 @@ test("evidence moved onto another claim is refused by Surface's integrity bindin
   assert.throws(() => memoryClaimsFromReviewedExport(copy), /integrity binding is invalid/);
 });
 
-test("a claim that disagrees with its decision or the export's grounding refusals is refused, whichever field was edited", async () => {
+test("a claim that disagrees with its decision, its events or the grounding receipt is refused, whichever record was edited", async () => {
   const mixed = await reviewedExport(await decidedMixedRun("disagree-more"));
   const typedRun = await typedFieldRun("memory-disagree-typed", { versionAsNumber: true });
   await decide(typedRun, Object.fromEntries((await queueOf(typedRun)).map((item) => [item.name, "accept-proposed"])));
   const typed = await reviewedExport(typedRun);
-  const refuses = (honest: ReviewedExportV1, change: (copy: { bundle: Bundle; reviewRound: Scope & { groundingRefused: { claimId: string; gaps: string[] }[] } & Record<string, unknown> }) => void, message: RegExp) => {
-    const copy = clone(honest) as unknown as ReviewedExportV1 & { bundle: Bundle; reviewRound: Scope & { groundingRefused: { claimId: string; gaps: string[] }[] } & Record<string, unknown> };
-    change(copy);
-    assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
-  };
-  const named = (bundle: Bundle, field: string) => bundle.claims.find((claim) => claim.fieldOrBehavior === field)!;
+  assert.deepEqual((typed.bundle as unknown as Bundle).claims.filter((claim) => claim.status === "disputed").map((claim) => claim.fieldOrBehavior), ["doc.publicationDate"]);
 
   // The claim target is part of what the reviewer accepted.
   for (const [key, value] of [["subjectType", "other"], ["subjectId", "someone-else"], ["claimType", "other"], ["fieldOrBehavior", "record.other"]] as const) {
-    refuses(mixed, (copy) => { (named(copy.bundle, "record.alpha") as unknown as Record<string, unknown>)[key] = value; }, /claim target other than the one its Survey decision accepted/);
+    const copy = editable(mixed);
+    (claimNamed(copy, "record.alpha") as unknown as Record<string, unknown>)[key] = value;
+    refuses(copy, /claim target other than the one its Survey decision accepted/);
   }
-  // The status has to match the export's grounding refusals, in both directions.
-  const disputed = typed.bundle as unknown as Bundle;
-  assert.deepEqual(disputed.claims.filter((claim) => claim.status === "disputed").map((claim) => claim.fieldOrBehavior), ["doc.publicationDate"]);
-  refuses(typed, (copy) => { named(copy.bundle, "doc.publicationDate").status = "verified"; }, /not a disputed claim of its bundle/);
-  refuses(typed, (copy) => { named(copy.bundle, "doc.title").status = "disputed"; }, /latest event says verified/);
-  // Editing the status and the refusal list together still disagrees with the claim's own events.
-  refuses(typed, (copy) => { named(copy.bundle, "doc.publicationDate").status = "verified"; copy.reviewRound.groundingRefused = []; }, /latest event says disputed/);
-  // A disputed claim Fieldwork did not list as refused is not one it disputed.
-  refuses(typed, (copy) => { copy.reviewRound.groundingRefused = []; }, /disagrees with the export's grounding refusals/);
-  refuses(typed, (copy) => { copy.reviewRound.groundingRefused.push({ claimId: "extraction-envelope.nothing.claim", gaps: ["schema-mismatch"] } as never); }, /not a disputed claim of its bundle/);
+
+  // The status has to match the claim's latest event.
+  const verifiedToDisputed = editable(typed);
+  claimNamed(verifiedToDisputed, "doc.title").status = "disputed";
+  refuses(verifiedToDisputed, /latest event says verified/);
+  const rejectedToVerified = editable(mixed);
+  rejectedToVerified.bundle.events.find((event) => event.claimId === claimNamed(rejectedToVerified, "record.bravo").id)!.status = "verified";
+  refuses(rejectedToVerified, /latest event says verified/);
+  // Events tie: Surface takes the first of equal times, so an earlier tied dispute wins over the verification.
+  const tie = editable(mixed);
+  const alphaEvent = tie.bundle.events.find((event) => event.claimId === claimNamed(tie, "record.alpha").id)!;
+  tie.bundle.events.unshift({ ...alphaEvent, id: `${alphaEvent.id}.tied`, status: "disputed" });
+  refuses(tie, /latest event says disputed/);
+  // Editing status, refusal list and receipt together still disagrees with the events.
+  const coordinated = editable(typed);
+  const date = claimNamed(coordinated, "doc.publicationDate");
+  const events = coordinated.bundle.events.filter((event) => event.claimId === date.id);
+  date.status = "verified";
+  coordinated.reviewedGrounding.gaps = coordinated.reviewedGrounding.gaps.filter((gap) => gap.claimId !== date.id);
+  coordinated.reviewRound.groundingRefused = [];
+  assert.equal(events.at(-1)!.status, "disputed");
+  refuses(coordinated, /latest event says disputed/);
+
+  // The receipt: a promotion that also rewrites the claim, its event and the refusal list is contradicted by it.
+  const promoted = editable(typed);
+  const promotedDate = claimNamed(promoted, "doc.publicationDate");
+  promoted.bundle.events.filter((event) => event.claimId === promotedDate.id).forEach((event) => { event.status = "verified"; });
+  promotedDate.status = "verified";
+  promoted.reviewRound.groundingRefused = [];
+  refuses(promoted, /grounding receipt records schema-mismatch .* which the export calls verified/);
+  // A refusal the receipt does not record, or for a claim that is not disputed or does not exist.
+  const unrecorded = editable(typed);
+  unrecorded.reviewRound.groundingRefused[0]!.gaps.push("hidden-conflict");
+  refuses(unrecorded, /which its grounding receipt does not record/);
+  const wrongClaim = editable(typed);
+  wrongClaim.reviewRound.groundingRefused.push({ claimId: claimNamed(wrongClaim, "doc.title").id, gaps: ["schema-mismatch"] });
+  refuses(wrongClaim, /not a disputed claim of its bundle/);
+  const nonexistent = editable(typed);
+  nonexistent.reviewRound.groundingRefused.push({ claimId: "extraction-envelope.nothing.claim", gaps: ["schema-mismatch"] });
+  refuses(nonexistent, /not a disputed claim of its bundle/);
+  // A disputed claim with no refusal at all (receipt cleared too) is not one Fieldwork disputed.
+  const unlisted = editable(typed);
+  unlisted.reviewedGrounding.gaps = [];
+  unlisted.reviewRound.groundingRefused = [];
+  refuses(unlisted, /disagrees with the export's grounding refusals/);
+
   // A decision that was held is not an accepted one, whatever its status says. The evidence is re-projected
   // through Surface so its digest binding is valid: only Fieldwork's own check can refuse it.
-  refuses(mixed, (copy) => {
-    const alpha = named(copy.bundle, "record.alpha");
-    const index = copy.bundle.evidence.findIndex((item) => item.claimId === alpha.id && item.metadata?.reviewedExtraction);
-    const restored = restoreReviewedExtractionEvidence(copy.bundle.evidence[index] as never);
-    (restored.reviewDecision!.spec as { resolution?: string }).resolution = "held";
-    copy.bundle.evidence[index] = projectReviewedExtractionEvidence(restored).evidence as never;
-  }, /stated as accepted but its Survey decision is held/);
+  const held = editable(mixed);
+  const heldIndex = held.bundle.evidence.findIndex((item) => item.claimId === claimNamed(held, "record.alpha").id && item.metadata?.reviewedExtraction);
+  const heldInput = restoreReviewedExtractionEvidence(held.bundle.evidence[heldIndex] as never);
+  (heldInput.reviewDecision!.spec as { resolution?: string }).resolution = "held";
+  held.bundle.evidence[heldIndex] = projectReviewedExtractionEvidence(heldInput).evidence as never;
+  refuses(held, /stated as accepted but its Survey decision is held/);
+
+  // Two evidence entries for one claim are two decisions: neither may silently win.
+  const doubled = editable(mixed);
+  const alpha = claimNamed(doubled, "record.alpha");
+  const original = doubled.bundle.evidence.find((item) => item.claimId === alpha.id && item.metadata?.reviewedExtraction)!;
+  const second = restoreReviewedExtractionEvidence(original as never);
+  second.evidenceId = `${second.evidenceId}.second`;
+  (second.reviewDecision!.spec as { status: string }).status = "rejected";
+  doubled.bundle.evidence.unshift(projectReviewedExtractionEvidence(second).evidence as never);
+  refuses(doubled, /more than one reviewed-extraction evidence entry/);
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
@@ -392,9 +455,21 @@ test("an export that disagrees with itself about who decided what, or what it le
   const exclusionOf = (copy: { reviewRound: Scope }, field: string) => copy.reviewRound.excluded.find((entry) => entry.fieldPath === field)!;
 
   // Attribution: the decision it names, who made it, and that there is one.
-  refuses((copy) => { decisionOf(copy, "record.alpha").reviewItemName = decisionOf(copy, "record.bravo").reviewItemName; }, /no round attribution for the review item/);
-  refuses((copy) => { decisionOf(copy, "record.alpha").actor.id = "someone-else"; }, /is attributed to someone-else/);
+  refuses((copy) => { decisionOf(copy, "record.alpha").reviewItemName = "extraction-envelope.not-its-item"; }, /no round attribution that names the review item and actor/);
+  refuses((copy) => { decisionOf(copy, "record.alpha").actor.id = "someone-else"; }, /no round attribution that names the review item and actor/);
+  refuses((copy) => { decisionOf(copy, "record.bravo").actor.id = "someone-else"; }, /no round attribution that names the review item and actor/);
   refuses((copy) => { copy.reviewRound.decisions = copy.reviewRound.decisions.filter((entry) => entry.claimId !== claimIdOf(copy, "record.alpha")); }, /no round attribution/);
+  refuses((copy) => { copy.reviewRound.decisions.push({ ...decisionOf(copy, "record.alpha"), actor: { id: "someone-else" } }); }, /more than one decision/);
+  // A duplicate attribution that names the undecided item cannot hide the item from the accounting.
+  refuses((copy) => {
+    exclusionOf(copy, "record.delta").itemNames.forEach((name) => copy.reviewRound.decisions.push({ ...decisionOf(copy, "record.alpha"), reviewItemName: name }));
+    copy.reviewRound.excluded = copy.reviewRound.excluded.filter((entry) => entry.fieldPath !== "record.delta");
+  }, /more than one decision/);
+  // An exclusion for another reason cannot name an item the export also exports a decision for.
+  refuses((copy) => {
+    copy.reviewRound.excluded.push({ fieldPath: "record.alpha", itemNames: [decisionOf(copy, "record.alpha").reviewItemName], code: "EXPORT_CONFLICTING_DECISIONS" });
+    copy.reviewRound.complete = false;
+  }, /also exports a decision for it/);
   refuses((copy) => { copy.reviewRound.decisions.push({ claimId: "extraction-envelope.nothing.claim", reviewItemName: "x", actor: { id: "y" } } as never); }, /which is not one of its claims/);
   // A rejected item stays decided even when its evidence is gone: it cannot come back as undecided.
   refuses((copy) => {
@@ -484,6 +559,34 @@ test("an honest export from every example task projects, with a claim per item a
       assert.equal(projection.claims.every((entry) => entry.claim.posture === "stated"), true, label);
       assert.deepEqual(projection.withheld, [], label);
     }
+  }
+});
+
+test("an honest export with a rival Survey excluded, all items decided, projects that claim as proposed with the receipt's gap", async () => {
+  const run = await forgedUnverifiedConflictRun("memory-excluded-rival-decided");
+  await decide(run, Object.fromEntries((await queueOf(run)).map((item) => [item.name, "accept-proposed"])));
+  const exported = await reviewedExport(run);
+  const projection = memoryClaimsFromReviewedExport(exported);
+  const status = one(projection, "record.status");
+  assert.deepEqual([status.claim.value, status.arrival], ["Paused", "proposed"]);
+  assert.ok(status.origin.kind === "reviewed-claim");
+  assert.deepEqual([status.origin.surfaceStatus, status.origin.groundingGaps], ["disputed", ["excluded-rival-unresolved"]]);
+  assert.equal(one(projection, "record.alpha").arrival, "reviewed");
+  assert.equal(projection.reviewRound.complete, true);
+});
+
+test("a conflict nobody could confirm, or that was rejected whole, is withheld, and the rest of the round still maps", async () => {
+  for (const decision of ["reject-proposed", "could-not-confirm"] as const) {
+    const run = await conflictRun(`memory-${decision}`);
+    const queue = await queueOf(run);
+    const conflict = queue.find((item) => item.candidateCount > 1)!;
+    await decide(run, Object.fromEntries(queue.map((item) => [item.name, item === conflict ? decision : "accept-proposed"])), undefined, { [conflict.name]: "Neither value can be confirmed." });
+    const exported = await reviewedExport(run);
+    const status = (exported.bundle as unknown as Bundle).claims.find((claim) => claim.fieldOrBehavior === "record.status")!;
+    assert.equal(status.status, decision === "reject-proposed" ? "rejected" : "disputed");
+    const projection = memoryClaimsFromReviewedExport(exported);
+    assert.deepEqual(projection.claims.map((entry) => [entry.claim.property, entry.arrival]), [["record.alpha", "reviewed"]], decision);
+    assert.deepEqual(projection.withheld.map((item) => [item.reason, item.fieldPath]), [[decision === "reject-proposed" ? "rejected-in-review" : "no-reviewed-evidence", "record.status"]], decision);
   }
 });
 

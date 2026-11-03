@@ -158,6 +158,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   const bundle = validateTrustBundle(output.bundle);
   const resolveImportRecord = resolverFromBundle(bundle);
   const round = reviewRoundView.parse(output.reviewRound);
+  const groundingGaps = reviewedGroundingView.parse(output.reviewedGrounding).gaps;
   const claims: MemorySourceClaim[] = [];
   const withheld: WithheldMemoryItem[] = [];
 
@@ -168,6 +169,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   for (const evidence of bundle.evidence) {
     if (evidence.metadata?.reviewedExtraction === undefined) continue;
     const restored = restoreReviewedExtractionEvidence(evidence, { resolveImportRecord });
+    if (restoredByClaim.has(evidence.claimId)) throw new Error(`Reviewed export carries more than one reviewed-extraction evidence entry for ${evidence.claimId}.`);
     restoredByClaim.set(evidence.claimId, restored);
     records.set(reviewedExtractionImportRecordDigest(restored.importRecord), restored.importRecord);
   }
@@ -179,14 +181,46 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   // The round scope has to agree with the bundle it travels with.
   const claimIds = new Set(bundle.claims.map((claim) => claim.id));
   if (round.complete !== (round.excluded.length === 0)) throw new Error("Reviewed export says it is complete but lists exclusions, or lists none but says it is partial.");
-  for (const entry of round.decisions) if (!claimIds.has(entry.claimId)) throw new Error(`Reviewed export attributes a decision to ${entry.claimId}, which is not one of its claims.`);
-  for (const entry of round.groundingRefused) {
-    if (bundle.claims.find((claim) => claim.id === entry.claimId)?.status !== "disputed") throw new Error(`Reviewed export lists a grounding refusal for ${entry.claimId}, which is not a disputed claim of its bundle.`);
+  const attributedClaims = new Set<string>();
+  const attributedItems = new Set<string>();
+  for (const entry of round.decisions) {
+    if (!claimIds.has(entry.claimId)) throw new Error(`Reviewed export attributes a decision to ${entry.claimId}, which is not one of its claims.`);
+    if (attributedClaims.has(entry.claimId) || attributedItems.has(entry.reviewItemName)) throw new Error(`Reviewed export attributes more than one decision to ${entry.claimId} or ${entry.reviewItemName}.`);
+    attributedClaims.add(entry.claimId);
+    attributedItems.add(entry.reviewItemName);
   }
-
+  const statusOf = new Map(bundle.claims.map((claim) => [claim.id, claim.status]));
+  // The receipt and the list derived from it have to say the same thing: every refusal is a gap of the receipt, and a
+  // claim the export calls verified has no gap that would have disputed it (structural gaps leave a claim verified).
+  // A disputed claim with no reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
+  for (const entry of round.groundingRefused) {
+    if (statusOf.get(entry.claimId) !== "disputed") throw new Error(`Reviewed export lists a grounding refusal for ${entry.claimId}, which is not a disputed claim of its bundle.`);
+    for (const kind of entry.gaps) {
+      if (!groundingGaps.some((gap) => gap.claimId === entry.claimId && gap.kind === kind)) throw new Error(`Reviewed export refuses ${entry.claimId} for ${kind}, which its grounding receipt does not record.`);
+    }
+  }
+  for (const gap of groundingGaps) {
+    if (gap.claimId !== undefined && statusOf.get(gap.claimId) === "verified" && !STRUCTURAL_GAPS.has(gap.kind)) {
+      throw new Error(`Reviewed export's grounding receipt records ${gap.kind} for ${gap.claimId}, which the export calls verified.`);
+    }
+  }
   for (const surfaceClaim of bundle.claims) {
     const restored = restoredByClaim.get(surfaceClaim.id);
     const decision = restored?.reviewDecision;
+    if (surfaceClaim.status === "verified" || surfaceClaim.status === "disputed" || surfaceClaim.status === "rejected") {
+      // Surface derives a claim's status from its latest event, taking the first of equal times (`deriveTrustStatus`);
+      // the `status` field beside the events is a copy.
+      const latest = [...bundle.events].filter((event) => event.claimId === surfaceClaim.id)
+        .reduce<{ status: string; at: number } | undefined>((last, event) => last === undefined || Date.parse(event.createdAt) > last.at ? { status: event.status, at: Date.parse(event.createdAt) } : last, undefined);
+      if (latest?.status !== surfaceClaim.status) {
+        throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, but its latest event says ${latest?.status ?? "nothing"}.`);
+      }
+      // Fieldwork attributes every claim it exports, rejected ones included, to the item and actor of its decision.
+      const attributed = round.decisions.find((entry) => entry.claimId === surfaceClaim.id);
+      if (attributed === undefined || (decision !== undefined && (attributed.reviewItemName !== decision.spec.reviewItemName || attributed.actor.id !== decision.spec.actor?.id))) {
+        throw new Error(`Reviewed export claim ${surfaceClaim.id} has no round attribution that names the review item and actor of its Survey decision.`);
+      }
+    }
     if (surfaceClaim.status === "rejected") {
       if (decision !== undefined && decision.spec.status !== "rejected") {
         throw new Error(`Reviewed export claim ${surfaceClaim.id} is rejected but its Survey decision is ${decision.spec.status}.`);
@@ -204,19 +238,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       continue;
     }
     assertAgreesWithDecision(surfaceClaim, restored);
-    // Surface derives a claim's status from its events; the `status` field beside them is a copy.
-    const latest = bundle.events.filter((event) => event.claimId === surfaceClaim.id).reduce<{ status: string; at: string } | undefined>(
-      (last, event) => last === undefined || event.createdAt >= last.at ? { status: event.status, at: event.createdAt } : last, undefined);
-    if (latest?.status !== surfaceClaim.status) {
-      throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, but its latest event says ${latest?.status ?? "nothing"}.`);
-    }
-    const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id);
-    if (attribution === undefined || attribution.reviewItemName !== decision.spec.reviewItemName) {
-      throw new Error(`Reviewed export claim ${surfaceClaim.id} has no round attribution for the review item its Survey decision answers.`);
-    }
-    if (attribution.actor.id !== decision.spec.actor?.id) {
-      throw new Error(`Reviewed export claim ${surfaceClaim.id} is attributed to ${attribution.actor.id}, but its Survey decision names ${decision.spec.actor?.id ?? "no actor"}.`);
-    }
+    const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id)!;
     const gaps = round.groundingRefused.find((entry) => entry.claimId === surfaceClaim.id)?.gaps;
     // Fieldwork disputes exactly the accepted claims whose grounding it refused and lists them in
     // `groundingRefused`, so the status and the list must say the same thing.
@@ -260,6 +282,10 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   const items = importRecord === undefined ? undefined : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
   for (const exclusion of round.excluded) {
     if (exclusion.code !== "EXPORT_UNDECIDED") {
+      // Fieldwork leaves these items out of the export, so none of them has a claim, evidence or attribution in it.
+      for (const itemName of exclusion.itemNames) {
+        if (decidedItems.has(itemName)) throw new Error(`Reviewed export excludes ${itemName} (${exclusion.code}) but also exports a decision for it.`);
+      }
       withheld.push({ reason: "excluded-after-review", fieldPath: exclusion.fieldPath, detail: exclusion.code });
       continue;
     }
@@ -370,6 +396,14 @@ type SurveyImportRecord = Parameters<typeof buildReviewItemsFromExtractionEnvelo
 type Restored = ReturnType<typeof restoreReviewedExtractionEvidence>;
 type ImportRecord = Restored["importRecord"];
 type Proposal = ImportRecord["spec"]["envelope"]["result"]["proposals"][number];
+
+/** The claim-specific gaps of `reviewedGrounding`, the receipt Fieldwork's `groundingRefused` is derived from. */
+const reviewedGroundingView = z.object({
+  gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional() }).passthrough()).default([]),
+}).passthrough();
+
+/** Gaps that mean Surface could not check a verified claim's structure; they leave it verified (see classifyGroundingRefusals). */
+const STRUCTURAL_GAPS = new Set(["evidence-not-entailing", "structure-not-validated", "profile-gap"]);
 
 /** The parts of `reviewRound` this projection reads; other fields are ignored. */
 const reviewRoundView = z.object({

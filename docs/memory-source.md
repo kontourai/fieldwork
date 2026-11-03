@@ -40,11 +40,13 @@ A reviewed claim is never downgraded to `proposed` for being re-read, and an unr
 
 Undecided items are taken by item. The export names the items it lists as undecided; the projection rebuilds the review items from the import record with Survey's own builder and takes the proposals of exactly those items, so a rejected or unsettled sibling on the same field is not remembered. A proposal Survey excluded because its excerpt did not verify was never a candidate. When it sits on an undecided item's field it is reported as `excerpt-not-verified`; beside a decided claim it appears in that claim's `groundingGaps`.
 
-The export has to agree with itself, and the projection throws when it does not. It refuses:
+The export has to agree with itself, and the projection throws when it does not. A claim is `reviewed` only if every record the export carries that speaks to it agrees. It refuses:
 
-- a bundle claim whose status, value or claim target disagrees with the Survey decision its evidence carries (stated as accepted but decided `rejected`, `rejected` but decided `verified`, a decision that was held, a value, subject, claim type or field other than the one the decision selected, or evidence citing a proposal other than the candidate the decision selected);
-- a status that disagrees with the claim's own latest event (Surface derives status from events) or with `reviewRound.groundingRefused`, a refusal naming a claim that is not a disputed one, and an attribution that names a claim that does not exist, another review item, or another actor than the decision;
-- an `EXPORT_UNDECIDED` entry that names an item the import record does not hold, an item that carries a decision (in the evidence or in the round's attribution), an item twice, an item under another field, or no item at all;
+- a bundle claim whose status, value or claim target disagrees with the Survey decision its evidence carries (stated as accepted but decided `rejected`, `rejected` but decided `verified`, a decision that was held, a value, subject, claim type or field other than the one the decision selected, or evidence citing a proposal other than the candidate the decision selected), and more than one reviewed-extraction evidence entry for a claim;
+- a claim, `verified`, `disputed` or `rejected`, whose status is not its latest event's (equal times: the first listed, as Surface derives it), or whose round attribution is missing, or names another item or actor than its decision;
+- a round whose attributions repeat a claim or an item, or name a claim that does not exist;
+- a grounding receipt and refusal list that disagree: a refusal for a claim that is not disputed or for a gap the receipt does not record, a gap in the receipt (anything but the structural gaps that leave a claim verified) recorded against a claim the export calls verified, and a disputed claim with reviewed evidence that has no refusal (a conflict nobody could confirm is disputed with no evidence and is withheld as `no-reviewed-evidence`);
+- an `EXPORT_UNDECIDED` entry that names an item the import record does not hold, an item that carries a decision (in the evidence or in the round's attribution), an item twice, an item under another field, or no item at all, and any other exclusion that names an item the export also exports a decision for;
 - a review item in the import record that the export neither decides nor lists as excluded, `complete` that disagrees with `excluded`, and a round scope missing `excluded` or `decisions` or with a malformed revision, `complete`, code or actor.
 
 Two items that state the same value from the same span are one claim to the Kit, so the second is reported as `duplicate-claim`.
@@ -80,7 +82,7 @@ One export covers one run's review authority, and so does one projection; an exp
 
 - It does not re-run Surface's reviewed-grounding policy. `reviewedGrounding` and `reviewRound` stay the authority on grounding; the projection reads the bundle Surface validates and the evidence Surface restores, and refuses an export whose evidence fails Surface's digest binding.
 - It does not call the Kit, a store or an accumulation projection, and it does not decide what is current in a slot.
-- It does not route, rank or deduplicate claims. The Kit's routing policy and Surface's accumulation own that.
+- It does not route or rank claims, or merge them across exports; within one export, identical content is one claim. The Kit's routing policy and Surface's accumulation own that.
 
 ## Reproducing the Kit check
 

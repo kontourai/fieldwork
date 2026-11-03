@@ -58,6 +58,7 @@ export async function decide(
   runDirectory: string,
   decisionsByItemName: Record<string, string>,
   selectedCandidateIdsByItemName?: Record<string, string>,
+  notesByItemName?: Record<string, string>,
 ): Promise<void> {
   const service = await openRun(runDirectory);
   try {
@@ -66,6 +67,7 @@ export async function decide(
     const events = buildReviewSessionEvents({
       ...snapshot, decisionsByItemName,
       ...(selectedCandidateIdsByItemName ? { selectedCandidateIdsByItemName } : {}),
+      ...(notesByItemName ? { notesByItemName } : {}),
     } as Parameters<typeof buildReviewSessionEvents>[0]);
     const saved = await apiFetch(service, "/api/v1/review", {
       method: "POST",
