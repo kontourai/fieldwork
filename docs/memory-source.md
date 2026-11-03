@@ -47,7 +47,7 @@ The export has to agree with itself, and the projection throws when it does not.
 - an `EXPORT_UNDECIDED` entry that names an item the import record does not hold, an item that carries a decision (in the evidence or in the round's attribution), an item twice, an item under another field, or no item at all;
 - a review item in the import record that the export neither decides nor lists as excluded, `complete` that disagrees with `excluded`, and a round scope missing `excluded` or `decisions` or with a malformed revision, `complete`, code or actor.
 
-Two items that state the same value from the same span are one claim to the Kit, so the second is reported as `duplicate-claim` (an accepted one stands over an undecided twin).
+Two items that state the same value from the same span are one claim to the Kit, so the second is reported as `duplicate-claim`.
 
 What this is not: an authenticity check. Surface's digest binding makes evidence tamper-evident against edits, but evidence can be regenerated through Surface, and nothing in an export is signed. An export whose records are mutually consistent is accepted, even if it was rewritten consistently, including one that omits an item along with every record of it. The checks stop a claim being marked `reviewed` by editing only some of the records that say otherwise.
 

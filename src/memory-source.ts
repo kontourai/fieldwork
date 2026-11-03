@@ -308,14 +308,15 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   /**
    * The Kit gives identical content one id, so two items that state the same value from the same span are one
-   * claim. A reviewer's acceptance of that content stands over an undecided twin; the other is reported.
+   * claim and the second is reported. Reviewed claims are added before undecided ones, and Fieldwork excludes a
+   * decided item while a sibling on its field is undecided, so the claim kept is never a weaker twin of a stronger one.
    */
   function addClaim(entry: MemorySourceClaim): void {
-    const index = claims.findIndex((existing) => existing.claim.id === entry.claim.id);
-    if (index === -1) { claims.push(entry); return; }
-    const replaces = claims[index]!.arrival === "proposed" && entry.arrival === "reviewed";
-    withheld.push({ reason: "duplicate-claim", fieldPath: entry.claim.property, detail: entry.claim.id });
-    if (replaces) claims[index] = entry;
+    if (claims.some((existing) => existing.claim.id === entry.claim.id)) {
+      withheld.push({ reason: "duplicate-claim", fieldPath: entry.claim.property, detail: entry.claim.id });
+      return;
+    }
+    claims.push(entry);
   }
 
   return {
