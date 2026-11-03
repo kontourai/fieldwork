@@ -23,7 +23,7 @@ import { candidateSchemaMismatch } from "./schema-match.js";
 export const MEMORY_CLAIM_SCHEMA_PIN = Object.freeze({
   repo: "kontourai/flow-agents",
   /** Head of kontourai/flow-agents#1574 (branch feat/1571-memory-claims-routing) when this mapping was written. */
-  commit: "c107d1253d582d65bcb6aaa8c33e7c081f949751",
+  commit: "100fadb45e54d664eed92cc44fa98a4dc542bad7",
   schema: "kits/knowledge/schemas/knowledge/memory-claim.schema.json",
   schemaVersion: "1.0",
 });
