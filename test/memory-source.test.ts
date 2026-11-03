@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { cp, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { projectReviewedExtractionEvidence, restoreReviewedExtractionEvidence, reviewedExtractionEvidenceChoiceProfile } from "@kontourai/surface";
@@ -10,6 +10,7 @@ import { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimId, memoryClaimsFromReviewedExport,
 import { openRun } from "../src/server.js";
 import { apiFetch, tempRoot } from "./helpers.js";
 import { conflictRun } from "./helpers/conflict-run.js";
+import { buildReviewSessionEvents } from "@kontourai/survey/review-workbench";
 import { decide, decidedMixedRun, forgedUnverifiedConflictRun, indexedItemsRun, mixedRun, queueOf, snapshotRun } from "./helpers/memory-source-run.js";
 import { typedFieldRun } from "./helpers/real-run.js";
 
@@ -375,7 +376,7 @@ test("a claim that disagrees with its decision, its events or the grounding rece
   // A refusal the receipt does not record, or for a claim that is not disputed or does not exist.
   const unrecorded = editable(typed);
   unrecorded.reviewRound.groundingRefused[0]!.gaps.push("hidden-conflict");
-  refuses(unrecorded, /which its grounding receipt does not record/);
+  refuses(unrecorded, /but its grounding receipt records schema-mismatch for it/);
   const wrongClaim = editable(typed);
   wrongClaim.reviewRound.groundingRefused.push({ claimId: claimNamed(wrongClaim, "doc.title").id, gaps: ["schema-mismatch"] });
   refuses(wrongClaim, /not a disputed claim of its bundle/);
@@ -408,6 +409,69 @@ test("a claim that disagrees with its decision, its events or the grounding rece
   refuses(doubled, /more than one reviewed-extraction evidence entry/);
 });
 
+test("the receipt's dispositions and invalid structure, the review events and the attribution time all have to agree with the decision", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("provenance"));
+  const typedRun = await typedFieldRun("memory-invalid-structure");
+  await decide(typedRun, Object.fromEntries((await queueOf(typedRun)).map((item) => [item.name, "accept-proposed"])));
+  const typed = await reviewedExport(typedRun);
+
+  // Structure Surface checked and found invalid is a mismatch, not an unchecked value: promoting the claim by
+  // removing only the synthetic schema-mismatch gap leaves the receipt's own invalid-structure gap against it.
+  const version = (typed.bundle as unknown as Bundle).claims.find((claim) => claim.fieldOrBehavior === "doc.versionNumber")!;
+  assert.equal(version.status, "disputed");
+  const invalid = editable(typed);
+  assert.ok(invalid.reviewedGrounding.gaps.some((gap) => gap.claimId === version.id && gap.kind === "structure-not-validated"), "the receipt carries the invalid-structure gap");
+  settle(invalid, "doc.versionNumber", "verified");
+  invalid.reviewedGrounding.gaps = typed.reviewedGrounding.gaps.filter((gap) => !(gap.claimId === version.id && gap.kind === "schema-mismatch")) as never;
+  invalid.reviewRound.groundingRefused = invalid.reviewRound.groundingRefused.filter((entry) => entry.claimId !== version.id);
+  refuses(invalid, /which the export calls verified/);
+  // A refusal has to list exactly the gaps the receipt records for its claim, no fewer.
+  const fewer = editable(typed);
+  fewer.reviewRound.groundingRefused.find((entry) => entry.claimId === version.id)!.gaps = ["schema-mismatch"];
+  refuses(fewer, /but its grounding receipt records .* for it/);
+
+  // The receipt's per-claim review disposition is the decision's.
+  const accepted = editable(mixed);
+  (accepted.reviewedGrounding as unknown as { dimensions: { claimId: string; reviewDisposition: string }[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(accepted, "record.alpha").id)!.reviewDisposition = "rejected";
+  refuses(accepted, /grounding receipt records another review disposition/);
+  const rejected = editable(mixed);
+  (rejected.reviewedGrounding as unknown as { dimensions: { claimId: string; reviewDisposition: string }[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(rejected, "record.bravo").id)!.reviewDisposition = "verified";
+  refuses(rejected, /grounding receipt records another review disposition/);
+
+  // The review event is by the actor the decision names, and the attribution carries the decision's time.
+  const actor = editable(mixed);
+  (actor.bundle.events.find((event) => event.claimId === claimNamed(actor, "record.alpha").id) as unknown as { actor: string }).actor = "someone-else";
+  refuses(actor, /review event by another actor/);
+  const time = editable(mixed);
+  (time.reviewRound.decisions.find((entry) => entry.claimId === claimNamed(time, "record.alpha").id) as unknown as { decidedAt: string }).decidedAt = "2000-01-01T00:00:00.000Z";
+  refuses(time, /no round attribution that names the review item, actor and time/);
+
+  // A rejected claim states the target and value of the proposal it rejected.
+  const retargeted = editable(mixed);
+  claimNamed(retargeted, "record.bravo").fieldOrBehavior = "record.alpha";
+  refuses(retargeted, /claim target other than the one its Survey decision accepted/);
+  const revalued = editable(mixed);
+  claimNamed(revalued, "record.bravo").value = "NOT THE REJECTED VALUE";
+  refuses(revalued, /not the one its Survey decision rejected/);
+
+  // Equal event times are equal however they are written; Surface takes the first listed.
+  const spelled = editable(mixed);
+  const event = spelled.bundle.events.find((entry) => entry.claimId === claimNamed(spelled, "record.alpha").id)!;
+  spelled.bundle.events.unshift({ ...event, id: `${event.id}.spelled`, status: "disputed", createdAt: event.createdAt.replace(/Z$/, "+00:00") });
+  refuses(spelled, /latest event says disputed/);
+
+  // One review item is decided once, whichever claim the attribution names.
+  const twice = editable(mixed);
+  const alphaAttribution = twice.reviewRound.decisions.find((entry) => entry.claimId === claimNamed(twice, "record.alpha").id)!;
+  twice.reviewRound.decisions.find((entry) => entry.claimId === claimNamed(twice, "record.charlie").id)!.reviewItemName = alphaAttribution.reviewItemName;
+  refuses(twice, /more than one decision/);
+  // A receipt gap is against the claim it names, not any other.
+  const moved = editable(typed);
+  const date = claimNamed(moved, "doc.publicationDate");
+  moved.reviewedGrounding.gaps.forEach((gap) => { if (gap.claimId === date.id) gap.claimId = claimNamed(moved, "doc.title").id; });
+  refuses(moved, /which the export calls verified|but its grounding receipt records/);
+});
+
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
   const honest = await reviewedExport(await decidedMixedRun("exclusions"));
   const itemOf = (bundle: Bundle, field: string) => {
@@ -421,10 +485,13 @@ test("an exclusion cannot name a decided item, repeat an item, or put an item un
     assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
   };
   const delta = (scope: Scope) => scope.excluded.find((entry) => entry.fieldPath === "record.delta")!;
-  refuses((bundle, scope) => { delta(scope).itemNames = [itemOf(bundle, "record.alpha")]; }, /carries a decision for it/);
-  refuses((bundle, scope) => { delta(scope).itemNames = [itemOf(bundle, "record.bravo")]; }, /carries a decision for it/);
+  refuses((bundle, scope) => { const entry = delta(scope); entry.fieldPath = "record.alpha"; entry.itemNames = [itemOf(bundle, "record.alpha")]; }, /carries a decision for it/);
+  refuses((bundle, scope) => { const entry = delta(scope); entry.fieldPath = "record.bravo"; entry.itemNames = [itemOf(bundle, "record.bravo")]; }, /carries a decision for it/);
   refuses((_bundle, scope) => { delta(scope).itemNames = [...delta(scope).itemNames, ...delta(scope).itemNames]; }, /undecided more than once/);
   refuses((_bundle, scope) => { delta(scope).fieldPath = "record.charlie"; }, /which is not its field/);
+  // Every exclusion names items the record holds, whatever its code.
+  refuses((_bundle, scope) => { scope.excluded.push({ fieldPath: "record.charlie", itemNames: ["nonexistent-item"], code: "EXPORT_CONFLICTING_DECISIONS" }); scope.complete = false; }, /holds no such review item/);
+  refuses((bundle, scope) => { scope.excluded.push({ fieldPath: "record.charlie", itemNames: [itemOf(bundle, "record.bravo")], code: "EXPORT_UNGROUNDED_SELECTION" }); }, /which is not its field/);
   refuses((_bundle, scope) => { delete (scope as Partial<Scope>).excluded; }, /excluded/);
   refuses((_bundle, scope) => { delete (scope as Partial<Scope>).decisions; }, /decisions/);
 });
@@ -455,9 +522,9 @@ test("an export that disagrees with itself about who decided what, or what it le
   const exclusionOf = (copy: { reviewRound: Scope }, field: string) => copy.reviewRound.excluded.find((entry) => entry.fieldPath === field)!;
 
   // Attribution: the decision it names, who made it, and that there is one.
-  refuses((copy) => { decisionOf(copy, "record.alpha").reviewItemName = "extraction-envelope.not-its-item"; }, /no round attribution that names the review item and actor/);
-  refuses((copy) => { decisionOf(copy, "record.alpha").actor.id = "someone-else"; }, /no round attribution that names the review item and actor/);
-  refuses((copy) => { decisionOf(copy, "record.bravo").actor.id = "someone-else"; }, /no round attribution that names the review item and actor/);
+  refuses((copy) => { decisionOf(copy, "record.alpha").reviewItemName = "extraction-envelope.not-its-item"; }, /no round attribution that names the review item, actor and time/);
+  refuses((copy) => { decisionOf(copy, "record.alpha").actor.id = "someone-else"; }, /no round attribution that names the review item, actor and time/);
+  refuses((copy) => { decisionOf(copy, "record.bravo").actor.id = "someone-else"; }, /no round attribution that names the review item, actor and time/);
   refuses((copy) => { copy.reviewRound.decisions = copy.reviewRound.decisions.filter((entry) => entry.claimId !== claimIdOf(copy, "record.alpha")); }, /no round attribution/);
   refuses((copy) => { copy.reviewRound.decisions.push({ ...decisionOf(copy, "record.alpha"), actor: { id: "someone-else" } }); }, /more than one decision/);
   // A duplicate attribution that names the undecided item cannot hide the item from the accounting.
@@ -470,13 +537,15 @@ test("an export that disagrees with itself about who decided what, or what it le
     copy.reviewRound.excluded.push({ fieldPath: "record.alpha", itemNames: [decisionOf(copy, "record.alpha").reviewItemName], code: "EXPORT_CONFLICTING_DECISIONS" });
     copy.reviewRound.complete = false;
   }, /also exports a decision for it/);
-  refuses((copy) => { copy.reviewRound.decisions.push({ claimId: "extraction-envelope.nothing.claim", reviewItemName: "x", actor: { id: "y" } } as never); }, /which is not one of its claims/);
+  refuses((copy) => { copy.reviewRound.decisions.push({ claimId: "extraction-envelope.nothing.claim", reviewItemName: "x", decidedAt: "2026-01-01T00:00:00.000Z", actor: { id: "y" } } as never); }, /which is not one of its claims/);
   // A rejected item stays decided even when its evidence is gone: it cannot come back as undecided.
   refuses((copy) => {
     const bravo = claimIdOf(copy, "record.bravo");
     const reviewItem = decisionOf(copy, "record.bravo").reviewItemName;
     copy.bundle.evidence = copy.bundle.evidence.filter((entry) => !(entry.claimId === bravo && entry.metadata?.reviewedExtraction));
-    exclusionOf(copy, "record.delta").itemNames = [reviewItem];
+    const entry = exclusionOf(copy, "record.delta");
+    entry.fieldPath = "record.bravo";
+    entry.itemNames = [reviewItem];
   }, /carries a decision for it/);
   // What the export left out has to be listed: no empty exclusions, no scope that lies about completeness.
   refuses((copy) => { exclusionOf(copy, "record.delta").itemNames = []; }, /itemNames/);
@@ -587,6 +656,45 @@ test("a conflict nobody could confirm, or that was rejected whole, is withheld, 
     const projection = memoryClaimsFromReviewedExport(exported);
     assert.deepEqual(projection.claims.map((entry) => [entry.claim.property, entry.arrival]), [["record.alpha", "reviewed"]], decision);
     assert.deepEqual(projection.withheld.map((item) => [item.reason, item.fieldPath]), [[decision === "reject-proposed" ? "rejected-in-review" : "no-reviewed-evidence", "record.status"]], decision);
+  }
+});
+
+test("exports Fieldwork 0.13.0 wrote, and decisions made under a configured reviewer, project without a false refusal", async () => {
+  // Written by the published release, not by this checkout: the exports are the real shape of an older writer.
+  const fixture = join(import.meta.dirname, "fixtures", "fieldwork-0.13.0");
+  const recorded = JSON.parse(await readFile(join(fixture, "exports.json"), "utf8")) as Record<string, { runDirectory: string; sha256?: string }>;
+  const root = await tempRoot("memory-stored-0.13");
+  await cp(join(fixture, "runs"), root, { recursive: true });
+  const projected: string[] = [];
+  for (const [name, entry] of Object.entries(recorded)) {
+    if (entry.sha256 === undefined) continue;
+    const exported = await reviewedExport(join(root, entry.runDirectory));
+    const projection = memoryClaimsFromReviewedExport(exported);
+    const statuses = (exported.bundle as unknown as Bundle).claims.map((claim) => claim.status);
+    assert.equal(projection.claims.length + projection.withheld.filter((item) => item.reason !== "excerpt-not-verified").length >= statuses.length, true, name);
+    projected.push(`${name}:${projection.claims.length}`);
+  }
+  assert.equal(projected.length >= 4, true, projected.join(" "));
+
+  // A named reviewer: the event actor, the decision's actor and the attribution all name them.
+  const run = await runFieldwork({ taskPath: "examples/vendor-obligations/task.json", sourcePath: "examples/vendor-obligations/source.txt", root: await tempRoot("memory-named") });
+  const service = await openRun(run.runDirectory, { reviewer: { id: "alice", kind: "human" } });
+  try {
+    const view = await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1;
+    const snapshot = view.review.snapshot as unknown as ReviewQueueSessionState;
+    const events = buildReviewSessionEvents({ ...snapshot, decisionsByItemName: Object.fromEntries(snapshot.items.filter((_, index) => index % 2 === 0).map((item) => [item.metadata.name, "accept-proposed"])) } as never);
+    const saved = await apiFetch(service, "/api/v1/review", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events, expectedEventCount: 0, expectedRevision: 0 }),
+    }).then((response) => response.json()) as { ok: boolean };
+    assert.equal(saved.ok, true);
+  } finally { await service.close(); }
+  const named = memoryClaimsFromReviewedExport(await reviewedExport(run.runDirectory));
+  const reviewed = named.claims.filter((entry) => entry.arrival === "reviewed");
+  assert.equal(reviewed.length > 0 && reviewed.length < named.claims.length, true);
+  for (const entry of reviewed) {
+    assert.ok(entry.origin.kind === "reviewed-claim");
+    assert.equal(entry.origin.reviewDecision.actorId, "alice");
   }
 });
 
