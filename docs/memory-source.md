@@ -55,7 +55,9 @@ Two rules keep a claim from arriving `reviewed` on thinner evidence than the exp
 
 Two items that state the same value from the same span are one claim to the Kit, so the second is reported as `duplicate-claim`.
 
-What the projection does not compare: the receipt's `outcome`, `evaluatedClaimIds`, `evidenceIds`, `reviewItemNames` and `reviewDecisionNames`, and the dimension fields other than the ones named above, except that a dimension's `structuralTrust: "invalid"` counts as doubt. They do not decide a claim's arrival.
+What the projection does not compare: the receipt's aggregate fields (`outcome`, `evaluatedClaimIds`, `evidenceIds`, `reviewItemNames`, `reviewDecisionNames`) do not decide a claim's arrival. Every key a dimension states is compared, and a stated key that the policy does not yield, or yields differently (an explicit `null` included), is doubt; a key the policy yields and the dimension omits is not, so an older writer's dimension still reads.
+
+What the projection cannot tell: whether an export was written by Fieldwork 0.11 or 0.12 or rewritten into the shape they produced. Those writers never recorded the excerpt check and imported with `provenance: "unverified"`, so an export whose items lack `excerptVerification` is read as theirs and the check that today's policy would make is skipped; there is nothing in such an export to tell the two apart. Reading them as honest is the choice that keeps every claim those writers called verified `reviewed`. Re-exporting the run with a current Fieldwork records the check.
 
 What this is not: an authenticity check. Surface's digest binding makes evidence tamper-evident against edits, but evidence can be regenerated through Surface, and nothing in an export is signed. An export whose records are mutually consistent is accepted, even if it was rewritten consistently, including one that omits an item along with every record of it. The checks stop a claim arriving `reviewed` by editing only some of the records that say otherwise; they cannot tell an edit from a writer that disagreed with itself, which is why doubt downgrades instead of refusing.
 

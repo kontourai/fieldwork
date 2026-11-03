@@ -962,6 +962,34 @@ test("a key the receipt's dimension states that the evidence does not yield is d
   assert.ok(entry.origin.kind === "reviewed-claim" && entry.origin.groundingGaps?.includes("receipt-differs"));
 });
 
+test("a dimension may omit a key the policy yields, but not state one it does not, null included; a candidate may not state provenance Survey does not yield", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("stated-keys"));
+  const read = (copy: Editable) => {
+    const entry = memoryClaimsFromReviewedExport(copy).claims.find((item) => item.claim.property === "record.alpha")!;
+    return [entry.arrival, entry.origin.kind === "reviewed-claim" ? entry.origin.groundingGaps ?? [] : []] as const;
+  };
+  const dimensionOf = (copy: Editable) => (copy.reviewedGrounding as unknown as { dimensions: Record<string, unknown>[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(copy, "record.alpha").id)!;
+  // An older writer's dimension without a key a later Surface yields still reads.
+  const omitted = editable(mixed);
+  delete dimensionOf(omitted).candidateConfidence;
+  assert.deepEqual(read(omitted), ["reviewed", []]);
+  // A key it states that the policy does not yield is doubt, whatever the value.
+  for (const value of ["x", null, 0, false]) {
+    const stated = editable(mixed);
+    dimensionOf(stated).laterSurfaceFact = value;
+    assert.deepEqual(read(stated), ["proposed", ["receipt-differs"]], JSON.stringify(value));
+  }
+  // A candidate that states provenance Survey does not yield again.
+  const extra = editable(mixed);
+  const index = extra.bundle.evidence.findIndex((item) => item.claimId === claimNamed(extra, "record.alpha").id && item.metadata?.reviewedExtraction);
+  const input = restoreReviewedExtractionEvidence(extra.bundle.evidence[index] as never);
+  for (const candidate of input.reviewItem!.spec.candidates) (candidate.producer!["survey.kontourai.io/extraction-envelope"] as Record<string, unknown>).laterSurveyFact = "x";
+  extra.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
+  rebindReceipt(extra);
+  assert.ok(read(extra)[1].includes("candidate-differs"), JSON.stringify(read(extra)));
+  assert.equal(read(extra)[0], "proposed");
+});
+
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
   const honest = await reviewedExport(await decidedMixedRun("exclusions"));
   const itemOf = (bundle: Bundle, field: string) => {

@@ -256,8 +256,11 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
 
   // Fieldwork 0.11 and 0.12 never recorded whether excerpts were checked against the prepared text, so the check
-  // recomputed today is not one that writer made. The evidence says which writer it is: the review item it carries has
-  // an `excerptVerification` or it does not. (Not the receipt, which is the record someone can thin out.)
+  // recomputed today is not one that writer made. The evidence says so: the review item it carries has no
+  // `excerptVerification` (the receipt is not asked, since it can be thinned out). An item that records `unverified`
+  // stays doubt. An export rewritten into the shape those writers produced (item without the record, import unverified) is
+  // the same data as one they wrote, so it is read as theirs: this check cannot be recomputed for it, which the docs
+  // list under what the projection cannot tell.
   const legacyEvidence = (claimId: string): boolean => {
     const producer = restoredByClaim.get(claimId)?.reviewItem?.metadata.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { excerptVerification?: unknown } | undefined;
     return restoredByClaim.has(claimId) && producer?.excerptVerification === undefined;
@@ -290,7 +293,8 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       // Every key the carried dimension states has to be what the policy yields; a key only a later Surface yields is not
       // stated, so it is not in dispute.
       const yielded = recomputedDimensionFor.get(bound(dimension)) as Record<string, unknown> | undefined;
-      if (yielded !== undefined && Object.keys(dimension).some((key) => canonicalJson(JSON.parse(JSON.stringify(yielded[key] ?? null))) !== canonicalJson(dimension[key] ?? null))) kinds.add("receipt-differs");
+      const plain = yielded === undefined ? undefined : JSON.parse(JSON.stringify(yielded)) as Record<string, unknown>;
+      if (plain !== undefined && Object.keys(dimension).some((key) => !(key in plain) || canonicalJson(plain[key]) !== canonicalJson(dimension[key]))) kinds.add("receipt-differs");
     }
     if (typeof schema === "string" && schema !== "ok") kinds.add("schema-mismatch");
     // The carried candidate's provenance (the extraction outcome, the evidence match, the occurrence) is what Survey derives
@@ -300,7 +304,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     for (const candidate of restored?.reviewItem?.spec.candidates ?? []) {
       const stated = candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as Record<string, unknown> | undefined;
       const rebuilt = fresh?.spec.candidates.find((entry) => entry.id === candidate.id)?.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as Record<string, unknown> | undefined;
-      if (stated !== undefined && Object.keys(stated).some((key) => canonicalJson(stated[key] ?? null) !== canonicalJson(rebuilt?.[key] ?? null))) kinds.add("candidate-differs");
+      if (stated !== undefined && Object.keys(stated).some((key) => rebuilt === undefined || !(key in rebuilt) || canonicalJson(stated[key]) !== canonicalJson(rebuilt[key]))) kinds.add("candidate-differs");
     }
     return [...kinds].sort();
   };
