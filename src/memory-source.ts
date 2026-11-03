@@ -161,7 +161,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   // scope beside it (no attribution, no list of undecided items, no completeness), so an unreviewed item cannot be
   // listed and a decision cannot be attributed. 0.11 introduced the envelope this reads.
   if (exported !== null && typeof exported === "object" && !("kind" in exported) && "schemaVersion" in exported && "claims" in exported) {
-    throw Object.assign(new Error("This is a bare trust bundle, the format Fieldwork wrote before 0.11. It has no round scope (no attribution, undecided items or completeness) beside it, which this reads; export it again with Fieldwork 0.11 or later."), { code: "EXPORT_UNSUPPORTED_FORMAT" });
+    throw Object.assign(new Error("This is a bare trust bundle, the format Fieldwork wrote before 0.11. It has no round scope (no attribution, undecided items or completeness) beside it, which this reads; run and review the source again with Fieldwork 0.11 or later."), { code: "EXPORT_UNSUPPORTED_FORMAT" });
   }
   const output = parseReviewedExport(exported);
   const bundle = validateTrustBundle(output.bundle);
