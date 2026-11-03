@@ -77,7 +77,7 @@ export interface ReviewedClaimOrigin {
   readonly kind: "reviewed-claim";
   /** The Surface bundle claim this memory claim projects. */
   readonly surfaceClaimId: string;
-  /** The bundle claim's own status. `verified` arrives `reviewed`; `disputed` arrives `proposed`. */
+  /** The bundle claim's own status. `verified` arrives `reviewed` unless something carried casts doubt on its grounding; `disputed` arrives `proposed`. */
   readonly surfaceStatus: "verified" | "disputed";
   readonly reviewItemName: string;
   /** The Survey ReviewDecision the export carries for the claim. */
@@ -136,7 +136,8 @@ export interface MemorySourceProjection {
 /**
  * Project one reviewed export into memory claims.
  *
- * - A `verified` bundle claim arrives `reviewed`.
+ * - A `verified` bundle claim arrives `reviewed`, unless anything the export
+ *   carries casts doubt on its grounding, in which case it arrives `proposed`.
  * - A `disputed` bundle claim (reviewed, but its grounding was refused) and
  *   every proposal of an item the export lists as `EXPORT_UNDECIDED` arrive
  *   `proposed`.
@@ -156,6 +157,11 @@ export interface MemorySourceProjection {
  * than one source's import record is refused rather than attributed to one.
  */
 export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): MemorySourceProjection {
+  // Fieldwork 0.9 and 0.10 exported a bare trust bundle: no Survey decisions, round attribution or import record
+  // beside it, so there is nothing to ground a `reviewed` claim on. 0.11 introduced the envelope this reads.
+  if (exported !== null && typeof exported === "object" && !("kind" in exported) && "schemaVersion" in exported && "claims" in exported) {
+    throw Object.assign(new Error("This is a bare trust bundle, the format Fieldwork wrote before 0.11. It carries no review decisions or round attribution to map from; export it again with Fieldwork 0.11 or later."), { code: "EXPORT_UNSUPPORTED_FORMAT" });
+  }
   const output = parseReviewedExport(exported);
   const bundle = validateTrustBundle(output.bundle);
   const resolveImportRecord = resolverFromBundle(bundle);
@@ -228,14 +234,38 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     }
   }
 
+  // A receipt written before Fieldwork 0.14 never recorded whether excerpts were checked against the prepared text, so
+  // the check recomputed today is not one that writer made. When no dimension records it, that gap is not doubt.
+  const legacyReceipt = receipt.dimensions.length > 0 && receipt.dimensions.every((dimension) => !("excerptVerification" in dimension));
+  const claimOfEvidence = new Map(bundle.evidence.map((entry) => [entry.id, entry.claimId]));
+  /** The claim a gap is about: by its claim id, else by the evidence it names. A gap that names neither is about every claim. */
+  const gapIsAbout = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean => {
+    const named = typeof gap.claimId === "string" ? gap.claimId : typeof gap.evidenceId === "string" ? claimOfEvidence.get(gap.evidenceId) : undefined;
+    return named === undefined ? typeof gap.claimId !== "string" && typeof gap.evidenceId !== "string" : named === claimId;
+  };
+  /** What a receipt dimension records against its claim, as the policy would read it (src: Surface reviewed-grounding-policy). */
+  const dimensionDoubts = (dimension: Readonly<Record<string, unknown>>): string[] => {
+    const kinds: string[] = [];
+    const artifact = dimension.preparedArtifact as { status?: unknown } | undefined;
+    if (artifact !== undefined && artifact.status !== "available") kinds.push("missing-prepared-artifact");
+    if (dimension.structuralTrust === "invalid") kinds.push("structure-invalid");
+    if (dimension.excerptVerification === "unverified") kinds.push("excerpt-not-verified");
+    if (dimension.excludedRivals !== undefined) kinds.push("excluded-rival-unresolved");
+    if (dimension.hiddenConflict !== undefined) kinds.push("hidden-conflict");
+    return kinds;
+  };
+
   /** The kinds of doubt anything the export carries casts on a claim's grounding. */
   const doubtsAbout = (claimId: string, schema: unknown): string[] => {
     const kinds = new Set<string>();
     for (const gap of recomputedGaps) {
-      if ("claimId" in gap && gap.claimId === claimId && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined })) kinds.add(gap.kind);
+      if (gapIsAbout(gap as { claimId?: unknown; evidenceId?: unknown }, claimId) && !(legacyReceipt && gap.kind === "excerpt-not-verified")
+        && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined })) kinds.add(gap.kind);
     }
-    for (const gap of groundingGaps) if (gap.claimId === claimId && disputes(gap)) kinds.add(gap.kind);
-    if (receipt.dimensions.some((dimension) => dimension.claimId === claimId && dimension.structuralTrust === "invalid")) kinds.add("structure-invalid");
+    for (const gap of groundingGaps) if (gapIsAbout(gap, claimId) && disputes(gap)) kinds.add(gap.kind);
+    for (const dimension of receipt.dimensions) {
+      if (dimension.claimId === claimId || claimOfEvidence.get(String(dimension.evidenceId)) === claimId) for (const kind of dimensionDoubts(dimension)) kinds.add(kind);
+    }
     if (typeof schema === "string" && schema !== "ok") kinds.add("schema-mismatch");
     return [...kinds].sort();
   };
@@ -488,7 +518,7 @@ const EXCLUSION_CODES = ["EXPORT_UNDECIDED", "EXPORT_FIELD_UNSETTLED", "EXPORT_U
 
 /** What this projection reads of `reviewedGrounding`: the claim-specific gaps and per-claim dispositions of the receipt Fieldwork's `groundingRefused` is derived from. */
 const reviewedGroundingView = z.object({
-  gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional(), structuralTrust: z.string().optional() }).passthrough()).default([]),
+  gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional(), evidenceId: z.string().optional(), structuralTrust: z.string().optional() }).passthrough()).default([]),
   dimensions: z.array(z.record(z.string(), z.unknown())).default([]),
 }).passthrough();
 

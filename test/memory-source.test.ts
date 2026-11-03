@@ -641,6 +641,16 @@ test("every candidate of the decided item states the claim's target, not only th
     copy.bundle.evidence[index] = projectReviewedExtractionEvidence(input, { profile: reviewedExtractionEvidenceChoiceProfile, includeImportRecord: true }).evidence as never;
     rebindReceipt(copy);
     refuses(copy, /claim target other than the one its Survey decision accepted/);
+
+    // A candidate the reviewer did not select states the item's target too.
+    const rival = editable(exported);
+    const rivalIndex = rival.bundle.evidence.findIndex((item) => item.claimId === claimNamed(rival, "record.status").id && item.metadata?.reviewedExtraction);
+    const rivalInput = restoreReviewedExtractionEvidence(rival.bundle.evidence[rivalIndex] as never);
+    const unselected = rivalInput.reviewItem!.spec.candidates.find((candidate) => candidate.id !== rivalInput.reviewDecision!.spec.candidateId)!;
+    (unselected.claimTarget as unknown as Record<string, string>)[key] = "somewhere-else";
+    rival.bundle.evidence[rivalIndex] = projectReviewedExtractionEvidence(rivalInput, { profile: reviewedExtractionEvidenceChoiceProfile, includeImportRecord: true }).evidence as never;
+    rebindReceipt(rival);
+    refuses(rival, /claim target other than the one its Survey decision accepted/);
   }
 });
 
@@ -737,6 +747,57 @@ test("each source of doubt alone keeps a claim from arriving reviewed, and struc
   evidence.reviewedGrounding.gaps = [];
   assert.equal(doubtOf(evidence)[0], "proposed");
   assert.ok(doubtOf(evidence)[1].includes("structure-not-validated"), JSON.stringify(doubtOf(evidence)));
+});
+
+test("exports the published Fieldwork 0.11 wrote arrive reviewed, and the bare bundles 0.9 wrote are refused by name", async () => {
+  // Written by the published releases with `fieldwork export`, not by this checkout. 0.11 checked excerpts against the
+  // prepared text but did not record that it had; today's policy would read the missing record as a gap.
+  const dir = join(import.meta.dirname, "fixtures", "published-writers");
+  const old = JSON.parse(await readFile(join(dir, "fieldwork-0.11.0-generic-accept.json"), "utf8")) as ReviewedExportV1;
+  const projection = memoryClaimsFromReviewedExport(old);
+  assert.deepEqual(projection.claims.map((entry) => [entry.claim.property, entry.claim.value, entry.arrival]), [["record.status", "Active", "reviewed"]]);
+  assert.deepEqual(projection.withheld, []);
+  // The same export from today's writer says the same thing.
+  const today = memoryClaimsFromReviewedExport(await reviewedExport(await decidedMixedRun("legacy-twin")));
+  assert.equal(today.claims.find((entry) => entry.claim.property === "record.alpha")!.arrival, "reviewed");
+
+  // 0.9 and 0.10 exported a bare trust bundle: no Survey decisions or attribution to map from.
+  const bare = JSON.parse(await readFile(join(dir, "fieldwork-0.9.0-generic-accept.json"), "utf8")) as ReviewedExportV1;
+  assert.equal("kind" in bare, false);
+  assert.throws(() => memoryClaimsFromReviewedExport(bare), (error: Error & { code?: string }) => {
+    assert.equal(error.code, "EXPORT_UNSUPPORTED_FORMAT");
+    assert.match(error.message, /before 0\.11/);
+    return true;
+  });
+});
+
+test("what the receipt's dimension records against a claim is doubt, and a gap names its claim by evidence as well as by id", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("dimension-doubt"));
+  const arrivalAndGaps = (copy: Editable) => {
+    const entry = memoryClaimsFromReviewedExport(copy).claims.find((item) => item.claim.property === "record.alpha")!;
+    return [entry.arrival, entry.origin.kind === "reviewed-claim" ? entry.origin.groundingGaps ?? [] : []] as const;
+  };
+  const dimensionOf = (copy: Editable) => (copy.reviewedGrounding as unknown as { dimensions: Record<string, unknown>[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(copy, "record.alpha").id)!;
+  for (const [label, edit, kind] of [
+    ["a prepared artifact that is not available", (dimension: Record<string, unknown>) => { dimension.preparedArtifact = { status: "missing" }; }, "missing-prepared-artifact"],
+    ["an excluded rival", (dimension: Record<string, unknown>) => { dimension.excludedRivals = { proposalIndices: [1] }; }, "excluded-rival-unresolved"],
+    ["a hidden conflict", (dimension: Record<string, unknown>) => { dimension.hiddenConflict = { rivalProposalIndices: [1], droppedProposalIndices: [] }; }, "hidden-conflict"],
+    ["excerpts recorded unverified", (dimension: Record<string, unknown>) => { dimension.excerptVerification = "unverified"; }, "excerpt-not-verified"],
+  ] as const) {
+    const copy = editable(mixed);
+    edit(dimensionOf(copy));
+    assert.deepEqual(arrivalAndGaps(copy), ["proposed", [kind]], label);
+  }
+  // A gap that names its evidence and not its claim is about that evidence's claim.
+  const byEvidence = editable(mixed);
+  const alphaEvidence = byEvidence.bundle.evidence.find((item) => item.claimId === claimNamed(byEvidence, "record.alpha").id && item.metadata?.reviewedExtraction)!;
+  byEvidence.reviewedGrounding.gaps = [...(byEvidence.reviewedGrounding.gaps ?? []), { kind: "hidden-conflict", evidenceId: (alphaEvidence as unknown as { id: string }).id } as never];
+  assert.deepEqual(arrivalAndGaps(byEvidence), ["proposed", ["hidden-conflict"]]);
+  // A gap about another claim's evidence is not about this one.
+  const other = editable(mixed);
+  const charlieEvidence = other.bundle.evidence.find((item) => item.claimId === claimNamed(other, "record.charlie").id && item.metadata?.reviewedExtraction)!;
+  other.reviewedGrounding.gaps = [{ kind: "hidden-conflict", evidenceId: (charlieEvidence as unknown as { id: string }).id } as never];
+  assert.deepEqual(arrivalAndGaps(other), ["reviewed", []]);
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
