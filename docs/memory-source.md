@@ -14,7 +14,7 @@ The claims follow the Knowledge Kit memory claim schema. Fieldwork references it
 | Schema | `kits/knowledge/schemas/knowledge/memory-claim.schema.json`, `schema_version` `1.0` |
 | Contract | `kits/knowledge/docs/memory-claims.md` at the same commit |
 
-The same values are exported as `MEMORY_CLAIM_SCHEMA_PIN` and returned in each projection's `mapping`. Moving to a newer Kit commit is a deliberate change to the pin, the mapping below and the test.
+The claim schema and `src/memory-claims.ts` are byte-identical at the later head `0c7a95576747948532403891b4fd320bd7527848`, which changed routing, accumulation and docs only; the pin stays at the commit the claims were validated against. The same values are exported as `MEMORY_CLAIM_SCHEMA_PIN` and returned in each projection's `mapping`. Moving to a newer Kit commit is a deliberate change to the pin, the mapping below and the test.
 
 Fieldwork builds the claim `id` itself (the Kit's identity rule at this commit: the sha256 of the canonical JSON of every other field of the claim, provenance included, so an edited excerpt or time is a different claim) because the Kit does not yet export a builder a package can import. The Kit recomputes the id on read and refuses a mismatch, so `test/memory-source.test.ts` pins ids that the Kit's own `memoryClaim` produced for these claims (with `source.observedAt` fixed, since a run's extraction time differs per run), and the Kit's `assertMemoryClaim` accepted every claim at the pinned commit.
 
