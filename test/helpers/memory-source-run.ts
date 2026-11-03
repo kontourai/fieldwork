@@ -119,7 +119,7 @@ export async function forgedUnverifiedConflictRun(label: string): Promise<string
  * field, `record.items[]`, which Survey reviews as two items (one per indexed
  * proposal) that share a field. Used to tell sibling items apart.
  */
-export async function indexedItemsRun(label: string): Promise<string> {
+export async function indexedItemsRun(label: string, identical = false): Promise<string> {
   const root = await tempRoot(`memory-source-${label}`);
   const task = JSON.parse(await readFile("examples/generic/task.json", "utf8"));
   task.spec.traverse.targetSchema = [
@@ -145,7 +145,7 @@ export async function indexedItemsRun(label: string): Promise<string> {
         input: { proposals: [
           proposal("record.status", "Active", "Status: Active"),
           proposal("record.items[0]", "one", "Value: one"),
-          proposal("record.items[1]", "two", "Value: two"),
+          identical ? proposal("record.items[1]", "one", "Value: one") : proposal("record.items[1]", "two", "Value: two"),
         ] },
       }],
       usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 }, latencyMs: 1, stopReason: "tool_use",

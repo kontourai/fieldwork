@@ -87,7 +87,7 @@ export interface ReviewedClaimOrigin {
     readonly reviewedAt?: string;
   };
   /** Fieldwork's `reviewRound.decisions` entry for the claim: who decided, how, and when the server accepted it. */
-  readonly attribution?: JsonValue;
+  readonly attribution: JsonValue;
   /** With `disputed`: the grounding gaps `reviewRound.groundingRefused` records for the claim. */
   readonly groundingGaps?: readonly string[];
 }
@@ -113,7 +113,8 @@ export interface WithheldMemoryItem {
     | "no-reviewed-evidence"
     | "excluded-after-review"
     | "no-import-record"
-    | "excerpt-not-verified";
+    | "excerpt-not-verified"
+    | "duplicate-claim";
   readonly surfaceClaimId?: string;
   readonly fieldPath?: string;
   /** The export's own code or status that explains the reason. */
@@ -175,6 +176,14 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   const importRecord = [...records.values()][0];
 
+  // The round scope has to agree with the bundle it travels with.
+  const claimIds = new Set(bundle.claims.map((claim) => claim.id));
+  if (round.complete !== (round.excluded.length === 0)) throw new Error("Reviewed export says it is complete but lists exclusions, or lists none but says it is partial.");
+  for (const entry of round.decisions) if (!claimIds.has(entry.claimId)) throw new Error(`Reviewed export attributes a decision to ${entry.claimId}, which is not one of its claims.`);
+  for (const entry of round.groundingRefused) {
+    if (bundle.claims.find((claim) => claim.id === entry.claimId)?.status !== "disputed") throw new Error(`Reviewed export lists a grounding refusal for ${entry.claimId}, which is not a disputed claim of its bundle.`);
+  }
+
   for (const surfaceClaim of bundle.claims) {
     const restored = restoredByClaim.get(surfaceClaim.id);
     const decision = restored?.reviewDecision;
@@ -195,14 +204,26 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       continue;
     }
     assertAgreesWithDecision(surfaceClaim, restored);
+    // Surface derives a claim's status from its events; the `status` field beside them is a copy.
+    const latest = bundle.events.filter((event) => event.claimId === surfaceClaim.id).reduce<{ status: string; at: string } | undefined>(
+      (last, event) => last === undefined || event.createdAt >= last.at ? { status: event.status, at: event.createdAt } : last, undefined);
+    if (latest?.status !== surfaceClaim.status) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, but its latest event says ${latest?.status ?? "nothing"}.`);
+    }
     const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id);
+    if (attribution === undefined || attribution.reviewItemName !== decision.spec.reviewItemName) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} has no round attribution for the review item its Survey decision answers.`);
+    }
+    if (attribution.actor.id !== decision.spec.actor?.id) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} is attributed to ${attribution.actor.id}, but its Survey decision names ${decision.spec.actor?.id ?? "no actor"}.`);
+    }
     const gaps = round.groundingRefused.find((entry) => entry.claimId === surfaceClaim.id)?.gaps;
     // Fieldwork disputes exactly the accepted claims whose grounding it refused and lists them in
     // `groundingRefused`, so the status and the list must say the same thing.
     if ((surfaceClaim.status === "disputed") !== (gaps !== undefined)) {
       throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, which disagrees with the export's grounding refusals.`);
     }
-    claims.push({
+    addClaim({
       arrival: surfaceClaim.status === "verified" ? "reviewed" : "proposed",
       claim: memoryClaim({
         subject: { type: surfaceClaim.subjectType, id: surfaceClaim.subjectId },
@@ -222,7 +243,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
           ...(decision.spec.actor === undefined ? {} : { actorId: decision.spec.actor.id }),
           ...(decision.spec.reviewedAt === undefined ? {} : { reviewedAt: decision.spec.reviewedAt }),
         },
-        ...(attribution === undefined ? {} : { attribution: attribution as unknown as JsonValue }),
+        attribution: attribution as unknown as JsonValue,
         ...(surfaceClaim.status === "disputed" && gaps !== undefined ? { groundingGaps: gaps } : {}),
       },
     });
@@ -231,7 +252,10 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   // Survey owns which proposals an item holds: rebuild the items from the
   // import record, as Fieldwork does when it reads a run, and take exactly the
   // candidates of the items the export names as undecided.
-  const decidedItems = new Set([...restoredByClaim.values()].flatMap((restored) => restored.reviewDecision ? [restored.reviewDecision.spec.reviewItemName] : []));
+  const decidedItems = new Set([
+    ...[...restoredByClaim.values()].flatMap((restored) => restored.reviewDecision ? [restored.reviewDecision.spec.reviewItemName] : []),
+    ...round.decisions.map((entry) => entry.reviewItemName),
+  ]);
   const undecidedItems = new Set<string>();
   const items = importRecord === undefined ? undefined : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
   for (const exclusion of round.excluded) {
@@ -257,7 +281,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
         const index = (candidate.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndex?: unknown } | undefined)?.proposalIndex;
         const proposal = typeof index === "number" ? importRecord.spec.envelope.result.proposals[index] : undefined;
         if (proposal === undefined || candidate.claimTarget === undefined) throw new Error(`Review item ${itemName} has a candidate that names no proposal or claim target.`);
-        claims.push({
+        addClaim({
           arrival: "proposed",
           claim: memoryClaim({
             subject: { type: candidate.claimTarget.subjectType, id: candidate.claimTarget.subjectId },
@@ -275,6 +299,23 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       const unverified = diagnostic.kind === "excerpt-mismatch" ? importRecord.spec.envelope.result.proposals[diagnostic.proposalIndex as number] : undefined;
       if (unverified?.fieldPath === exclusion.fieldPath) withheld.push({ reason: "excerpt-not-verified", fieldPath: exclusion.fieldPath, detail: exclusion.code });
     }
+  }
+
+  if (items !== undefined) {
+    const accounted = new Set([...decidedItems, ...round.excluded.flatMap((entry) => entry.itemNames)]);
+    const missing = [...items.keys()].filter((name) => !accounted.has(name));
+    if (missing.length > 0) throw new Error(`Reviewed export neither decides nor excludes ${missing.length} of its review items (${missing[0]}${missing.length > 1 ? ", ..." : ""}); it has lost something.`);
+  }
+  /**
+   * The Kit gives identical content one id, so two items that state the same value from the same span are one
+   * claim. A reviewer's acceptance of that content stands over an undecided twin; the other is reported.
+   */
+  function addClaim(entry: MemorySourceClaim): void {
+    const index = claims.findIndex((existing) => existing.claim.id === entry.claim.id);
+    if (index === -1) { claims.push(entry); return; }
+    const replaces = claims[index]!.arrival === "proposed" && entry.arrival === "reviewed";
+    withheld.push({ reason: "duplicate-claim", fieldPath: entry.claim.property, detail: entry.claim.id });
+    if (replaces) claims[index] = entry;
   }
 
   return {
@@ -305,8 +346,11 @@ function assertAgreesWithDecision(
   if (reviewDecision.spec.status !== "verified" || (reviewDecision.spec.resolution !== undefined && reviewDecision.spec.resolution !== "accepted")) {
     throw new Error(`Reviewed export claim ${claim.id} is stated as accepted but its Survey decision is ${reviewDecision.spec.resolution ?? reviewDecision.spec.status}.`);
   }
-  // Surface refuses a decision whose candidate is not in its item, so the selected candidate is present.
-  const selected = reviewItem.spec.candidates.find((candidate) => candidate.id === reviewDecision.spec.candidateId)!;
+  const selected = reviewItem.spec.candidates.find((candidate) => candidate.id === reviewDecision.spec.candidateId);
+  if (selected === undefined) throw new Error(`Reviewed export claim ${claim.id}: its Survey decision selects no candidate of its review item.`);
+  // The evidence cites one proposal and the decision selects one candidate; they have to be the same.
+  const cited = (selected.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { proposalIndex?: unknown } | undefined)?.proposalIndex;
+  if (cited !== restored.proposalIndex) throw new Error(`Reviewed export claim ${claim.id} cites a proposal other than the candidate its Survey decision selected.`);
   if (canonicalJson(selected.value) !== canonicalJson(claim.value)) {
     throw new Error(`Reviewed export claim ${claim.id} states a value that is not the one its Survey decision accepted.`);
   }
@@ -326,13 +370,13 @@ type Restored = ReturnType<typeof restoreReviewedExtractionEvidence>;
 type ImportRecord = Restored["importRecord"];
 type Proposal = ImportRecord["spec"]["envelope"]["result"]["proposals"][number];
 
-/** The parts of `reviewRound` this projection reads; the rest of the scope passes through untouched. */
+/** The parts of `reviewRound` this projection reads; other fields are ignored. */
 const reviewRoundView = z.object({
   revision: z.number().int().nonnegative(),
   complete: z.boolean(),
   // Fieldwork writes `excluded` and `decisions` on every export, empty or not; an export without them has lost something.
-  excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()), code: z.string() })),
-  decisions: z.array(z.object({ claimId: z.string() }).passthrough()),
+  excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()).min(1), code: z.string() })),
+  decisions: z.array(z.object({ claimId: z.string(), reviewItemName: z.string(), actor: z.object({ id: z.string() }).passthrough() }).passthrough()),
   groundingRefused: z.array(z.object({ claimId: z.string(), gaps: z.array(z.string()) }).passthrough()).default([]),
 }).passthrough();
 
