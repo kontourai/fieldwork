@@ -56,10 +56,12 @@
   "documents": [
     { "source": "CONTEXT.md", "section": "Concepts" },
     { "source": "docs/reference.md", "section": "Reference", "covers": ["src/cli.ts"] },
+    { "source": "docs/memory-source.md", "section": "Reference", "covers": ["src/memory-source.ts"] },
     { "source": "docs/decisions/index.md", "section": "Design decisions" },
     { "source": "docs/decisions/application-boundary.md", "section": "Design decisions" },
     { "source": "docs/decisions/source-acquisition-and-replay.md", "section": "Design decisions" },
     { "source": "docs/decisions/runtime-binding.md", "section": "Design decisions" },
+    { "source": "docs/decisions/memory-source.md", "section": "Design decisions" },
     { "source": "docs/decisions/local-run-artifacts.md", "section": "Design decisions" },
     { "source": "docs/decisions/deterministic-fixture-oracles.md", "section": "Design decisions" },
     { "source": "AGENTS.md", "section": "Contribute" }
@@ -78,6 +80,7 @@
     { "id": "cli-run", "title": "fieldwork run options, including runtime and budget flags", "source": "docs/reference.md#fieldwork-run" },
     { "id": "cli-recheck", "title": "fieldwork recheck options", "source": "docs/reference.md#fieldwork-recheck" },
     { "id": "package-api", "title": "Package entry points", "source": "docs/reference.md#package-entry-points" },
+    { "id": "memory-source", "title": "Reviewed export as a memory source: claims, review posture, and the pinned Knowledge Kit schema", "source": "docs/memory-source.md" },
     { "id": "runtime-binding", "title": "Runtime binding is launch policy (decision)", "source": "docs/decisions/runtime-binding.md#runtime-binding-is-launch-policy" },
     { "id": "verification", "title": "Verifying a change: npm run verify and visual baselines", "source": "README.md#verification" }
   ],

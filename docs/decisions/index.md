@@ -12,5 +12,6 @@ Topic-keyed living decision records; the format is described at https://github.c
 | [application-boundary](./application-boundary.md) | current | Application boundary |
 | [deterministic-fixture-oracles](./deterministic-fixture-oracles.md) | current | Deterministic fixture oracles |
 | [local-run-artifacts](./local-run-artifacts.md) | current | Local run artifacts |
+| [memory-source](./memory-source.md) | current | Reviewed export as a memory source |
 | [runtime-binding](./runtime-binding.md) | current | Runtime binding |
 | [source-acquisition-and-replay](./source-acquisition-and-replay.md) | current | Source acquisition and replay |
