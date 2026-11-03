@@ -331,6 +331,8 @@ test("a claim that disagrees with its decision or the export's grounding refusal
   refuses(typed, (copy) => { named(copy.bundle, "doc.title").status = "disputed"; }, /latest event says verified/);
   // Editing the status and the refusal list together still disagrees with the claim's own events.
   refuses(typed, (copy) => { named(copy.bundle, "doc.publicationDate").status = "verified"; copy.reviewRound.groundingRefused = []; }, /latest event says disputed/);
+  // A disputed claim Fieldwork did not list as refused is not one it disputed.
+  refuses(typed, (copy) => { copy.reviewRound.groundingRefused = []; }, /disagrees with the export's grounding refusals/);
   refuses(typed, (copy) => { copy.reviewRound.groundingRefused.push({ claimId: "extraction-envelope.nothing.claim", gaps: ["schema-mismatch"] } as never); }, /not a disputed claim of its bundle/);
   // A decision that was held is not an accepted one, whatever its status says. The evidence is re-projected
   // through Surface so its digest binding is valid: only Fieldwork's own check can refuse it.
