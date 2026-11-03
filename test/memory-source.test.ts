@@ -599,6 +599,20 @@ test("evidence regenerated through Surface cannot contradict its own candidate, 
     if (claimId === alpha.id) for (const candidate of input.reviewItem!.spec.candidates) (candidate as { value: unknown }).value = "Changed";
   });
   refuses(value, /records a dimension for .* that its own evidence does not yield/);
+
+  // The span the claim cites changes in the proposal and the candidate; the receipt keeps the locator it graded.
+  const span = editable(mixed);
+  const charlie = claimNamed(span, "record.charlie");
+  const charlieIndex = restoreReviewedExtractionEvidence(span.bundle.evidence.find((item) => item.claimId === charlie.id && item.metadata?.reviewedExtraction) as never).proposalIndex;
+  regenerateAll(span, (input, claimId) => {
+    const provenance = (input.importRecord.spec.envelope.result.proposals[charlieIndex] as { provenance: { excerpt: string; locator: string; occurrence: { selected: { start: number; end: number } } } }).provenance;
+    const start = 1000;
+    const locator = `chars:${start}-${start + provenance.excerpt.length}`;
+    provenance.locator = locator;
+    provenance.occurrence.selected = { ...provenance.occurrence.selected, start, end: start + provenance.excerpt.length };
+    if (claimId === charlie.id) for (const candidate of input.reviewItem!.spec.candidates) (candidate.locator as { locator: string }).locator = locator;
+  });
+  refuses(span, /records a dimension for .* that its own evidence does not yield/);
 });
 
 test("every candidate of the decided item states the claim's target, not only the first", async () => {
