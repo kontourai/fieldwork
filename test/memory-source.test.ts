@@ -767,6 +767,7 @@ test("exports the published Fieldwork 0.11 wrote arrive reviewed, and the bare b
   assert.throws(() => memoryClaimsFromReviewedExport(bare), (error: Error & { code?: string }) => {
     assert.equal(error.code, "EXPORT_UNSUPPORTED_FORMAT");
     assert.match(error.message, /before 0\.11/);
+    assert.match(error.message, /no round scope/);
     return true;
   });
 });
@@ -786,7 +787,8 @@ test("what the receipt's dimension records against a claim is doubt, and a gap n
   ] as const) {
     const copy = editable(mixed);
     edit(dimensionOf(copy));
-    assert.deepEqual(arrivalAndGaps(copy), ["proposed", [kind]], label);
+    // The dimension also no longer says what the evidence yields, which is doubt of its own.
+    assert.deepEqual(arrivalAndGaps(copy), ["proposed", [kind, "receipt-differs"].sort()], label);
   }
   // A gap that names its evidence and not its claim is about that evidence's claim.
   const byEvidence = editable(mixed);
@@ -798,6 +800,106 @@ test("what the receipt's dimension records against a claim is doubt, and a gap n
   const charlieEvidence = other.bundle.evidence.find((item) => item.claimId === claimNamed(other, "record.charlie").id && item.metadata?.reviewedExtraction)!;
   other.reviewedGrounding.gaps = [{ kind: "hidden-conflict", evidenceId: (charlieEvidence as unknown as { id: string }).id } as never];
   assert.deepEqual(arrivalAndGaps(other), ["reviewed", []]);
+});
+
+test("anything a carried dimension says that the evidence does not is doubt, provenance dropped from the evidence is doubt, and a gap resolves to its claim by evidence", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("ninth"));
+  const arrivalAndGaps = (copy: Editable, field = "record.alpha") => {
+    const entry = memoryClaimsFromReviewedExport(copy).claims.find((item) => item.claim.property === field)!;
+    return [entry.arrival, entry.origin.kind === "reviewed-claim" ? entry.origin.groundingGaps ?? [] : []] as const;
+  };
+  const dimensionOf = (copy: Editable, field = "record.alpha") => (copy.reviewedGrounding as unknown as { dimensions: Record<string, unknown>[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(copy, field).id)!;
+
+  // Source state and any other key: the receipt no longer says what the evidence yields.
+  const state = editable(mixed);
+  (dimensionOf(state).sourceState as { status: string }).status = "drifted";
+  assert.deepEqual(arrivalAndGaps(state), ["proposed", ["receipt-differs"]]);
+  const confidence = editable(mixed);
+  dimensionOf(confidence).candidateConfidence = 0.1;
+  assert.deepEqual(arrivalAndGaps(confidence), ["proposed", ["receipt-differs"]]);
+
+  // A chosen conflict whose receipt says the decision named another candidate than the one the evidence cites.
+  const run = await conflictRun("memory-choice");
+  const service = await openRun(run);
+  let snapshot: ReviewQueueSessionState;
+  try {
+    snapshot = (await apiFetch(service, "/api/v1/run").then((response) => response.json()) as FieldworkRunViewV1).review.snapshot as unknown as ReviewQueueSessionState;
+  } finally { await service.close(); }
+  const conflict = snapshot.items.find((item) => item.spec.candidates.length > 1)!;
+  await decide(run, {
+    [conflict.metadata.name]: "select-proposed",
+    ...Object.fromEntries(snapshot.items.filter((item) => item !== conflict).map((item) => [item.metadata.name, "accept-proposed"])),
+  }, { [conflict.metadata.name]: conflict.spec.candidates[1]!.id });
+  const chosen = editable(await reviewedExport(run));
+  const choice = dimensionOf(chosen, "record.status").choice as { decisionCandidateId: string };
+  assert.ok(choice, "a chosen conflict carries its choice in the receipt");
+  choice.decisionCandidateId = "another-candidate";
+  assert.deepEqual(arrivalAndGaps(chosen, "record.status"), ["proposed", ["receipt-differs"]]);
+
+  // Provenance dropped from the evidence is not a structural gap.
+  const dropped = editable(mixed);
+  const index = dropped.bundle.evidence.findIndex((item) => item.claimId === claimNamed(dropped, "record.alpha").id && item.metadata?.reviewedExtraction);
+  const input = restoreReviewedExtractionEvidence(dropped.bundle.evidence[index] as never);
+  input.droppedProvenance = ["source"];
+  dropped.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
+  rebindReceipt(dropped);
+  const [droppedArrival, droppedGaps] = arrivalAndGaps(dropped);
+  assert.equal(droppedArrival, "proposed");
+  assert.ok(droppedGaps.includes("profile-gap"), JSON.stringify(droppedGaps));
+
+  // A disputed claim whose gap names its evidence and not its claim reads the same as one that names the claim.
+  const rivalRun = await forgedUnverifiedConflictRun("memory-gap-evidence");
+  await decide(rivalRun, Object.fromEntries((await queueOf(rivalRun)).map((item) => [item.name, "accept-proposed"])));
+  const rival = await reviewedExport(rivalRun);
+  const honest = memoryClaimsFromReviewedExport(rival);
+  const byEvidence = editable(rival);
+  for (const gap of byEvidence.reviewedGrounding.gaps) delete (gap as { claimId?: string }).claimId;
+  assert.ok(byEvidence.reviewedGrounding.gaps.every((gap) => (gap as { evidenceId?: string }).evidenceId));
+  assert.deepEqual(memoryClaimsFromReviewedExport(byEvidence), honest);
+});
+
+test("two items that state one claim are one claim, and the weaker arrival stands whichever comes first", async () => {
+  const run = await indexedItemsRun("memory-twins", true);
+  const queue = await queueOf(run);
+  await decide(run, Object.fromEntries(queue.map((item) => [item.name, "accept-proposed"])));
+  const exported = await reviewedExport(run);
+  const twins = (exported.bundle as unknown as Bundle).claims.filter((claim) => claim.fieldOrBehavior === "record.items[]");
+  assert.equal(twins.length, 2);
+  const withDoubt = (reverse: boolean) => {
+    const copy = editable(exported);
+    const first = copy.bundle.claims.filter((claim) => claim.fieldOrBehavior === "record.items[]")[0]!;
+    const index = copy.bundle.evidence.findIndex((item) => item.claimId === first.id && item.metadata?.reviewedExtraction);
+    const input = restoreReviewedExtractionEvidence(copy.bundle.evidence[index] as never);
+    input.structuralTrust = "invalid";
+    copy.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
+    rebindReceipt(copy);
+    if (reverse) copy.bundle.claims.reverse();
+    return memoryClaimsFromReviewedExport(copy);
+  };
+  for (const reverse of [false, true]) {
+    const projection = withDoubt(reverse);
+    assert.deepEqual(byProperty(projection, "record.items[]").map((entry) => entry.arrival), ["proposed"], `reverse=${reverse}`);
+    assert.deepEqual(projection.withheld.map((item) => item.reason), ["duplicate-claim"]);
+  }
+  const clean = memoryClaimsFromReviewedExport(exported);
+  assert.deepEqual(byProperty(clean, "record.items[]").map((entry) => entry.arrival), ["reviewed"]);
+});
+
+test("an exclusion listed twice is one exclusion", async () => {
+  const honest = await reviewedExport(await decidedMixedRun("twice-excluded"));
+  const copy = editable(honest);
+  copy.reviewRound.excluded.push({ fieldPath: "record.charlie", itemNames: ["extraction-envelope.not-needed"], code: "EXPORT_FIELD_UNSETTLED" });
+  assert.throws(() => memoryClaimsFromReviewedExport(copy), /holds no such review item/);
+  // A real non-undecided exclusion, duplicated.
+  const run = await indexedItemsRun("memory-dup-exclusion");
+  const queue = await queueOf(run);
+  await decide(run, { [queue.find((item) => item.fieldPath === "record.status")!.name]: "accept-proposed", [queue.filter((item) => item.fieldPath === "record.items[]")[0]!.name]: "reject-proposed" });
+  const exported = await reviewedExport(run);
+  const once = memoryClaimsFromReviewedExport(exported);
+  const doubled = editable(exported);
+  const unsettled = doubled.reviewRound.excluded.find((entry) => entry.code === "EXPORT_FIELD_UNSETTLED")!;
+  doubled.reviewRound.excluded.push({ ...unsettled });
+  assert.deepEqual(memoryClaimsFromReviewedExport(doubled), once);
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {

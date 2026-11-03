@@ -157,10 +157,11 @@ export interface MemorySourceProjection {
  * than one source's import record is refused rather than attributed to one.
  */
 export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): MemorySourceProjection {
-  // Fieldwork 0.9 and 0.10 exported a bare trust bundle: no Survey decisions, round attribution or import record
-  // beside it, so there is nothing to ground a `reviewed` claim on. 0.11 introduced the envelope this reads.
+  // Fieldwork 0.9 and 0.10 exported a bare trust bundle: the Survey records ride in its evidence, but there is no round
+  // scope beside it (no attribution, no list of undecided items, no completeness), so an unreviewed item cannot be
+  // listed and a decision cannot be attributed. 0.11 introduced the envelope this reads.
   if (exported !== null && typeof exported === "object" && !("kind" in exported) && "schemaVersion" in exported && "claims" in exported) {
-    throw Object.assign(new Error("This is a bare trust bundle, the format Fieldwork wrote before 0.11. It carries no review decisions or round attribution to map from; export it again with Fieldwork 0.11 or later."), { code: "EXPORT_UNSUPPORTED_FORMAT" });
+    throw Object.assign(new Error("This is a bare trust bundle, the format Fieldwork wrote before 0.11. It has no round scope (no attribution, undecided items or completeness) beside it, which this reads; export it again with Fieldwork 0.11 or later."), { code: "EXPORT_UNSUPPORTED_FORMAT" });
   }
   const output = parseReviewedExport(exported);
   const bundle = validateTrustBundle(output.bundle);
@@ -205,7 +206,8 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   // receipt to a claim (its evidence, the reviewer's disposition, the exact locator and the digest of the value it
   // states) have to be the ones recomputed; other fields are not compared, so a later Surface can add to a dimension.
   const bound = (dimension: Readonly<Record<string, unknown>>) => canonicalJson([dimension.claimId, dimension.evidenceId, dimension.reviewDisposition, dimension.exactLocator, dimension.candidateValueDigest]);
-  const recomputedDimensions = new Set((recomputed?.dimensions ?? []).map((dimension) => bound(dimension as unknown as Record<string, unknown>)));
+  const recomputedDimensionFor = new Map((recomputed?.dimensions ?? []).map((dimension) => [bound(dimension as unknown as Record<string, unknown>), dimension] as const));
+  const recomputedDimensions = new Set(recomputedDimensionFor.keys());
   for (const dimension of receipt.dimensions) {
     if (!recomputedDimensions.has(bound(dimension))) throw new Error(`Reviewed export's grounding receipt records a dimension for ${String(dimension.claimId)} that its own evidence does not yield.`);
   }
@@ -221,11 +223,20 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     attributedClaims.add(entry.claimId);
     attributedItems.add(entry.reviewItemName);
   }
+  const claimOfEvidence = new Map(bundle.evidence.map((entry) => [entry.id, entry.claimId]));
+  /** Whether a gap names the claim, by its claim id or else by the evidence it names. */
+  const namesClaim = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean =>
+    (typeof gap.claimId === "string" ? gap.claimId : typeof gap.evidenceId === "string" ? claimOfEvidence.get(gap.evidenceId) : undefined) === claimId;
+  /** The claim a gap is about: by its claim id, else by the evidence it names. A gap that names neither is about every claim. */
+  const gapIsAbout = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean => {
+    const named = typeof gap.claimId === "string" ? gap.claimId : typeof gap.evidenceId === "string" ? claimOfEvidence.get(gap.evidenceId) : undefined;
+    return named === undefined ? typeof gap.claimId !== "string" && typeof gap.evidenceId !== "string" : named === claimId;
+  };
   const statusOf = new Map(bundle.claims.map((claim) => [claim.id, claim.status]));
   // The receipt and the list derived from it have to say the same thing: a refusal lists exactly the gaps the receipt
   // records for its claim, and and a disputed claim with no
   // reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
-  const receiptKinds = (claimId: string) => new Set(groundingGaps.filter((gap) => gap.claimId === claimId).map((gap) => gap.kind));
+  const receiptKinds = (claimId: string) => new Set(groundingGaps.filter((gap) => namesClaim(gap, claimId)).map((gap) => gap.kind));
   for (const entry of round.groundingRefused) {
     if (statusOf.get(entry.claimId) !== "disputed") throw new Error(`Reviewed export lists a grounding refusal for ${entry.claimId}, which is not a disputed claim of its bundle.`);
     const recorded = receiptKinds(entry.claimId);
@@ -234,15 +245,9 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     }
   }
 
-  // A receipt written before Fieldwork 0.14 never recorded whether excerpts were checked against the prepared text, so
+  // A receipt written before Fieldwork 0.13 never recorded whether excerpts were checked against the prepared text, so
   // the check recomputed today is not one that writer made. When no dimension records it, that gap is not doubt.
   const legacyReceipt = receipt.dimensions.length > 0 && receipt.dimensions.every((dimension) => !("excerptVerification" in dimension));
-  const claimOfEvidence = new Map(bundle.evidence.map((entry) => [entry.id, entry.claimId]));
-  /** The claim a gap is about: by its claim id, else by the evidence it names. A gap that names neither is about every claim. */
-  const gapIsAbout = (gap: { readonly claimId?: unknown; readonly evidenceId?: unknown }, claimId: string): boolean => {
-    const named = typeof gap.claimId === "string" ? gap.claimId : typeof gap.evidenceId === "string" ? claimOfEvidence.get(gap.evidenceId) : undefined;
-    return named === undefined ? typeof gap.claimId !== "string" && typeof gap.evidenceId !== "string" : named === claimId;
-  };
   /** What a receipt dimension records against its claim, as the policy would read it (src: Surface reviewed-grounding-policy). */
   const dimensionDoubts = (dimension: Readonly<Record<string, unknown>>): string[] => {
     const kinds: string[] = [];
@@ -260,11 +265,16 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     const kinds = new Set<string>();
     for (const gap of recomputedGaps) {
       if (gapIsAbout(gap as { claimId?: unknown; evidenceId?: unknown }, claimId) && !(legacyReceipt && gap.kind === "excerpt-not-verified")
-        && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined })) kinds.add(gap.kind);
+        && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined, gap: "gap" in gap ? (gap.gap as { kind?: unknown; status?: unknown }) : undefined })) kinds.add(gap.kind);
     }
     for (const gap of groundingGaps) if (gapIsAbout(gap, claimId) && disputes(gap)) kinds.add(gap.kind);
     for (const dimension of receipt.dimensions) {
-      if (dimension.claimId === claimId || claimOfEvidence.get(String(dimension.evidenceId)) === claimId) for (const kind of dimensionDoubts(dimension)) kinds.add(kind);
+      if (!(dimension.claimId === claimId || claimOfEvidence.get(String(dimension.evidenceId)) === claimId)) continue;
+      for (const kind of dimensionDoubts(dimension)) kinds.add(kind);
+      // The dimension is what the policy derives from the evidence. Any key on which the carried one differs (the
+      // choice, the source state, a field a later Surface adds) is a receipt that no longer says what the evidence does.
+      const yielded = recomputedDimensionFor.get(bound(dimension));
+      if (yielded !== undefined && canonicalJson(JSON.parse(JSON.stringify(yielded))) !== canonicalJson(dimension)) kinds.add("receipt-differs");
     }
     if (typeof schema === "string" && schema !== "ok") kinds.add("schema-mismatch");
     return [...kinds].sort();
@@ -374,7 +384,12 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   ]);
   const undecidedItems = new Set<string>();
   const items = importRecord === undefined ? undefined : new Map(buildReviewItemsFromExtractionEnvelopeImport(importRecord as unknown as SurveyImportRecord).map((item) => [item.metadata.name, item]));
+  const seenExclusions = new Set<string>();
   for (const exclusion of round.excluded) {
+    // The same exclusion listed twice is one exclusion.
+    const exclusionKey = canonicalJson([exclusion.code, exclusion.fieldPath, [...exclusion.itemNames].sort()]);
+    if (exclusion.code !== "EXPORT_UNDECIDED" && seenExclusions.has(exclusionKey)) continue;
+    seenExclusions.add(exclusionKey);
     // Every exclusion names items the import record holds, under the field it lists them for.
     for (const itemName of exclusion.itemNames) {
       const item = items?.get(itemName);
@@ -432,15 +447,14 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   /**
    * The Kit gives identical content one id, so two items that state the same value from the same span are one
-   * claim and the second is reported. Reviewed claims are added before undecided ones, and Fieldwork excludes a
-   * decided item while a sibling on its field is undecided, so the claim kept is never a weaker twin of a stronger one.
+   * claim and the second is reported. If their arrivals differ the weaker stands, whichever came first: a twin
+   * the export doubts, or never decided, is not made `reviewed` by the other.
    */
   function addClaim(entry: MemorySourceClaim): void {
-    if (claims.some((existing) => existing.claim.id === entry.claim.id)) {
-      withheld.push({ reason: "duplicate-claim", fieldPath: entry.claim.property, detail: entry.claim.id });
-      return;
-    }
-    claims.push(entry);
+    const index = claims.findIndex((existing) => existing.claim.id === entry.claim.id);
+    if (index === -1) { claims.push(entry); return; }
+    withheld.push({ reason: "duplicate-claim", fieldPath: entry.claim.property, detail: entry.claim.id });
+    if (claims[index]!.arrival === "reviewed" && entry.arrival === "proposed") claims[index] = entry;
   }
 
   return {
@@ -518,7 +532,7 @@ const EXCLUSION_CODES = ["EXPORT_UNDECIDED", "EXPORT_FIELD_UNSETTLED", "EXPORT_U
 
 /** What this projection reads of `reviewedGrounding`: the claim-specific gaps and per-claim dispositions of the receipt Fieldwork's `groundingRefused` is derived from. */
 const reviewedGroundingView = z.object({
-  gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional(), evidenceId: z.string().optional(), structuralTrust: z.string().optional() }).passthrough()).default([]),
+  gaps: z.array(z.object({ kind: z.string(), claimId: z.string().optional(), evidenceId: z.string().optional(), structuralTrust: z.string().optional(), gap: z.object({ kind: z.unknown().optional(), status: z.unknown().optional() }).passthrough().optional() }).passthrough()).default([]),
   dimensions: z.array(z.record(z.string(), z.unknown())).default([]),
 }).passthrough();
 
@@ -529,8 +543,13 @@ const STRUCTURAL_GAPS = new Set(["evidence-not-entailing", "structure-not-valida
  * Whether a receipt gap disputes its claim. As in classifyGroundingRefusals, a structural gap leaves a claim verified
  * unless Surface checked the value and found it invalid, which is a schema mismatch.
  */
-const disputes = (gap: { readonly kind: string; readonly structuralTrust?: string }): boolean =>
-  !STRUCTURAL_GAPS.has(gap.kind) || (gap.kind === "structure-not-validated" && gap.structuralTrust === "invalid");
+const disputes = (gap: { readonly kind: string; readonly structuralTrust?: string; readonly gap?: { readonly kind?: unknown; readonly status?: unknown } }): boolean => {
+  if (gap.kind === "structure-not-validated") return gap.structuralTrust === "invalid";
+  // The only profile gap that leaves a claim verified is the one saying its structure was left unvalidated; one that
+  // says provenance was dropped, an artifact was unavailable or a different candidate was chosen is doubt.
+  if (gap.kind === "profile-gap") return !(gap.gap?.kind === "structural-trust" && gap.gap.status === "unvalidated");
+  return !STRUCTURAL_GAPS.has(gap.kind);
+};
 
 /** The parts of `reviewRound` this projection reads; other fields are ignored. */
 const reviewRoundView = z.object({
