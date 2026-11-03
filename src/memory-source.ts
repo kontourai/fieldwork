@@ -21,7 +21,7 @@ import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./ap
 export const MEMORY_CLAIM_SCHEMA_PIN = Object.freeze({
   repo: "kontourai/flow-agents",
   /** Head of kontourai/flow-agents#1574 (branch feat/1571-memory-claims-routing) when this mapping was written. */
-  commit: "6737ea9ebb37137a349fa7f60e5fd2dba9561c93",
+  commit: "c588dc35b5ea75f21226e2d7f4b4c8ea4a537416",
   schema: "kits/knowledge/schemas/knowledge/memory-claim.schema.json",
   schemaVersion: "1.0",
 });

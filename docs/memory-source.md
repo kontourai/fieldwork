@@ -10,7 +10,7 @@ The claims follow the Knowledge Kit memory claim schema. Fieldwork references it
 | --- | --- |
 | Repository | `kontourai/flow-agents` |
 | Pull request | [#1574](https://github.com/kontourai/flow-agents/pull/1574), branch `feat/1571-memory-claims-routing` |
-| Commit | `6737ea9ebb37137a349fa7f60e5fd2dba9561c93` |
+| Commit | `c588dc35b5ea75f21226e2d7f4b4c8ea4a537416` |
 | Schema | `kits/knowledge/schemas/knowledge/memory-claim.schema.json`, `schema_version` `1.0` |
 | Contract | `kits/knowledge/docs/memory-claims.md` at the same commit |
 
