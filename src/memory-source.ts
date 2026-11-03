@@ -181,10 +181,12 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   const importRecord = [...records.values()][0];
 
-  // Whether a claim is grounded is recomputed from the evidence the export carries, under the policy Fieldwork
-  // evaluated it with, rather than read from the receipt beside it: the receipt is a record someone can edit, the
-  // evidence is digest-bound. A claim is disputed exactly when this finds a gap that disputes it, or the cited
-  // proposal does not satisfy its field's schema (Traverse's `evidenceMatch`, which Fieldwork reports the same way).
+  // A claim is `reviewed` only when nothing the export carries casts doubt on its grounding. The grounding is
+  // recomputed from the digest-bound evidence under the policy Fieldwork evaluated it with, and also read from the
+  // receipt beside it (its gaps and its dimensions' structural trust): doubt from either source is doubt. A record
+  // someone edited can therefore remove doubt from one place without making the claim `reviewed` while another still
+  // holds it, and an export an older Fieldwork wrote, which called a value it could not check verified, arrives
+  // `proposed` rather than being refused.
   const reviewedEvidence = bundle.evidence.filter((entry) => entry.metadata?.reviewedExtraction !== undefined);
   const recomputed = reviewedEvidence.length === 0 ? undefined : evaluateReviewedGroundingPolicy({
     policy: reviewedGroundingPolicy(bundle.claims.map((claim) => claim.id)),
@@ -215,8 +217,8 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   const statusOf = new Map(bundle.claims.map((claim) => [claim.id, claim.status]));
   // The receipt and the list derived from it have to say the same thing: a refusal lists exactly the gaps the receipt
-  // records for its claim, and a claim the export calls verified has no gap that would have disputed it. A disputed
-  // claim with no reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
+  // records for its claim, and and a disputed claim with no
+  // reviewed evidence (a conflict nobody could confirm) is not a refusal and may carry gaps.
   const receiptKinds = (claimId: string) => new Set(groundingGaps.filter((gap) => gap.claimId === claimId).map((gap) => gap.kind));
   for (const entry of round.groundingRefused) {
     if (statusOf.get(entry.claimId) !== "disputed") throw new Error(`Reviewed export lists a grounding refusal for ${entry.claimId}, which is not a disputed claim of its bundle.`);
@@ -225,11 +227,18 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       throw new Error(`Reviewed export refuses ${entry.claimId} for ${[...new Set(entry.gaps)].join(", ")}, but its grounding receipt records ${[...recorded].join(", ") || "nothing"} for it.`);
     }
   }
-  for (const gap of groundingGaps) {
-    if (gap.claimId !== undefined && statusOf.get(gap.claimId) === "verified" && disputes(gap)) {
-      throw new Error(`Reviewed export's grounding receipt records ${gap.kind} for ${gap.claimId}, which the export calls verified.`);
+
+  /** The kinds of doubt anything the export carries casts on a claim's grounding. */
+  const doubtsAbout = (claimId: string, schema: unknown): string[] => {
+    const kinds = new Set<string>();
+    for (const gap of recomputedGaps) {
+      if ("claimId" in gap && gap.claimId === claimId && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined })) kinds.add(gap.kind);
     }
-  }
+    for (const gap of groundingGaps) if (gap.claimId === claimId && disputes(gap)) kinds.add(gap.kind);
+    if (receipt.dimensions.some((dimension) => dimension.claimId === claimId && dimension.structuralTrust === "invalid")) kinds.add("structure-invalid");
+    if (typeof schema === "string" && schema !== "ok") kinds.add("schema-mismatch");
+    return [...kinds].sort();
+  };
 
   for (const surfaceClaim of bundle.claims) {
     const restored = restoredByClaim.get(surfaceClaim.id);
@@ -284,10 +293,14 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     if ((candidateSchemaMismatch(selectedCandidate ?? { producer: undefined })?.schema ?? "ok") !== (typeof schema === "string" ? schema : "ok")) {
       throw new Error(`Reviewed export claim ${surfaceClaim.id} carries one schema match on its proposal and another on the candidate its Survey decision selected.`);
     }
-    const mustDispute = recomputedGaps.some((gap) => "claimId" in gap && gap.claimId === surfaceClaim.id && disputes({ kind: gap.kind, structuralTrust: "structuralTrust" in gap ? String(gap.structuralTrust) : undefined }))
-      || (typeof schema === "string" && schema !== "ok");
-    if ((surfaceClaim.status === "disputed") !== mustDispute) {
-      throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, but its evidence ${mustDispute ? "does not ground it" : "grounds it"}.`);
+    // The declared type is carried twice as well, and a schema match against the wrong type means nothing.
+    const declaredType = (selectedCandidate?.producer?.[SURVEY_EXTRACTION_ENVELOPE_PRODUCER] as { valueType?: { type?: unknown } } | undefined)?.valueType?.type;
+    if ((declaredType ?? null) !== ((proposal as { valueType?: unknown }).valueType ?? null)) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} carries one value type on its proposal and another on the candidate its Survey decision selected.`);
+    }
+    const doubts = doubtsAbout(surfaceClaim.id, schema);
+    if (surfaceClaim.status === "disputed" && doubts.length === 0) {
+      throw new Error(`Reviewed export claim ${surfaceClaim.id} is disputed, but nothing it carries casts doubt on its grounding.`);
     }
     const attribution = round.decisions.find((entry) => entry.claimId === surfaceClaim.id)!;
     const gaps = round.groundingRefused.find((entry) => entry.claimId === surfaceClaim.id)?.gaps;
@@ -297,7 +310,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
       throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, which disagrees with the export's grounding refusals.`);
     }
     addClaim({
-      arrival: surfaceClaim.status === "verified" ? "reviewed" : "proposed",
+      arrival: surfaceClaim.status === "verified" && doubts.length === 0 ? "reviewed" : "proposed",
       claim: memoryClaim({
         subject: { type: surfaceClaim.subjectType, id: surfaceClaim.subjectId },
         claimType: surfaceClaim.claimType,
@@ -317,7 +330,7 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
           ...(decision.spec.reviewedAt === undefined ? {} : { reviewedAt: decision.spec.reviewedAt }),
         },
         attribution: attribution as unknown as JsonValue,
-        ...(surfaceClaim.status === "disputed" && gaps !== undefined ? { groundingGaps: gaps } : {}),
+        ...(surfaceClaim.status === "disputed" && gaps !== undefined ? { groundingGaps: gaps } : surfaceClaim.status === "verified" && doubts.length > 0 ? { groundingGaps: doubts } : {}),
       },
     });
   }
@@ -446,6 +459,12 @@ function assertSameTarget(
 ): void {
   // Survey groups proposals by claim slot, so every candidate of an item (the selected one included) states the item's target.
   const candidates = restored.reviewItem?.spec.candidates ?? [];
+  const states = (target: { subjectType?: unknown; subjectId?: unknown; claimType?: unknown; fieldOrBehavior?: unknown } | undefined) =>
+    target?.subjectType === claim.subjectType && target.subjectId === claim.subjectId && target.claimType === claim.claimType && target.fieldOrBehavior === claim.fieldOrBehavior;
+  // The import record Survey built the item from names the targets the task declared; the claim has to be one of them.
+  if (!restored.importRecord.spec.claimTargets.some(states)) {
+    throw new Error(`Reviewed export claim ${claim.id} states a claim target its import record does not declare.`);
+  }
   if (candidates.length === 0 || candidates.some((candidate) => {
     const target = candidate.claimTarget;
     return target?.subjectType !== claim.subjectType || target.subjectId !== claim.subjectId || target.claimType !== claim.claimType || target.fieldOrBehavior !== claim.fieldOrBehavior;

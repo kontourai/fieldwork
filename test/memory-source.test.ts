@@ -318,6 +318,8 @@ const settle = (copy: Editable, field: string, status: string) => {
   copy.reviewRound.groundingRefused = (copy.reviewRound.groundingRefused ?? []).filter((entry) => entry.claimId !== claim.id);
 };
 const refuses = (copy: Editable, message: RegExp) => assert.throws(() => memoryClaimsFromReviewedExport(copy), message);
+/** What a promoted claim arrives as: not refused, and never `reviewed` while anything the export carries casts doubt on it. */
+const arrivalOf = (copy: Editable, field: string): string | undefined => memoryClaimsFromReviewedExport(copy).claims.find((entry) => entry.claim.property === field)?.arrival;
 /**
  * After a test replaces evidence (re-projected through Surface so its digest binding is valid), carry the receipt
  * dimensions that evidence yields, so only the rule under test can refuse the export.
@@ -364,7 +366,7 @@ test("a claim that disagrees with its decision, its events or the grounding rece
   for (const [key, value] of [["subjectType", "other"], ["subjectId", "someone-else"], ["claimType", "other"], ["fieldOrBehavior", "record.other"]] as const) {
     const copy = editable(mixed);
     (claimNamed(copy, "record.alpha") as unknown as Record<string, unknown>)[key] = value;
-    refuses(copy, /claim target other than the one its Survey decision accepted/);
+    refuses(copy, /claim target (other than the one its Survey decision accepted|its import record does not declare)/);
   }
 
   // The status has to match the claim's latest event.
@@ -391,11 +393,11 @@ test("a claim that disagrees with its decision, its events or the grounding rece
 
   // The receipt: a promotion that also rewrites the claim, its event and the refusal list is contradicted by it.
   const promoted = editable(typed);
-  const promotedDate = claimNamed(promoted, "doc.publicationDate");
-  promoted.bundle.events.filter((event) => event.claimId === promotedDate.id).forEach((event) => { event.status = "verified"; });
-  promotedDate.status = "verified";
-  promoted.reviewRound.groundingRefused = [];
-  refuses(promoted, /grounding receipt records schema-mismatch .* which the export calls verified/);
+  settle(promoted, "doc.publicationDate", "verified");
+  promoted.reviewedGrounding.gaps = clone(typed.reviewedGrounding.gaps) as never;
+  assert.equal(arrivalOf(promoted, "doc.publicationDate"), "proposed", "the receipt still records the gap");
+  const gapsOf = (copy: Editable) => memoryClaimsFromReviewedExport(copy).claims.find((entry) => entry.claim.property === "doc.publicationDate")!.origin;
+  assert.ok(gapsOf(promoted).kind === "reviewed-claim" && (gapsOf(promoted) as { groundingGaps?: string[] }).groundingGaps?.includes("schema-mismatch"), "and says which");
   // A refusal the receipt does not record, or for a claim that is not disputed or does not exist.
   const unrecorded = editable(typed);
   unrecorded.reviewRound.groundingRefused[0]!.gaps.push("hidden-conflict");
@@ -449,7 +451,7 @@ test("the receipt's dispositions and invalid structure, the review events and th
   settle(invalid, "doc.versionNumber", "verified");
   invalid.reviewedGrounding.gaps = typed.reviewedGrounding.gaps.filter((gap) => !(gap.claimId === version.id && gap.kind === "schema-mismatch")) as never;
   invalid.reviewRound.groundingRefused = invalid.reviewRound.groundingRefused.filter((entry) => entry.claimId !== version.id);
-  refuses(invalid, /which the export calls verified/);
+  assert.equal(arrivalOf(invalid, "doc.versionNumber"), "proposed", "the receipt still records invalid structure");
   // A refusal has to list exactly the gaps the receipt records for its claim, no fewer.
   const fewer = editable(typed);
   fewer.reviewRound.groundingRefused.find((entry) => entry.claimId === version.id)!.gaps = ["schema-mismatch"];
@@ -474,7 +476,7 @@ test("the receipt's dispositions and invalid structure, the review events and th
   // A rejected claim states the target and value of the proposal it rejected.
   const retargeted = editable(mixed);
   claimNamed(retargeted, "record.bravo").fieldOrBehavior = "record.alpha";
-  refuses(retargeted, /claim target other than the one its Survey decision accepted/);
+  refuses(retargeted, /claim target (other than the one its Survey decision accepted|its import record does not declare)/);
   const revalued = editable(mixed);
   claimNamed(revalued, "record.bravo").value = "NOT THE REJECTED VALUE";
   refuses(revalued, /not the one its Survey decision rejected/);
@@ -494,7 +496,7 @@ test("the receipt's dispositions and invalid structure, the review events and th
   const moved = editable(typed);
   const date = claimNamed(moved, "doc.publicationDate");
   moved.reviewedGrounding.gaps.forEach((gap) => { if (gap.claimId === date.id) gap.claimId = claimNamed(moved, "doc.title").id; });
-  refuses(moved, /which the export calls verified|but its grounding receipt records/);
+  refuses(moved, /but its grounding receipt records nothing for it/);
 });
 
 test("whether a claim is grounded is recomputed from its evidence, so editing the records beside it cannot promote or demote it", async () => {
@@ -511,7 +513,7 @@ test("whether a claim is grounded is recomputed from its evidence, so editing th
     assert.equal(claimNamed(editable(honest), field).status, "disputed", field);
     const promoted = editable(honest);
     settle(promoted, field, "verified");
-    refuses(promoted, /but its evidence does not ground it/);
+    assert.equal(arrivalOf(promoted, field), "proposed", field);
   }
   // Structure Surface found invalid disputes a claim even when Traverse's schema match for the proposal says ok. The
   // evidence is re-projected through Surface so its digest binding is valid: only the recomputation can refuse it.
@@ -521,12 +523,12 @@ test("whether a claim is grounded is recomputed from its evidence, so editing th
   alphaInput.structuralTrust = "invalid";
   invalid.bundle.evidence[alphaIndex] = projectReviewedExtractionEvidence(alphaInput).evidence as never;
   rebindReceipt(invalid);
-  refuses(invalid, /but its evidence does not ground it/);
+  assert.equal(arrivalOf(invalid, "record.alpha"), "proposed");
   // Demotion: an honest claim cannot be made disputed with an empty (or structural-only) refusal.
   const demoted = editable(mixed);
   settle(demoted, "record.alpha", "disputed");
   demoted.reviewRound.groundingRefused.push({ claimId: claimNamed(demoted, "record.alpha").id, gaps: [] });
-  refuses(demoted, /but its evidence grounds it/);
+  refuses(demoted, /nothing it carries casts doubt on its grounding/);
 });
 
 test("a receipt dimension is checked by its evidence as well as its claim, and names a claim the export has", async () => {
@@ -640,6 +642,68 @@ test("every candidate of the decided item states the claim's target, not only th
     rebindReceipt(copy);
     refuses(copy, /claim target other than the one its Survey decision accepted/);
   }
+});
+
+test("the export Fieldwork 0.13.0 itself wrote for the real run projects, with the claim that writer called verified arriving proposed", async () => {
+  // Written by the published release (Fieldwork 0.13.0, Surface 4.4.0, Survey 7.0.0) with `fieldwork export`, not by this
+  // checkout. That writer called `doc.versionNumber = "2.1"` (a number field answered with text) verified, though its own
+  // receipt records the structure as invalid; today's writer disputes it.
+  const exported = JSON.parse(await readFile(join(import.meta.dirname, "fixtures", "real-run-0.13.0", "export-0.13.0.json"), "utf8")) as ReviewedExportV1;
+  const bundle = exported.bundle as unknown as Bundle;
+  assert.equal(bundle.claims.find((claim) => claim.fieldOrBehavior === "doc.versionNumber")!.status, "verified");
+  const projection = memoryClaimsFromReviewedExport(exported);
+  assert.deepEqual(projection.claims.map((entry) => [entry.claim.property, entry.arrival]), bundle.claims.map((claim) => [claim.fieldOrBehavior, claim.fieldOrBehavior === "doc.versionNumber" || claim.status === "disputed" ? "proposed" : "reviewed"]));
+  const version = one(projection, "doc.versionNumber");
+  assert.ok(version.origin.kind === "reviewed-claim");
+  assert.equal(version.origin.surfaceStatus, "verified");
+  assert.ok(version.origin.groundingGaps?.includes("structure-invalid"), JSON.stringify(version.origin.groundingGaps));
+});
+
+test("a changed target, a conflicting type declaration or a receipt that records invalid structure cannot leave a claim reviewed", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("sevenths"));
+  const typedRun = await typedFieldRun("memory-sevenths");
+  await decide(typedRun, Object.fromEntries((await queueOf(typedRun)).map((item) => [item.name, "accept-proposed"])));
+  const typed = await reviewedExport(typedRun);
+
+  // The import record still declares the task's targets: a claim cannot move to another subject, type or field.
+  for (const [key, bundleKey] of [["subjectId", "subjectId"], ["subjectType", "subjectType"], ["claimType", "claimType"], ["fieldOrBehavior", "fieldOrBehavior"]] as const) {
+    const moved = editable(mixed);
+    const alpha = claimNamed(moved, "record.alpha");
+    (alpha as unknown as Record<string, string>)[bundleKey] = "somewhere-else";
+    regenerateAll(moved, (input, claimId) => {
+      if (claimId === alpha.id) for (const candidate of input.reviewItem!.spec.candidates) (candidate.claimTarget as unknown as Record<string, string>)[key] = "somewhere-else";
+    });
+    rebindReceipt(moved);
+    refuses(moved, /claim target its import record does not declare/);
+  }
+
+  // One scalar of the receipt saying the structure was invalid is doubt, however the rest is rewritten.
+  const scalar = editable(mixed);
+  (scalar.reviewedGrounding as unknown as { dimensions: { claimId: string; structuralTrust: string }[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(scalar, "record.alpha").id)!.structuralTrust = "invalid";
+  assert.equal(arrivalOf(scalar, "record.alpha"), "proposed");
+
+  // The version number is declared a number on its candidate: a proposal that says string, with both schema matches ok, is a
+  // different record from the one the reviewer saw.
+  const version = claimNamed(editable(typed), "doc.versionNumber");
+  const typeSwap = editable(typed);
+  const versionIndex = restoreReviewedExtractionEvidence(typeSwap.bundle.evidence.find((item) => item.claimId === version.id && item.metadata?.reviewedExtraction) as never).proposalIndex;
+  settle(typeSwap, "doc.versionNumber", "verified");
+  regenerateAll(typeSwap, (input, claimId) => {
+    const proposal = input.importRecord.spec.envelope.result.proposals[versionIndex] as { valueType?: string; evidenceMatch: { schema: string } };
+    proposal.valueType = "string";
+    proposal.evidenceMatch.schema = "ok";
+    if (claimId === version.id) for (const candidate of input.reviewItem!.spec.candidates) {
+      const producer = (candidate.producer as Record<string, { evidenceMatch: { schema: string } }>)["survey.kontourai.io/extraction-envelope"]!;
+      producer.evidenceMatch.schema = "ok";
+    }
+  });
+  rebindReceipt(typeSwap);
+  refuses(typeSwap, /one value type on its proposal and another on the candidate/);
+
+  // A receipt dimension is bound to the evidence it names.
+  const evidence = editable(mixed);
+  (evidence.reviewedGrounding as unknown as { dimensions: { claimId: string; evidenceId: string }[] }).dimensions.find((dimension) => dimension.claimId === claimNamed(evidence, "record.alpha").id)!.evidenceId = "extraction-envelope.nothing.reviewed-extraction-evidence";
+  refuses(evidence, /records a dimension for .* that its own evidence does not yield/);
 });
 
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
