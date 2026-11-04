@@ -6,6 +6,8 @@ The durable authority boundary is the actual prepared bytes rebound to the Trave
 
 A reviewed export projects that persisted review queue rather than re-deriving its items, so a receipt states exactly what was decided and covers exactly one run's review authority.
 
+A reviewed export can be projected into memory claims using the Knowledge Kit's claim schema, which Fieldwork references at a pinned commit and does not copy. The projection carries the export's own review facts and adds no review disposition or trust status: every claim is posture `stated`, review posture rides beside it (reviewed claims arrive `reviewed`, undecided items `proposed`), and accumulation and storage belong to Surface and Corpus Store.
+
 Run collisions are non-destructive: an identical request reuses a valid run and its append-only review history, while an invalid collision fails closed. The loopback server is not an ambient localhost API. Every launch creates a random capability sent by the browser, and storage-level locking serializes independent server instances around the complete read/validate/write transaction.
 
 The root package facade owns only Fieldwork's versioned JSON transport. It does not expose concrete Traverse, Survey, or Surface implementation declarations. Persisted Survey payloads cross a temporary structural adapter and then Survey's semantic validators; Survey #188 owns the reusable unknown-input validator needed to remove that adapter.

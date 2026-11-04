@@ -75,6 +75,11 @@ export function acquireFieldwork(options: FieldworkAcquisitionOptions): Promise<
 export function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
   return internalExport(runDirectory);
 }
+export { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimsFromReviewedExport } from "./memory-source.js";
+export type {
+  FieldworkMemoryClaim, FieldworkMemoryPosture, MemoryArrival, MemorySourceClaim, MemorySourceProjection,
+  ReviewedClaimOrigin, UnreviewedItemOrigin, WithheldMemoryItem,
+} from "./memory-source.js";
 export function inspectionExport(
   runDirectory: string,
   options?: import("./inspection.js").FieldworkInspectionExportOptions,

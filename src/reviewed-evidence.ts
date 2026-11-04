@@ -48,6 +48,31 @@ export interface ReviewedEvidenceEnrichment {
   readonly grounding: FieldworkReviewedGroundingReceipt;
 }
 
+/**
+ * The policy Fieldwork evaluates reviewed grounding under, shared by the export and by a reader recomputing it
+ * from the evidence an export carries (src/memory-source.ts).
+ */
+export function reviewedGroundingPolicy(requiredClaimIds: string[]): ReviewedGroundingPolicy {
+  return {
+    id: REVIEWED_GROUNDING_POLICY_ID,
+    action: REVIEWED_GROUNDING_ACTION,
+    requiredClaimIds,
+    requireExactLocator: true,
+    requirePreparedArtifact: true,
+    requireAcceptedReview: true,
+    requireValidatedStructure: true,
+    // Survey verifies every excerpt against the prepared text when a run is
+    // created, so evidence that does not record that check is not this run's.
+    requireVerifiedExcerpts: true,
+    // A rival the import left out because its excerpt did not verify is
+    // unverifiable, not disproven, and the reviewer could not choose it: it was
+    // never a candidate. Nothing resolves it, so a claim it contests is not
+    // allowed as grounded. A rival the reviewer saw and chose against is a
+    // different case, below.
+    refuseExcludedRivals: true,
+  };
+}
+
 export interface BuildReviewedEvidenceEnrichmentOptions {
   /** Freshly rebuilt from the run's own extraction envelope, at export time. */
   readonly imported: ExtractionEnvelopeImportResult;
@@ -180,24 +205,7 @@ export function buildReviewedEvidenceEnrichment(options: BuildReviewedEvidenceEn
       { code: "EXPORT_NOT_PROJECTABLE" },
     );
   }
-  const policy: ReviewedGroundingPolicy = {
-    id: REVIEWED_GROUNDING_POLICY_ID,
-    action: REVIEWED_GROUNDING_ACTION,
-    requiredClaimIds,
-    requireExactLocator: true,
-    requirePreparedArtifact: true,
-    requireAcceptedReview: true,
-    requireValidatedStructure: true,
-    // Survey verifies every excerpt against the prepared text when a run is
-    // created, so evidence that does not record that check is not this run's.
-    requireVerifiedExcerpts: true,
-    // A rival the import left out because its excerpt did not verify is
-    // unverifiable, not disproven, and the reviewer could not choose it: it was
-    // never a candidate. Nothing resolves it, so a claim it contests is not
-    // allowed as grounded. A rival the reviewer saw and chose against is a
-    // different case, below.
-    refuseExcludedRivals: true,
-  };
+  const policy = reviewedGroundingPolicy(requiredClaimIds);
   // Surface 4 binds each claim's value to its reviewed candidate and refuses a
   // call without `claims`. v3 evidence names its import record by digest, and
   // the resolver reads the record from the sidecar that evidence carries.
