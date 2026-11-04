@@ -1027,7 +1027,7 @@ test("the missing excerpt record is only forgiven in the shape Fieldwork 0.11 an
 test("the reviewer kind is never inferred: Survey 8.4's inferred kind on a bundle claim changes neither arrival nor origin, and the attribution kind is carried as Fieldwork stamped it", async () => {
   const mixed = await reviewedExport(await decidedMixedRun("reviewer-kind"));
   const honest = memoryClaimsFromReviewedExport(mixed);
-  // What Survey 8.4.0 adds to every exported claim when the decision carries no kind of its own.
+  // What Survey 8.4.0 adds to the metadata of the bundle claims it projects (not those held as could-not-confirm), the decision carrying no kind of its own.
   const copy = editable(mixed);
   for (const claim of copy.bundle.claims) {
     const metadata = ((claim as unknown as { metadata?: { survey?: Record<string, unknown> } }).metadata ??= {});
