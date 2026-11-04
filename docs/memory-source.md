@@ -9,8 +9,8 @@ The claims follow the Knowledge Kit memory claim schema. Fieldwork references it
 | | |
 | --- | --- |
 | Repository | `kontourai/flow-agents` |
-| Pull request | [#1574](https://github.com/kontourai/flow-agents/pull/1574), branch `feat/1571-memory-claims-routing` |
-| Commit | `1a820647ae6406b830ff975eb56e7e219107dc01` |
+| Pull request | [#1574](https://github.com/kontourai/flow-agents/pull/1574), merged; the commit below is its merge commit on `main` |
+| Commit | `b0e4b106dd8d7f9f8a847c77ec7e9c395acceaa9` |
 | Schema | `kits/knowledge/schemas/knowledge/memory-claim.schema.json`, `schema_version` `1.0` |
 | Contract | `kits/knowledge/docs/memory-claims.md` at the same commit |
 
@@ -62,6 +62,12 @@ What the projection cannot tell: whether an export was written by Fieldwork 0.11
 What this is not: an authenticity check. Surface's digest binding makes evidence tamper-evident against edits, but evidence can be regenerated through Surface, and nothing in an export is signed. An export whose records are mutually consistent is accepted, even if it was rewritten consistently, including one that omits an item along with every record of it. The checks stop a claim arriving `reviewed` by editing only some of the records that say otherwise; they cannot tell an edit from a writer that disagreed with itself, which is why doubt downgrades instead of refusing.
 
 Why not `hypothetical` or `retracted`: no fact in a reviewed export says a speaker spoke hypothetically or withdrew a statement, so the mapping never emits them. A rejected review is not a speaker's retraction. Why `stated` for an unreviewed field: the document states the value; whether the extraction is right is exactly what review decides, and that is what `arrival` says.
+
+## Who reviewed it
+
+Whether a claim is `reviewed` says a reviewer's decision accepted it in this export. It does not say a person made that decision. The Kit separates the two: it promotes a routed claim only on a decision whose `spec.reviewerKind` is `human`, asserted by the host that authenticated the reviewer (Survey 8.4.0), and it reads a decision with no such field, or one marked inferred, as `unattested`, which can annotate a routed claim and cannot promote it.
+
+Fieldwork pins Survey 8.2.0, so none of the decisions it writes carries `spec.reviewerKind` (none of the 25 decisions in the exports written by published Fieldwork 0.11 to 0.13 does). To the Kit they are all `unattested`. The projection reads nothing into that gap: it never infers a kind, `origin.attribution.actor.kind` (`human`, `agent` or `unattributed`) is Fieldwork's own stamp and is carried as written, and it does not read the `reviewerKind` that Survey 8.4.0 adds to a bundle claim's metadata with `reviewerKindInferred: true`, which is Survey's inference and not an attestation. A consumer that requires a human takes the kind from the Survey decision, as the Kit does, and so cannot promote a Fieldwork-written decision until Fieldwork adopts Survey 8.4.0 and attests the kind its host configured (`--reviewer-kind`). That adoption changes the bytes of every export Fieldwork writes (Survey adds the inferred kind to each claim's metadata) and is a separate change from this one.
 
 ## Which Fieldwork versions it reads
 

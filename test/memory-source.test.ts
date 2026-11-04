@@ -1024,6 +1024,25 @@ test("the missing excerpt record is only forgiven in the shape Fieldwork 0.11 an
   assert.deepEqual(arrival(recorded), [["proposed", ["excerpt-not-verified"]]]);
 });
 
+test("the reviewer kind is never inferred: Survey 8.4's inferred kind on a bundle claim changes neither arrival nor origin, and the attribution kind is carried as Fieldwork stamped it", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("reviewer-kind"));
+  const honest = memoryClaimsFromReviewedExport(mixed);
+  // What Survey 8.4.0 adds to every exported claim when the decision carries no kind of its own.
+  const copy = editable(mixed);
+  for (const claim of copy.bundle.claims) {
+    const metadata = ((claim as unknown as { metadata?: { survey?: Record<string, unknown> } }).metadata ??= {});
+    (metadata.survey ??= {}).reviewerKind = "human";
+    metadata.survey.reviewerKindInferred = true;
+  }
+  assert.deepEqual(memoryClaimsFromReviewedExport(copy), honest);
+  for (const entry of honest.claims) {
+    if (entry.origin.kind !== "reviewed-claim") continue;
+    assert.equal("reviewerKind" in entry.origin.reviewDecision, false, "nothing is attested, so nothing is carried");
+    assert.deepEqual(Object.keys(entry.origin.attribution as object).includes("actor"), true);
+    assert.equal((entry.origin.attribution as { actor: { kind: string } }).actor.kind, "unattributed");
+  }
+});
+
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
   const honest = await reviewedExport(await decidedMixedRun("exclusions"));
   const itemOf = (bundle: Bundle, field: string) => {
