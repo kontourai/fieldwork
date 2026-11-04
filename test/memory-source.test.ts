@@ -1043,6 +1043,26 @@ test("the reviewer kind is never inferred: Survey 8.4's inferred kind on a bundl
   }
 });
 
+test("the projection never emits a human attestation, even for a decision that carries one: arrival is provenance, and promotion is the Kit's", async () => {
+  const mixed = await reviewedExport(await decidedMixedRun("no-attestation"));
+  const honest = memoryClaimsFromReviewedExport(mixed);
+  // A decision some other host attested as human (Survey 8.4.0), regenerated through Surface so its digest binding is valid.
+  const copy = editable(mixed);
+  const index = copy.bundle.evidence.findIndex((item) => item.claimId === claimNamed(copy, "record.alpha").id && item.metadata?.reviewedExtraction);
+  const input = restoreReviewedExtractionEvidence(copy.bundle.evidence[index] as never);
+  Object.assign(input.reviewDecision!.spec, { reviewerKind: "human", reviewerKindInferred: false });
+  copy.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
+  rebindReceipt(copy);
+  const attested = memoryClaimsFromReviewedExport(copy);
+  // Nothing about the kind is read, carried or turned into a different arrival.
+  assert.deepEqual(attested.claims.map((entry) => [entry.claim.id, entry.arrival]), honest.claims.map((entry) => [entry.claim.id, entry.arrival]));
+  for (const projection of [honest, attested]) {
+    const text = JSON.stringify(projection);
+    assert.equal(/reviewerKind/i.test(text), false, "no reviewer kind appears anywhere in the projection");
+    assert.equal(JSON.stringify(projection.claims.map((entry) => entry.claim)).includes("human"), false, "and no claim states one");
+  }
+});
+
 test("an exclusion cannot name a decided item, repeat an item, or put an item under another field", async () => {
   const honest = await reviewedExport(await decidedMixedRun("exclusions"));
   const itemOf = (bundle: Bundle, field: string) => {
