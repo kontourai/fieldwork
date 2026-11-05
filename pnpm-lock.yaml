@@ -40,11 +40,11 @@ importers:
         specifier: ^0.135.0
         version: 0.135.0(zod@4.6.7)
       '@kontourai/flow-agents':
-        specifier: 9.9.1
-        version: 9.9.1(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.62.1))(playwright@1.62.1)(typescript@7.0.2)(zod@4.6.7)
+        specifier: 9.11.0
+        version: 9.11.0(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.62.1))(playwright@1.62.1)(typescript@7.0.2)(zod@4.6.7)
       '@kontourai/ui':
         specifier: ^1.11.1
-        version: 1.12.0(react@19.2.8)
+        version: 1.20.1(react@19.2.8)
       '@kontourai/veritas':
         specifier: 1.12.1
         version: 1.12.1(@kontourai/survey@8.2.1(typescript@7.0.2))(zod@4.6.7)
@@ -461,8 +461,8 @@ packages:
       '@kontourai/datum':
         optional: true
 
-  '@kontourai/flow-agents@9.9.1':
-    resolution: {integrity: sha512-A9v/2Uhbr/53EduHjn06Q7FC6SlW4Q8jHB6LCZCkIVC07fFsL3twHpCCK30wuEX/3PkUpkmGrYFkCKqMPbDf2Q==}
+  '@kontourai/flow-agents@9.11.0':
+    resolution: {integrity: sha512-4IJNLz6Gzi45KNySKdfQPTQhp8qYf7TvWM/bAT5OUoO7kE9CDYSNWZGB8RKKZEJ01pjAIcZUw1xO7POLpfaMjg==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -605,8 +605,8 @@ packages:
       typescript:
         optional: true
 
-  '@kontourai/ui@1.12.0':
-    resolution: {integrity: sha512-DsbMTv8PIGN2c71vdOxrH2W3Rt6SwTunYtp/+xB+2XP+xt789nX1RfJPmfdv58EQmfsms0Z3k3C+CS3GfFJVMw==}
+  '@kontourai/ui@1.20.1':
+    resolution: {integrity: sha512-V3GHhEKMclbZ7dnw3kFgatCbuQIK1q3wjTLObfVxQB8pb3yOmdTtkZof0RZ3Qi6IVHQZ37EOIg6Lj65cgWFEJQ==}
     engines: {node: '>=22'}
     peerDependencies:
       react: ^19.0.0
@@ -1994,7 +1994,7 @@ snapshots:
     transitivePeerDependencies:
       - '@anthropic-ai/sdk'
 
-  '@kontourai/flow-agents@9.9.1(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.62.1))(playwright@1.62.1)(typescript@7.0.2)(zod@4.6.7)':
+  '@kontourai/flow-agents@9.11.0(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.62.1))(playwright@1.62.1)(typescript@7.0.2)(zod@4.6.7)':
     dependencies:
       '@kontourai/conduit': 0.7.1
       '@kontourai/datum': 0.8.0(playwright@1.62.1)
@@ -2157,7 +2157,7 @@ snapshots:
       - canvas
       - playwright
 
-  '@kontourai/ui@1.12.0(react@19.2.8)':
+  '@kontourai/ui@1.20.1(react@19.2.8)':
     dependencies:
       react: 19.2.8
 
