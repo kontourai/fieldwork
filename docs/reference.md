@@ -141,7 +141,7 @@ Writes the reviewed export for a run.
 fieldwork export <run> --output <file> [--json]
 ```
 
-The output is a `ReviewedExport` whose `bundle` is a Surface trust bundle. When some claims were left out, or an accepted claim's grounding was refused, the file is still written, the result lists `excluded` and `groundingRefused`, and the command exits `3`. Claims whose structure Surface cannot check are listed under `groundingUnchecked` without changing the exit status.
+The output is a `ReviewedExport` whose `bundle` is a Surface trust bundle. Surface 6 derives a reviewed claim as `proposed` when no verification policy is supplied; the recorded review decision and grounding disposition remain separate facts. A human review does not supply that missing policy or establish a claim as verified. When some claims were left out, or an accepted claim's grounding was refused, the file is still written, the result lists `excluded` and `groundingRefused`, and the command exits `3`. Claims whose structure Surface cannot check are listed under `groundingUnchecked` without changing the exit status.
 
 ## Package entry points
 
