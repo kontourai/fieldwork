@@ -236,7 +236,7 @@ test("a proposal whose excerpt does not verify is excluded, shown as an excluded
   // Surface derives status from verification events, not the claim's field:
   // its own trust report has to read the claim as disputed.
   const summary = formatTrustReportSummary(buildTrustReport(validateTrustBundle(exported.bundle as never)));
-  assert.match(summary, /^Claims: 2 \(verified: 1, disputed: 1\)$/m);
+  assert.match(summary, /^Claims: 2 \(proposed: 1, disputed: 1\)$/m);
   assert.match(summary, new RegExp(`^Disputed: ${statusClaim.id.replaceAll(".", "\\.")}$`, "m"));
   const grounding = exported.reviewedGrounding as {
     outcome: string;
@@ -420,7 +420,7 @@ test("the dispute is newer than the verified event even when that event is stamp
     events: bundle.events.filter((event) => !event.id.endsWith(".reviewed-grounding-dispute"))
       .map((event) => contested.has(event.claimId) ? { ...event, createdAt: future, ...(event.verifiedAt ? { verifiedAt: future } : {}) } : event),
   });
-  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 2 \(verified: 2\)$/m);
+  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 2 \(proposed: 2\)$/m);
   const disputed = disputeContestedClaims(undisputed, refusedEntries, new Date("2026-01-01T00:00:00.000Z"));
-  assert.match(formatTrustReportSummary(buildTrustReport(disputed)), /^Claims: 2 \(verified: 1, disputed: 1\)$/m);
+  assert.match(formatTrustReportSummary(buildTrustReport(disputed)), /^Claims: 2 \(proposed: 1, disputed: 1\)$/m);
 });

@@ -182,7 +182,7 @@ test("the real run's number-as-text claim is exported with its grounding refused
   // "Claims: 6 (verified: 6)" and "Disputed: none" over this export.
   assert.equal(claim?.status, "disputed");
   const report = surfaceReport(exported);
-  assert.match(report, /^Claims: 6 \(verified: 5, disputed: 1\)$/m);
+  assert.match(report, /^Claims: 6 \(proposed: 5, disputed: 1\)$/m);
   assert.match(report, new RegExp(`^Disputed: ${claim!.id.replaceAll(".", "\\.")}$`, "m"));
   const disputes = exported.bundle.events.filter((event) => event.status === "disputed");
   assert.deepEqual(disputes.map((event) => [event.claimId, event.notes]), [[claim!.id, "Reviewed grounding refused: schema-mismatch (type-mismatch)."]]);
@@ -197,9 +197,9 @@ test("the real run's number-as-text claim is exported with its grounding refused
     events: bundle.events.filter((event) => event.status !== "disputed")
       .map((event) => event.claimId === claim!.id ? { ...event, createdAt: future, ...(event.verifiedAt ? { verifiedAt: future } : {}) } : event),
   });
-  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 6 \(verified: 6\)$/m);
+  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 6 \(proposed: 6\)$/m);
   const redisputed = disputeContestedClaims(undisputed, scope.groundingRefused as never, new Date("2026-01-01T00:00:00.000Z"));
-  assert.match(formatTrustReportSummary(buildTrustReport(redisputed)), /^Claims: 6 \(verified: 5, disputed: 1\)$/m);
+  assert.match(formatTrustReportSummary(buildTrustReport(redisputed)), /^Claims: 6 \(proposed: 5, disputed: 1\)$/m);
 
   const outputPath = join(runDirectory, "..", "export.json");
   const result = await cli("export", runDirectory, "--output", outputPath, "--json");
@@ -280,7 +280,7 @@ test("a date mismatch on its own is disputed in the bundle and refuses the groun
   assert.equal(date.value, "14/03/2026");
   assert.equal(date.status, "disputed");
   const report = surfaceReport(exported);
-  assert.match(report, /^Claims: 3 \(verified: 2, disputed: 1\)$/m);
+  assert.match(report, /^Claims: 3 \(proposed: 2, disputed: 1\)$/m);
   assert.match(report, new RegExp(`^Disputed: ${date.id.replaceAll(".", "\\.")}$`, "m"));
   assert.deepEqual(
     exported.bundle.events.filter((event) => event.status === "disputed").map((event) => event.notes),

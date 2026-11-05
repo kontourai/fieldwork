@@ -4,6 +4,7 @@ allowBuilds:
   # postinstall selects the platform binary; without it esbuild falls back to
   # its slower JS implementation. Bump this pin together with the dependency.
   esbuild@0.28.1: true
+  esbuild@0.28.2: true
 
 # A newly published version must be at least 24 hours old before it can be
 # resolved into this lockfile. Blunts the most common supply-chain shape (a
