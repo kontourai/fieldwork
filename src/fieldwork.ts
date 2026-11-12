@@ -338,7 +338,9 @@ export async function reviewedExport(
   }
   const projection = projectAttestedReviewedProjection(stored);
   const { refused, unchecked } = classifyGroundingRefusals(projection);
-  const bundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
+  const bundle = preserveReviewedExportV1Metadata(
+    validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId })),
+  );
   const output = {
     apiVersion: "fieldwork.kontourai.io/v1",
     kind: "ReviewedExport",
@@ -348,6 +350,26 @@ export async function reviewedExport(
   };
   assertPortableOutput(output);
   return parseReviewedExport(output);
+}
+
+/** Keep v1 export bytes stable for decisions with no host-attested reviewer kind. */
+function preserveReviewedExportV1Metadata(
+  bundle: ReturnType<typeof validateTrustBundle>,
+): ReturnType<typeof validateTrustBundle> {
+  return validateTrustBundle({
+    ...bundle,
+    claims: bundle.claims.map((claim) => {
+      const survey = claim.metadata?.survey;
+      if (!survey || typeof survey !== "object" || Array.isArray(survey)) return claim;
+      const metadata = survey as Record<string, unknown>;
+      if (metadata.reviewerKindInferred !== true) return claim;
+      // Survey 8.4 adds an inferred kind to older decisions. That addition is
+      // outside the v1 byte contract; retain the original decision and authority
+      // fields, and never strip metadata carrying an attested kind (inferred=false).
+      const { reviewerKind: _kind, reviewerKindInferred: _inferred, ...originalSurvey } = metadata;
+      return { ...claim, metadata: { ...claim.metadata, survey: originalSurvey } };
+    }),
+  });
 }
 
 /**

@@ -113,6 +113,8 @@ the stamped actor and time until Survey replay reads them
 (kontourai/survey#234). Events stored before stamping are left as stored and
 exported as `legacy-synthetic-actor`.
 
+Survey 8.4.0 adds inferred reviewer-kind metadata to claims projected from decisions that attest no kind. Fieldwork’s v1 export keeps its byte contract by omitting only those inferred metadata fields, retaining the original decisions, all validation and authority fields, and the closed storage schema; unsupported persisted reviewer-kind fields remain refused. The four frozen Fieldwork 0.13.0 export hashes remain unchanged; host reviewer-kind attestation is not introduced by this dependency update.
+
 The unit of an export is the claim, not the run. Checks about the round's
 integrity (attestation, grounded extraction, valid history, coverage, excerpt
 agreement, size) still refuse the whole export. Checks about one claim
