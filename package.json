@@ -85,7 +85,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
-    "@kontourai/flow-agents": "9.13.0",
+    "@kontourai/flow-agents": "9.14.0",
     "@kontourai/ui": "^1.11.1",
     "@kontourai/veritas": "1.12.2",
     "@playwright/test": "^1.61.1",

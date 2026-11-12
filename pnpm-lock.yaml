@@ -40,8 +40,8 @@ importers:
         specifier: ^1.6.0
         version: 1.6.0(zod@4.6.7)
       '@kontourai/flow-agents':
-        specifier: 9.13.0
-        version: 9.13.0(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.65.0))(playwright@1.65.0)(typescript@7.0.2)(zod@4.6.7)
+        specifier: 9.14.0
+        version: 9.14.0(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.65.0))(playwright@1.65.0)(typescript@7.0.2)(zod@4.6.7)
       '@kontourai/ui':
         specifier: ^1.11.1
         version: 1.20.1(react@19.3.1)
@@ -301,8 +301,8 @@ packages:
     engines: {node: '>=22'}
     hasBin: true
 
-  '@kontourai/flow-agents@9.13.0':
-    resolution: {integrity: sha512-CNZPVHrt85FgxsXFxNq1Oi3/pIo3J9b8Zvp3OP4ePWyqGDLjiAdrzLJTHPc9HUoKMk5ZkAJkVHh1uiH5pnpB9Q==}
+  '@kontourai/flow-agents@9.14.0':
+    resolution: {integrity: sha512-PjPTN6YH5rZLh4691vVDudmWUDA3ljv+KeEgNgUtKaQ9zSEUZOmy+bDDUZigGrkym/+TgpCV646w367fuJnMGQ==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -1742,7 +1742,7 @@ snapshots:
       commander: 15.1.0
       zod: 4.6.7
 
-  '@kontourai/flow-agents@9.13.0(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.65.0))(playwright@1.65.0)(typescript@7.0.2)(zod@4.6.7)':
+  '@kontourai/flow-agents@9.14.0(@ai-sdk/provider@4.0.3)(@kontourai/bearing@0.2.0(playwright@1.65.0))(playwright@1.65.0)(typescript@7.0.2)(zod@4.6.7)':
     dependencies:
       '@kontourai/conduit': 0.7.1
       '@kontourai/datum': 0.8.1(playwright@1.65.0)
