@@ -234,7 +234,7 @@ test("published filesystem owners preserve an accepted A review while HTTP B/304
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   assert.equal(manifest.dependencies["@kontourai/forage"], "1.0.2");
   assert.equal(manifest.dependencies["@kontourai/lookout"], "0.8.9");
-  assert.equal(manifest.dependencies["@kontourai/surface"], "6.2.1");
+  assert.equal(manifest.dependencies["@kontourai/surface"], "6.3.0");
 
   let authorizations = 0;
   const app = createFieldworkApplication({ reviewedWebSourceOwner: {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { ZodError } from "zod";
 import {
   buildReviewSessionEvents,
   hashReviewQueueSnapshot,
@@ -46,7 +47,10 @@ test("a decision posted through the API exports under the configured reviewer at
   assert.notEqual(decision.spec.occurredAt, CLIENT_TIME);
   assert.equal(decision.metadata.producer[REVIEW_ATTRIBUTION_PRODUCER]?.clientClaimedActorId, "mallory");
 
-  const exported = await reviewedExport(run.runDirectory) as unknown as ExportedBundle;
+  const currentExport = await reviewedExport(run.runDirectory);
+  const exported = currentExport as unknown as ExportedBundle;
+  assert.equal(Object.hasOwn(currentExport.bundle.claims[0]!.metadata?.survey ?? {}, "reviewerKindInferred"), false,
+    "Fieldwork attribution does not add a Survey host attestation or change v1 metadata");
   assert.equal(exported.bundle.claims.length, 1);
   const [claim] = exported.bundle.claims;
   const [verified] = exported.bundle.events.filter((event) => event.claimId === claim!.id);
@@ -121,6 +125,37 @@ test("a run decided before server stamping still loads and exports, its decision
     { actor: { id: "review-workbench-operator", kind: "legacy-synthetic-actor" }, mode: undefined },
   ]);
   assert.equal(await readFile(runPath, "utf8"), before);
+  const legacyExport = await reviewedExport(run.runDirectory);
+  for (const claim of legacyExport.bundle.claims) {
+    assert.equal(Object.hasOwn(claim.metadata?.survey ?? {}, "reviewerKind"), false);
+    assert.equal(Object.hasOwn(claim.metadata?.survey ?? {}, "reviewerKindInferred"), false);
+  }
+});
+
+test("unsupported persisted reviewer-kind fields are refused rather than admitted by the compatibility mapping", async () => {
+  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("attr-attested") });
+  const runPath = join(run.runDirectory, "run.json");
+  const stored = JSON.parse(await readFile(runPath, "utf8"));
+  const snapshot: ReviewQueueSessionState = {
+    ...initialReviewQueueSessionState(stored.review.snapshot.items as ReviewItem[]),
+    actorId: "attested-agent",
+    reviewerKind: "agent",
+  };
+  stored.review = {
+    snapshot,
+    events: buildReviewSessionEvents({ ...snapshot, decisionsByItemName: Object.fromEntries(snapshot.items.map((item) => [item.metadata.name, "accept-proposed"])) }),
+    revision: 1,
+    snapshotHash: hashReviewQueueSnapshot(snapshot),
+  };
+  await writeFile(runPath, JSON.stringify(stored, null, 2));
+  await assert.rejects(() => reviewedExport(run.runDirectory), (error) => {
+    assert.ok(error instanceof ZodError);
+    assert.ok(error.issues.some((issue) => issue.code === "unrecognized_keys"
+      && issue.keys.includes("reviewerKind") && issue.path.join(".") === "review.snapshot"));
+    assert.ok(error.issues.some((issue) => issue.code === "unrecognized_keys"
+      && issue.keys.includes("reviewerKind") && issue.path.join(".").startsWith("review.events.")));
+    return true;
+  });
 });
 
 test("re-posting the stored prefix with a forged actor and time leaves the stored prefix byte-unchanged", async () => {
