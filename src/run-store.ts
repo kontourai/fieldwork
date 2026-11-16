@@ -10,8 +10,15 @@ import { FIELDWORK_LIMITS, canonicalJson, fieldworkTaskSchema, type FieldworkTas
 import { parsePersistedReview, persistedReviewEventSchema, persistedReviewSnapshotSchema } from "./survey-persistence.js";
 import { fieldworkStoredExecutionSchema, type FieldworkStoredExecution } from "./runtime-contracts.js";
 
+export const EXPORT_PROFILE_V2 = "fieldwork.reviewed-export.v2/survey9" as const;
+export interface LegacyOrigin {
+  file: "legacy-run-v1.json"; digest: string; revision: number; eventCount: number;
+  envelopeDigest: string; preparedArtifact: StoredRun["preparedArtifact"];
+}
 export interface StoredRun {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  exportProfile?: typeof EXPORT_PROFILE_V2;
+  legacyOrigin?: LegacyOrigin;
   runResource: string;
   createdAt: string;
   taskName: string;
@@ -65,8 +72,7 @@ export function extractionEnvelopeDigest(envelope: unknown): string {
   return createHash("sha256").update(canonicalJson(envelope)).digest("hex");
 }
 
-export const storedRunSchema = z.object({
-  schemaVersion: z.literal(1),
+const storedRunFields = {
   runResource: z.string().regex(/^fieldwork-run:v1:[a-z0-9][a-z0-9-]*:[a-f0-9]{16}$/),
   createdAt: z.iso.datetime(),
   taskName: z.string().max(128).regex(/^[a-z0-9][a-z0-9-]*$/),
@@ -86,7 +92,17 @@ export const storedRunSchema = z.object({
     revision: z.number().int().nonnegative(),
     snapshotHash: z.string().regex(/^[a-f0-9]{64}$/)
   }).strict()
+};
+const legacyOriginSchema = z.object({
+  file: z.literal("legacy-run-v1.json"), digest: z.string().regex(/^[a-f0-9]{64}$/),
+  revision: z.number().int().nonnegative(), eventCount: z.number().int().nonnegative(),
+  envelopeDigest: z.string().regex(/^[a-f0-9]{64}$/), preparedArtifact: storedRunFields.preparedArtifact,
 }).strict();
+export const storedRunSchema = z.discriminatedUnion("schemaVersion", [
+  z.object({ schemaVersion: z.literal(1), ...storedRunFields }).strict(),
+  z.object({ schemaVersion: z.literal(2), exportProfile: z.literal(EXPORT_PROFILE_V2),
+    legacyOrigin: legacyOriginSchema.optional(), ...storedRunFields }).strict(),
+]);
 
 export interface StoredRunRead {
   directory: string;
@@ -111,12 +127,12 @@ export interface StoredRunMetadataRead {
  * replace a decision between authorization and publication.  This is a read
  * fence, never a lock or write on a read path.
  */
-export function currentReviewFence(runDirectory: string, expected: Pick<StoredRun, "runResource" | "preparedArtifact" | "review">): boolean {
+export function currentReviewFence(runDirectory: string, expected: Pick<StoredRun, "runResource" | "preparedArtifact" | "review" | "schemaVersion" | "exportProfile" | "legacyOrigin">): boolean {
   try {
     const directory = resolve(runDirectory);
     const beforeDirectory = lstatSync(directory);
     if (!beforeDirectory.isDirectory() || beforeDirectory.isSymbolicLink()) return false;
-    const descriptor = openSync(join(directory, "run.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const descriptor = openSync(join(directory, "run.json"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     let bytes: Buffer;
     try {
       const before = fstatSync(descriptor);
@@ -126,11 +142,27 @@ export function currentReviewFence(runDirectory: string, expected: Pick<StoredRu
       const after = fstatSync(descriptor);
       if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.ctimeMs !== after.ctimeMs) return false;
     } finally { closeSync(descriptor); }
+    if (expected.legacyOrigin) {
+      // The authorized result also depends on the historical attachment.
+      const legacy = openSync(join(directory, expected.legacyOrigin.file), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const before = fstatSync(legacy);
+        if (!before.isFile() || before.size > FIELDWORK_LIMITS.artifactBytes) return false;
+        const snapshot = Buffer.alloc(before.size);
+        if (readSync(legacy, snapshot, 0, snapshot.length, 0) !== snapshot.length) return false;
+        const after = fstatSync(legacy);
+        if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.ctimeMs !== after.ctimeMs
+          || createHash("sha256").update(snapshot).digest("hex") !== expected.legacyOrigin.digest) return false;
+      } finally { closeSync(legacy); }
+    }
     const afterDirectory = lstatSync(directory);
     if (beforeDirectory.dev !== afterDirectory.dev || beforeDirectory.ino !== afterDirectory.ino || beforeDirectory.ctimeMs !== afterDirectory.ctimeMs) return false;
     const text = bytes.toString("utf8");
     const current = storedRunSchema.parse(JSON.parse(text));
-    return current.runResource === expected.runResource
+    return current.schemaVersion === expected.schemaVersion
+      && canonicalJson("exportProfile" in current ? current.exportProfile : null) === canonicalJson(expected.exportProfile ?? null)
+      && canonicalJson("legacyOrigin" in current ? current.legacyOrigin ?? null : null) === canonicalJson(expected.legacyOrigin ?? null)
+      && current.runResource === expected.runResource
       && canonicalJson(current.preparedArtifact) === canonicalJson(expected.preparedArtifact)
       && current.review.revision === expected.review.revision
       && current.review.snapshotHash === expected.review.snapshotHash
@@ -170,7 +202,11 @@ export async function writeRun(root: string, run: StoredRun, envelope: PortableE
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
     if ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw error;
-    await readRun(directory);
+    const existing = await readRun(directory);
+    if (existing.run.schemaVersion !== run.schemaVersion || existing.run.exportProfile !== run.exportProfile
+      || existing.run.runResource !== run.runResource || canonicalJson(existing.run.task) !== canonicalJson(run.task)) {
+      throw new Error("Existing run identity does not match the requested profile and task");
+    }
   }
   return directory;
 }
@@ -213,6 +249,7 @@ export async function readRunMetadata(runDirectory: string): Promise<StoredRunMe
   const validated = validatePortableExtractionResultEnvelope(envelopeJson);
   if (validated.status !== "valid") throw new Error("Stored extraction envelope is invalid");
   assertBoundedJson(run);
+  if (run.legacyOrigin) await readLegacySnapshot(directory, run);
   return { directory, run, envelope: validated.envelope };
 }
 
@@ -252,9 +289,89 @@ export async function withRunReviewLock<T>(
  * write whose queue no longer matches the digest recorded with its decisions.
  */
 export async function saveReview(directory: string, run: StoredRun, review: StoredRun["review"]): Promise<void> {
+  if (run.schemaVersion !== 2 || run.exportProfile !== EXPORT_PROFILE_V2) {
+    throw Object.assign(new Error("Upgrade this run before recording further decisions."), { code: "RUN_UPGRADE_REQUIRED" });
+  }
   parsePersistedReview(review);
   storedRunSchema.parse({ ...run, review });
   await atomicJson(join(directory, "run.json"), { ...run, review });
+}
+
+/** Read the immutable pre-upgrade record, bound to the current run. */
+export async function readLegacySnapshot(directory: string, run: StoredRun): Promise<StoredRun> {
+  const origin = run.legacyOrigin;
+  if (run.schemaVersion !== 2 || !origin) throw new Error("Run has no historical v1 snapshot");
+  const path = await containedRegularFile(directory, origin.file);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let bytes: Buffer;
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > FIELDWORK_LIMITS.artifactBytes) throw new Error("Invalid legacy snapshot");
+    bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (!sameFileState(before, after) || before.ctimeMs !== after.ctimeMs || bytes.length !== before.size) throw new Error("Legacy snapshot changed while reading");
+  } finally { await handle.close(); }
+  if (createHash("sha256").update(bytes).digest("hex") !== origin.digest) throw new Error("Legacy snapshot digest mismatch");
+  const parsed = storedRunSchema.parse(JSON.parse(bytes.toString("utf8")));
+  if (parsed.schemaVersion !== 1 || parsed.runResource !== run.runResource
+    || parsed.review.revision !== origin.revision || parsed.review.events.length !== origin.eventCount
+    || parsed.extraction?.envelopeDigest !== origin.envelopeDigest
+    || parsed.extraction?.envelopeDigest !== run.extraction?.envelopeDigest
+    || canonicalJson(parsed.preparedArtifact) !== canonicalJson(origin.preparedArtifact)
+    || canonicalJson(parsed.preparedArtifact) !== canonicalJson(run.preparedArtifact)
+    || canonicalJson(parsed.task) !== canonicalJson(run.task)
+    || canonicalJson(parsed.execution) !== canonicalJson(run.execution)
+    || parsed.createdAt !== run.createdAt || parsed.taskName !== run.taskName
+    || canonicalJson(parsed.extraction) !== canonicalJson(run.extraction)
+    || canonicalJson(parsed.review.snapshot) !== canonicalJson(run.review.snapshot)
+    || parsed.review.snapshotHash !== run.review.snapshotHash
+    || canonicalJson(parsed.review.events) !== canonicalJson(run.review.events.slice(0, origin.eventCount))) {
+    throw new Error("Legacy snapshot binding mismatch");
+  }
+  parsePersistedReview(parsed.review);
+  return parsed as StoredRun;
+}
+
+/** Publish the legacy attachment before replacing the authoritative record. Caller holds the review lock. */
+export async function publishUpgrade(directory: string, run: StoredRun): Promise<void> {
+  if (run.schemaVersion !== 1 || !run.extraction) throw new Error("Only a bound legacy run can be upgraded");
+  const path = await containedRegularFile(directory, "run.json");
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let bytes: Buffer;
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > FIELDWORK_LIMITS.artifactBytes) throw new Error("Invalid run record");
+    bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (!sameFileState(before, after) || before.ctimeMs !== after.ctimeMs || bytes.length !== before.size || canonicalJson(storedRunSchema.parse(JSON.parse(bytes.toString("utf8")))) !== canonicalJson(run)) throw new Error("Run changed during upgrade");
+  } finally { await handle.close(); }
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const attachment = join(directory, "legacy-run-v1.json");
+  const temporary = `${attachment}.${randomUUID()}.tmp`;
+  const out = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+  try { await out.writeFile(bytes); await out.sync(); } finally { await out.close(); }
+  try {
+    try { await link(temporary, attachment); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = await containedRegularFile(directory, "legacy-run-v1.json");
+      const existingHandle = await open(existing, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const st = await existingHandle.stat();
+        if (!st.isFile() || st.size !== bytes.length || !(await existingHandle.readFile()).equals(bytes)) throw new Error("Conflicting legacy snapshot");
+      } finally { await existingHandle.close(); }
+    }
+    const dir = await open(directory, constants.O_RDONLY);
+    try { await dir.sync(); } finally { await dir.close(); }
+    const upgraded: StoredRun = { ...run, schemaVersion: 2, exportProfile: EXPORT_PROFILE_V2,
+      legacyOrigin: { file: "legacy-run-v1.json", digest, revision: run.review.revision,
+        eventCount: run.review.events.length, envelopeDigest: run.extraction.envelopeDigest,
+        preparedArtifact: run.preparedArtifact } };
+    storedRunSchema.parse(upgraded);
+    await atomicJson(join(directory, "run.json"), upgraded);
+    const committedDir = await open(directory, constants.O_RDONLY);
+    try { await committedDir.sync(); } finally { await committedDir.close(); }
+  } finally { await rm(temporary, { force: true }); }
 }
 
 async function atomicJson(path: string, value: unknown): Promise<void> {

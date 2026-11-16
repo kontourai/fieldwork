@@ -213,3 +213,10 @@ edits the envelope and also rewrites the bound digest, the bound status, the
 queue and the queue's digest consistently is not detected. That is the same
 class of gap as fieldwork#65, and closing it needs an attestation rooted
 outside the run directory.
+
+
+## Amendment: versioned reviewed exports
+
+Strict storage v1 denotes the historical Survey 8.4 serialization profile. New runs use storage v2 and the required Survey 9 export profile, included in run identity. A legacy run can be read and exported without a write; further decisions require an explicit upgrade. Upgrade holds the review lock, validates the run and publishes a private, digest-bound copy of its original record before replacing the current record. The preserved revision can be exported separately. It is part of the run's local data lifecycle and is not included in portable output.
+
+The legacy serializer is an exact Survey 8.4 alias, selected only for admitted v1 records after current Survey preflight. Current Survey owns live review, v2 policy and attestations; Surface validates both outputs. A writer with control of the whole directory can consistently rewrite records and their digests, so these local bindings do not provide external authenticity. The alias is a temporary dependency pending a [Survey-owned historical serializer](https://github.com/kontourai/survey/issues/377).

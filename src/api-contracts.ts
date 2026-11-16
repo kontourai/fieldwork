@@ -244,8 +244,8 @@ export interface FieldworkRunViewV1 {
       readonly droppedChunkCount?: number;
     };
   };
-  /** Present when the run can be opened but its review can never be exported. */
-  readonly reviewBlocked?: { readonly reason: "created-by-older-fieldwork" | "unbound-envelope"; readonly message: string };
+  /** Present when review is blocked; a run awaiting upgrade can still have a historical export. */
+  readonly reviewBlocked?: { readonly reason: "created-by-older-fieldwork" | "unbound-envelope" | "upgrade-required"; readonly message: string };
   readonly review: {
     /** Survey-owned snapshot, transported as validated JSON and validated semantically before serving. */
     readonly snapshot: JsonObject;
@@ -309,6 +309,16 @@ export interface ReviewedExportV1 {
   readonly reviewedGrounding: JsonObject;
   readonly reviewRound: JsonObject;
 }
+
+export interface ReviewedExportV2 {
+  readonly apiVersion: "fieldwork.kontourai.io/v2";
+  readonly kind: "ReviewedExport";
+  readonly exportProfile: "fieldwork.reviewed-export.v2/survey9";
+  readonly bundle: JsonObject;
+  readonly reviewedGrounding: JsonObject;
+  readonly reviewRound: JsonObject;
+}
+export type ReviewedExport = ReviewedExportV1 | ReviewedExportV2;
 
 export interface FieldworkTask {
   readonly apiVersion: "fieldwork.kontourai.io/v1alpha1";
@@ -459,7 +469,7 @@ export const fieldworkRunViewSchema: z.ZodType<FieldworkRunViewV1> = z.object({
       && (value.droppedChunkCount ?? 0) <= value.incompleteChunkCount).optional(),
   }).strict(),
   reviewBlocked: z.object({
-    reason: z.enum(["created-by-older-fieldwork", "unbound-envelope"]),
+    reason: z.enum(["created-by-older-fieldwork", "unbound-envelope", "upgrade-required"]),
     message: z.string().min(1).max(512),
   }).strict().optional(),
   review: z.object({
@@ -502,13 +512,21 @@ export const preparedArtifactViewSchema: z.ZodType<PreparedArtifactViewV1> = z.o
     file: z.literal("prepared.txt")
   }).strict()
 }).strict();
-export const reviewedExportSchema: z.ZodType<ReviewedExportV1> = z.object({
+export const reviewedExportV1Schema: z.ZodType<ReviewedExportV1> = z.object({
   apiVersion: z.literal("fieldwork.kontourai.io/v1"),
   kind: z.literal("ReviewedExport"),
   bundle: jsonObjectSchema,
   reviewedGrounding: jsonObjectSchema,
   reviewRound: jsonObjectSchema,
 }).strict();
+
+export const reviewedExportV2Schema: z.ZodType<ReviewedExportV2> = z.object({
+  apiVersion: z.literal("fieldwork.kontourai.io/v2"),
+  kind: z.literal("ReviewedExport"),
+  exportProfile: z.literal("fieldwork.reviewed-export.v2/survey9"),
+  bundle: jsonObjectSchema, reviewedGrounding: jsonObjectSchema, reviewRound: jsonObjectSchema,
+}).strict();
+export const reviewedExportSchema: z.ZodType<ReviewedExport> = z.union([reviewedExportV1Schema, reviewedExportV2Schema]);
 
 export function parseReviewMutationSuccess(value: unknown): ReviewMutationSuccessV1 {
   return reviewMutationSuccessSchema.parse(toWireJson(value));
@@ -519,7 +537,13 @@ export function parseFieldworkRunView(value: unknown): FieldworkRunViewV1 {
 export function parsePreparedArtifactView(value: unknown): PreparedArtifactViewV1 {
   return preparedArtifactViewSchema.parse(toWireJson(value));
 }
-export function parseReviewedExport(value: unknown): ReviewedExportV1 {
+export function parseReviewedExportV1(value: unknown): ReviewedExportV1 {
+  return reviewedExportV1Schema.parse(toWireJson(value));
+}
+export function parseReviewedExportV2(value: unknown): ReviewedExportV2 {
+  return reviewedExportV2Schema.parse(toWireJson(value));
+}
+export function parseReviewedExport(value: unknown): ReviewedExport {
   return reviewedExportSchema.parse(toWireJson(value));
 }
 

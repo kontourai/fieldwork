@@ -20,6 +20,7 @@ import {
   type FieldworkLifecycleEventV1,
 } from "../src/index.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+import { upgradeRun } from "../src/fieldwork.js";
 
 test("the browser-safe reviewed-source contract rejects untrusted versions and opaque extras", () => {
   assert.throws(() => parseReviewedWebSourceDescriptor({
@@ -265,6 +266,56 @@ test("reviewed web sources bind each opaque occurrence and close every final aut
       await reader.close();
     } finally { await raced.close(); }
   }
+});
+
+test("a legacy upgrade during final host authorization fences the previously read source", async () => {
+  const fixture = await reviewedSourceFixture();
+  try {
+    const path = join(fixture.run.runDirectory, "run.json");
+    const record = JSON.parse(await readFile(path, "utf8"));
+    record.schemaVersion = 1;
+    delete record.exportProfile;
+    await writeFile(path, JSON.stringify(record));
+    let calls = 0;
+    const reader = createFieldworkApplication({ reviewedWebSourceOwner: {
+      runDirectory: fixture.run.runDirectory, snapshotRoot: fixture.snapshotRoot,
+      authorize: async () => { if (++calls === 2) await upgradeRun(fixture.run.runDirectory); return true; },
+    } });
+    try {
+      const raced = await reader.listReviewedWebSourceRefs();
+      assert.equal(calls, 2);
+      assert.notEqual(raced.status, "available");
+      assert.equal((await reader.listReviewedWebSourceRefs()).status, "available", "the bound upgraded state remains usable");
+    } finally { await reader.close(); }
+  } finally { await fixture.close(); }
+});
+
+test("a historical sidecar changed during final host authorization cannot publish a reviewed source", async () => {
+  const fixture = await reviewedSourceFixture();
+  try {
+    const path = join(fixture.run.runDirectory, "run.json");
+    const record = JSON.parse(await readFile(path, "utf8"));
+    record.schemaVersion = 1;
+    delete record.exportProfile;
+    await writeFile(path, JSON.stringify(record));
+    await upgradeRun(fixture.run.runDirectory);
+    const upgraded = await readFile(path);
+    const sidecar = join(fixture.run.runDirectory, "legacy-run-v1.json");
+    const original = await readFile(sidecar);
+    let calls = 0;
+    const reader = createFieldworkApplication({ reviewedWebSourceOwner: {
+      runDirectory: fixture.run.runDirectory, snapshotRoot: fixture.snapshotRoot,
+      authorize: async () => { if (++calls === 2) await writeFile(sidecar, "corrupt"); return true; },
+    } });
+    try {
+      const raced = await reader.listReviewedWebSourceRefs();
+      assert.equal(calls, 2);
+      assert.notEqual(raced.status, "available");
+      assert.deepEqual(await readFile(path), upgraded, "the read path appended no events");
+      await writeFile(sidecar, original);
+      assert.equal((await reader.listReviewedWebSourceRefs()).status, "available");
+    } finally { await reader.close(); }
+  } finally { await fixture.close(); }
 });
 
 test("reviewed source metadata stays closed and authorization failures never escape", async () => {

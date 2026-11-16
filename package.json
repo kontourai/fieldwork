@@ -72,6 +72,7 @@
     "@kontourai/relay": "0.8.0",
     "@kontourai/surface": "6.3.0",
     "@kontourai/survey": "9.0.0",
+    "@kontourai/survey-legacy-v1": "npm:@kontourai/survey@8.4.0",
     "@kontourai/traverse": "5.0.3",
     "zod": "4.6.7"
   },

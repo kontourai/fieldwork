@@ -1043,23 +1043,40 @@ test("the reviewer kind is never inferred: Survey 8.4's inferred kind on a bundl
   }
 });
 
-test("the projection never emits a human attestation, even for a decision that carries one: arrival is provenance, and promotion is the Kit's", async () => {
+test("a withheld V2 claim still requires its verification event to cite the Survey attestation", async () => {
+  const honest = await reviewedExport(await decidedMixedRun("withheld-attestation-link"));
+  const copy = editable(honest);
+  const claim = claimNamed(copy, "record.charlie");
+  copy.bundle.evidence = copy.bundle.evidence.filter((entry) => !(entry.claimId === claim.id && entry.metadata?.reviewedExtraction));
+  rebindReceipt(copy);
+  const projection = memoryClaimsFromReviewedExport(copy);
+  assert.ok(projection.withheld.some((entry) => entry.reason === "no-reviewed-evidence" && entry.fieldPath === "record.charlie"));
+  for (const change of ["time", "actor"] as const) {
+    const forged = structuredClone(copy) as any;
+    const event = forged.bundle.events.find((entry: any) => entry.claimId === claim.id && entry.status === "verified");
+    const attestation = forged.bundle.evidence.find((entry: any) => entry.claimId === claim.id && entry.method === "attestation");
+    if (change === "actor") { event.actor = "bob"; attestation.collectedBy = "bob"; }
+    else { event.createdAt = "2020-01-01T00:00:00.000Z"; attestation.observedAt = event.createdAt; }
+    assert.throws(() => memoryClaimsFromReviewedExport(forged), /verification event linked to its Survey attestation/, change);
+  }
+  const event = copy.bundle.events.find((entry) => entry.claimId === claim.id && entry.status === "verified")! as { evidenceIds?: string[] };
+  assert.ok(event.evidenceIds?.length, "the producer links its verification event to evidence");
+  event.evidenceIds = [];
+  assert.throws(() => memoryClaimsFromReviewedExport(copy), /verification event linked to its Survey attestation/);
+});
+
+test("a forged human kind inconsistent with V2 host attribution is refused", async () => {
   const mixed = await reviewedExport(await decidedMixedRun("no-attestation"));
   const honest = memoryClaimsFromReviewedExport(mixed);
-  // A decision some other host attested as human (Survey 8.4.0), regenerated through Surface so its digest binding is valid.
   const copy = editable(mixed);
   const index = copy.bundle.evidence.findIndex((item) => item.claimId === claimNamed(copy, "record.alpha").id && item.metadata?.reviewedExtraction);
   const input = restoreReviewedExtractionEvidence(copy.bundle.evidence[index] as never);
-  Object.assign(input.reviewDecision!.spec, { reviewerKind: "human", reviewerKindInferred: false });
+  Object.assign(input.reviewDecision!.spec, { reviewerKind: "human" });
   copy.bundle.evidence[index] = projectReviewedExtractionEvidence(input).evidence as never;
   rebindReceipt(copy);
-  const attested = memoryClaimsFromReviewedExport(copy);
-  // Nothing about the kind is read, carried or turned into a different arrival.
-  assert.deepEqual(attested.claims.map((entry) => [entry.claim.id, entry.arrival]), honest.claims.map((entry) => [entry.claim.id, entry.arrival]));
-  for (const projection of [honest, attested]) {
-    const text = JSON.stringify(projection);
-    assert.equal(/reviewerKind/i.test(text), false, "no reviewer kind appears anywhere in the projection");
-    assert.equal(JSON.stringify(projection.claims.map((entry) => entry.claim)).includes("human"), false, "and no claim states one");
+  assert.throws(() => memoryClaimsFromReviewedExport(copy), /inconsistent host attribution/);
+  for (const entry of honest.claims) {
+    assert.equal(JSON.stringify(entry.claim).includes("human"), false, "memory claims do not attest a human");
   }
 });
 
@@ -1289,6 +1306,9 @@ test("exports Fieldwork 0.13.0 wrote, and decisions made under a configured revi
   for (const entry of reviewed) {
     assert.ok(entry.origin.kind === "reviewed-claim");
     assert.equal(entry.origin.reviewDecision.actorId, "alice");
+    assert.equal(entry.claim.posture, "stated");
+    assert.equal(Object.hasOwn(entry.claim, "reviewerKind"), false);
+    assert.equal(Object.hasOwn(entry.origin.reviewDecision, "reviewerKind"), false);
   }
 });
 

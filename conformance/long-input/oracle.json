@@ -6,7 +6,7 @@
     "sha256": "f8de56bf95c8e8189f2154f85b4e0cb1248a5bb7e1c68253bafda6e73cc57470"
   },
   "run": {
-    "resource": "fieldwork-run:v1:long-input-conformance:e54ba7976b431839"
+    "resource": "fieldwork-run:v1:long-input-conformance:9dac3bf4d9983716"
   },
   "execution": {
     "provider": "fieldwork-deterministic-v1",

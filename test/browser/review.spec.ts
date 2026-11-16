@@ -1163,3 +1163,52 @@ test("a run that dropped chunks at the chunk limit counts them in what it did no
     await server.close();
   }
 });
+
+test("legacy upgrade failure is visible and retry does not double submit", async ({ page }) => {
+  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-upgrade-error") });
+  const path = join(run.runDirectory, "run.json");
+  const record = JSON.parse(await readFile(path, "utf8"));
+  record.schemaVersion = 1;
+  delete record.exportProfile;
+  await writeFile(path, JSON.stringify(record));
+  const server = await openRun(run.runDirectory);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let requests = 0;
+  await page.route("**/api/v1/upgrade", async (route) => {
+    requests++;
+    await held;
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ ok: false, error: { code: "REVIEW_BUSY", message: "Review storage is temporarily busy" } }) });
+  });
+  try {
+    await page.goto(server.url);
+    const button = page.getByRole("button", { name: "Upgrade run" });
+    await button.click();
+    expect(requests).toBe(1);
+    release();
+    await expect(page.getByText(/REVIEW_BUSY.*retry/i)).toBeVisible();
+    await expect(button).toBeEnabled();
+  } finally { release(); await server.close(); }
+});
+
+test("legacy upgrade disables duplicate submission while pending", async ({ page }) => {
+  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-upgrade-pending") });
+  const path = join(run.runDirectory, "run.json");
+  const record = JSON.parse(await readFile(path, "utf8"));
+  record.schemaVersion = 1;
+  delete record.exportProfile;
+  await writeFile(path, JSON.stringify(record));
+  const server = await openRun(run.runDirectory);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/v1/upgrade", async (route) => {
+    await held;
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ ok: false, error: { code: "REVIEW_BUSY", message: "Review storage is temporarily busy" } }) });
+  });
+  try {
+    await page.goto(server.url);
+    const button = page.getByRole("button", { name: "Upgrade run" });
+    await button.click();
+    await expect(button).toBeDisabled();
+  } finally { release(); await server.close(); }
+});

@@ -49,8 +49,8 @@ test("a decision posted through the API exports under the configured reviewer at
 
   const currentExport = await reviewedExport(run.runDirectory);
   const exported = currentExport as unknown as ExportedBundle;
-  assert.equal(Object.hasOwn(currentExport.bundle.claims[0]!.metadata?.survey ?? {}, "reviewerKindInferred"), false,
-    "Fieldwork attribution does not add a Survey host attestation or change v1 metadata");
+  assert.equal(currentExport.bundle.claims[0]!.metadata?.survey?.reviewerKind, "human");
+  assert.equal(currentExport.bundle.claims[0]!.metadata?.survey?.reviewerKindInferred, false);
   assert.equal(exported.bundle.claims.length, 1);
   const [claim] = exported.bundle.claims;
   const [verified] = exported.bundle.events.filter((event) => event.claimId === claim!.id);
@@ -76,7 +76,11 @@ test("one request that decides three items records mode batch on each", async ()
 test("an agent reviewer records every decision as agent-made", async () => {
   const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("attr-agent") });
   await decide(run.runDirectory, { id: "triage-agent", kind: "agent" }, 1);
-  const exported = await reviewedExport(run.runDirectory) as unknown as ExportedBundle;
+  const actual = await reviewedExport(run.runDirectory);
+  assert.equal(actual.bundle.claims[0]!.metadata?.survey?.reviewerKind, "agent");
+  assert.equal(actual.bundle.claims[0]!.metadata?.survey?.reviewerKindInferred, false);
+  assert.equal(actual.bundle.evidence.find((evidence) => evidence.method === "attestation")?.evidenceType, "attestation");
+  const exported = actual as unknown as ExportedBundle;
   assert.deepEqual(exported.reviewRound.decisions.map(({ actor, mode }) => ({ actor, mode })), [
     { actor: { id: "triage-agent", kind: "agent" }, mode: "agent" },
   ]);
@@ -127,8 +131,7 @@ test("a run decided before server stamping still loads and exports, its decision
   assert.equal(await readFile(runPath, "utf8"), before);
   const legacyExport = await reviewedExport(run.runDirectory);
   for (const claim of legacyExport.bundle.claims) {
-    assert.equal(Object.hasOwn(claim.metadata?.survey ?? {}, "reviewerKind"), false);
-    assert.equal(Object.hasOwn(claim.metadata?.survey ?? {}, "reviewerKindInferred"), false);
+    assert.equal(claim.metadata?.survey?.reviewerKindInferred, true);
   }
 });
 

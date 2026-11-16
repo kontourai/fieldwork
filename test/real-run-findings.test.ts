@@ -23,6 +23,7 @@ import type { FieldworkRuntimeBinding } from "../src/runtime-contracts.js";
 import { MAX_FAILURE_MESSAGE_CHARS, runtimeMessageIsPlain } from "../src/runtime-session.js";
 import { openRun, readRunView } from "../src/server.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+import { assertSurveyV2Verification } from "./helpers/survey-v2-policy.js";
 import { chunkCappedRun, realRunCopy, realRunTaskPath, typedFieldRun } from "./helpers/real-run.js";
 
 /*
@@ -279,8 +280,9 @@ test("a date mismatch on its own is disputed in the bundle and refuses the groun
   const date = exported.bundle.claims.find((entry) => entry.fieldOrBehavior === "doc.publicationDate")!;
   assert.equal(date.value, "14/03/2026");
   assert.equal(date.status, "disputed");
+  assertSurveyV2Verification(exported.bundle);
   const report = surfaceReport(exported);
-  assert.match(report, /^Claims: 3 \(proposed: 2, disputed: 1\)$/m);
+  assert.match(report, /^Claims: 3 \(verified: 2, disputed: 1\)$/m);
   assert.match(report, new RegExp(`^Disputed: ${date.id.replaceAll(".", "\\.")}$`, "m"));
   assert.deepEqual(
     exported.bundle.events.filter((event) => event.status === "disputed").map((event) => event.notes),

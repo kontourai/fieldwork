@@ -5,7 +5,7 @@ This page lists the `fieldwork` command-line surface and the package entry point
 ## Command line
 
 ```text
-fieldwork <acquire|run|recheck|open|inspect|export> [options]
+fieldwork <acquire|run|recheck|open|upgrade|inspect|export> [options]
 ```
 
 Every command writes one JSON object to standard output. Without `--json` it is pretty-printed; with `--json` it is printed on one line. A failure is always printed on one line as `{ "ok": false, "error": { "code", "message" } }`.
@@ -133,21 +133,25 @@ fieldwork inspect <run> --output <file> [--include-prepared-text] [--include-exc
 
 Prepared text and excerpts are redacted unless the matching flag is given. The result includes `reviewBlocked` when the run cannot be reviewed.
 
+## fieldwork upgrade
+
+`fieldwork upgrade <run> --to-profile v2` preserves the exact legacy run record in a private attachment and enables new decisions under the v2 profile. Opening or exporting a legacy run does not upgrade it. The review screen also offers this action. The original revision remains available through `fieldwork export <run> --output <file> --historical-revision <n>`. A fresh v2 run has no v1 snapshot.
+
 ## fieldwork export
 
 Writes the reviewed export for a run.
 
 ```sh
-fieldwork export <run> --output <file> [--json]
+fieldwork export <run> --output <file> [--historical-revision <n>] [--json]
 ```
 
-The output is a `ReviewedExport` whose `bundle` is a Surface trust bundle. Surface 6 derives a reviewed claim as `proposed` when no verification policy is supplied; the recorded review decision and grounding disposition remain separate facts. A human review does not supply that missing policy or establish a claim as verified. When some claims were left out, or an accepted claim's grounding was refused, the file is still written, the result lists `excluded` and `groundingRefused`, and the command exits `3`. Claims whose structure Surface cannot check are listed under `groundingUnchecked` without changing the exit status.
+The output is a strict `ReviewedExport` v1 or v2 whose `bundle` is a Surface trust bundle. V2 carries Survey's review policy and attestations. An attestation is not proof of source truth or authenticated human identity. An inferred reviewer kind does not authenticate a human; a non-inferred kind records the host assertion, so consumers must trust the host’s authentication. Source evidence and review attestations are distinct entries; select recheck source evidence by claim, extraction method and its `fieldwork.kontourai.io/recheck-round` producer metadata, not array position. V1 is a historical format and does not claim current policy verification. When some claims were left out, or an accepted claim's grounding was refused, the file is still written, the result lists `excluded` and `groundingRefused`, and the command exits `3`. Claims whose structure Surface cannot check are listed under `groundingUnchecked` without changing the exit status.
 
 ## Package entry points
 
 | Import | Contents |
 | --- | --- |
-| `@kontourai/fieldwork` | `runFieldwork`, `runFieldworkBatch`, `acquireFieldwork`, `recheckFieldwork`, `openRun`, `inspectionExport`, `reviewedExport`, `memoryClaimsFromReviewedExport` (see [Reviewed export as a memory source](./memory-source.md)), `createFieldworkApplication`, `parseFieldworkTask`, `fieldworkHostDescriptor`, `FIELDWORK_LIMITS`, and the versioned transport schemas (`fieldworkTaskSchema`, `fieldworkRunResultSchema`, `reviewedExportSchema`, and others). It also re-exports `createProfileRuntimeBinding`, `createDatumRuntimeBinding`, and `fieldworkStoredExecutionSchema` from `/runtime`, and the `parseReviewedWebSource*` parsers and `reviewedWebSource*Schema` schemas from `/reviewed-web-source-contract`. |
+| `@kontourai/fieldwork` | `runFieldwork`, `runFieldworkBatch`, `acquireFieldwork`, `recheckFieldwork`, `openRun`, `inspectionExport`, `reviewedExport`, `historicalReviewedExport`, `upgradeRun`, `memoryClaimsFromReviewedExport` (see [Reviewed export as a memory source](./memory-source.md)), `createFieldworkApplication`, `parseFieldworkTask`, `fieldworkHostDescriptor`, `FIELDWORK_LIMITS`, and the versioned transport schemas (`fieldworkTaskSchema`, `fieldworkRunResultSchema`, `reviewedExportSchema`, and others). It also re-exports `createProfileRuntimeBinding`, `createDatumRuntimeBinding`, and `fieldworkStoredExecutionSchema` from `/runtime`, and the `parseReviewedWebSource*` parsers and `reviewedWebSource*Schema` schemas from `/reviewed-web-source-contract`. |
 | `@kontourai/fieldwork/runtime` | `createProfileRuntimeBinding`, `createDatumRuntimeBinding`, `validateRuntimeBinding`, and `fieldworkStoredExecutionSchema`. |
 | `@kontourai/fieldwork/host-descriptor` | `fieldworkHostDescriptor`, the static discovery descriptor for hosts. |
 | `@kontourai/fieldwork/reviewed-web-source-contract` | Pure parsers and schemas for reviewed web source responses, such as `parseReviewedWebSourceDescriptor` and `parseReviewedWebSourceCurrentness`. |

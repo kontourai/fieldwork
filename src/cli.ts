@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { failure } from "./contracts.js";
 import { acquireFieldwork } from "./acquisition.js";
-import { reviewedExport, runFieldwork, runFieldworkBatch } from "./fieldwork.js";
+import { reviewedExport, historicalReviewedExport, upgradeRun, runFieldwork, runFieldworkBatch } from "./fieldwork.js";
 import { openRun } from "./server.js";
 import { createDatumRuntimeBinding, createProfileRuntimeBinding, type FieldworkRuntimeBinding } from "./runtime-contracts.js";
 import { createCheckRunner, createLookoutSnapshotStore, loadRegistry } from "@kontourai/lookout";
@@ -137,11 +137,20 @@ async function main(argv: string[]): Promise<void> {
       process.once("SIGINT", () => void service.close().then(() => process.exit(0)));
       return;
     }
+    if (command === "upgrade") {
+      const parsed = runCommandArguments("upgrade", args, ["--to-profile"], ["--json"]);
+      if (!parsed.run || flag(parsed.values, "--to-profile") !== "v2") invalid("upgrade requires <run> --to-profile v2");
+      await upgradeRun(resolve(parsed.run));
+      return output({ ok: true, profile: "fieldwork.reviewed-export.v2/survey9" }, has(args, "--json"));
+    }
     if (command === "export") {
-      const parsed = runCommandArguments("export", args, ["--output"], ["--json"]);
+      const parsed = runCommandArguments("export", args, ["--output", "--historical-revision"], ["--json"]);
       const run = parsed.run, outputPath = flag(parsed.values, "--output");
       if (!run || !outputPath) invalid("export requires <run> --output <file>");
-      const artifact = await reviewedExport(resolve(run));
+      const revision = flag(parsed.values, "--historical-revision");
+      if (revision !== undefined && !/^(0|[1-9][0-9]*)$/.test(revision)) invalid("--historical-revision must be a nonnegative integer");
+      const artifact = revision === undefined ? await reviewedExport(resolve(run))
+        : await historicalReviewedExport(resolve(run), { legacyRevision: Number(revision) });
       await mkdir(dirname(resolve(outputPath)), { recursive: true }); await writeFile(resolve(outputPath), `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
       // A partial export, or one stating an accepted claim its grounding
       // refused, is written but never silently: it is reported with what was
@@ -177,7 +186,7 @@ async function main(argv: string[]): Promise<void> {
       const blocked = (JSON.parse(artifact) as { spec?: { reviewBlocked?: unknown } }).spec?.reviewBlocked;
       return output({ ok: true, output: outputPath, ...(blocked === undefined ? {} : { reviewBlocked: blocked }) }, has(args, "--json"));
     }
-    output(failure("USAGE", "fieldwork acquire|run|recheck|open|inspect|export; use README.md for the public contract"), true); process.exitCode = 2;
+    output(failure("USAGE", "fieldwork acquire|run|recheck|open|upgrade|inspect|export; use README.md for the public contract"), true); process.exitCode = 2;
   } catch (error) {
     output(failure((error as { code?: string }).code ?? "FIELDWORK_ERROR", error instanceof Error ? error.message : "Unexpected failure"), true); process.exitCode = 1;
   }

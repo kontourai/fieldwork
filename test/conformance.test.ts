@@ -8,6 +8,7 @@ import { reviewedExport, runFieldwork } from "../src/fieldwork.js";
 import { openRun } from "../src/server.js";
 import type { FieldworkRunViewV1 } from "../src/api-contracts.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+import { assertSurveyV2Verification } from "./helpers/survey-v2-policy.js";
 
 interface SourceSpec {
   schemaVersion: 1;
@@ -74,12 +75,13 @@ test("long-input corpus keeps exact reviewed grounding across default chunk over
   const exported = await reviewedExport(run.runDirectory) as unknown as {
     bundle: {
       claims: Array<{ id: string; fieldOrBehavior: string; value: unknown }>;
-      evidence: Array<{ claimId: string; excerptOrSummary: string; sourceLocator?: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
+      evidence: Array<{ claimId: string; method: string; excerptOrSummary: string; sourceLocator?: string; supportStrength?: string; passing?: boolean; blocking?: boolean; metadata?: { reviewedExtraction?: unknown } }>;
     };
     reviewedGrounding: { outcome: string; gaps: unknown[] };
   };
   const { bundle, reviewedGrounding } = exported;
-  const evidenceByClaim = new Map(bundle.evidence.map((evidence) => [evidence.claimId, evidence]));
+  assertSurveyV2Verification(bundle);
+  const evidenceByClaim = new Map(bundle.evidence.filter((evidence) => evidence.method === "extraction" && evidence.metadata?.reviewedExtraction === undefined).map((evidence) => [evidence.claimId, evidence]));
   const reviewedEvidenceByClaim = new Map(
     bundle.evidence.filter((evidence) => evidence.metadata?.reviewedExtraction !== undefined)
       .map((evidence) => [evidence.claimId, evidence])
@@ -141,6 +143,8 @@ test("long-input corpus keeps exact reviewed grounding across default chunk over
     })
   };
 
+  // The v2 export profile is part of run identity; the remaining oracle pins
+  // source bytes, chunking, proposals, locators and reviewed grounding.
   assert.deepEqual(observed, oracle);
 });
 

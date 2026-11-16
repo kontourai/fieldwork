@@ -35,12 +35,13 @@ writeFileSync(join(work, "consumer.mts"), `import {
   fieldworkBatchRunResultSchema, fieldworkRunResultSchema, fieldworkRunViewSchema,
   fieldworkTaskSchema, openRun,
   parseFieldworkTask, preparedArtifactViewSchema, reviewedExport,
-  reviewedExportSchema, reviewMutationResponseSchema, runFieldwork, runFieldworkBatch,
+  reviewedExportSchema, reviewedExportV1Schema, reviewedExportV2Schema, parseReviewedExport, parseReviewedExportV1, parseReviewedExportV2, historicalReviewedExport, upgradeRun,
+  reviewMutationResponseSchema, runFieldwork, runFieldworkBatch,
   recheckFieldwork,
   type FieldworkApplication, type FieldworkHostPresentationV1,
   type FieldworkLifecycleEventV1, type FieldworkRunViewV1,
   type FieldworkSourceAdapters, type FieldworkTask,
-  type FieldworkLookoutSource, type FieldworkRecheckResult, type ReviewedExportV1
+  type FieldworkLookoutSource, type FieldworkRecheckResult, type ReviewedExport, type ReviewedExportV1, type ReviewedExportV2
 } from "@kontourai/fieldwork";
 import { fieldworkHostDescriptor } from "@kontourai/fieldwork/host-descriptor";
 import {
@@ -53,7 +54,12 @@ import {
 } from "@kontourai/fieldwork/runtime";
 const task: FieldworkTask = parseFieldworkTask({});
 const view: FieldworkRunViewV1 = fieldworkRunViewSchema.parse({});
-const reviewed: ReviewedExportV1 = reviewedExportSchema.parse({});
+const reviewed: ReviewedExport = reviewedExportSchema.parse({});
+if (reviewed.apiVersion === "fieldwork.kontourai.io/v1") { const v1: ReviewedExportV1 = reviewed; void v1; }
+else { const v2: ReviewedExportV2 = reviewed; void v2; }
+const v1: ReviewedExportV1 = reviewedExportV1Schema.parse({});
+const v2: ReviewedExportV2 = reviewedExportV2Schema.parse({});
+void [parseReviewedExport, parseReviewedExportV1, parseReviewedExportV2, historicalReviewedExport, upgradeRun, v1, v2];
 void [FIELDWORK_LIMITS, fieldworkTaskSchema, preparedArtifactViewSchema, reviewMutationResponseSchema, fieldworkHostDescriptor, task, view, reviewed];
 const reviewedDescriptor: ReviewedWebSourceResult = parseReviewedWebSourceDescriptor({
   apiVersion: "fieldwork.kontourai.io/v1", kind: "ReviewedWebSourceDescriptor", status: "restricted"

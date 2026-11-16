@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@kontourai/relay";
-import { buildReviewItemsFromExtractionEnvelopeImport } from "@kontourai/survey";
-import { evaluateReviewedGroundingPolicy, resolverFromBundle, restoreReviewedExtractionEvidence, reviewedExtractionImportRecordDigest, validateTrustBundle } from "@kontourai/surface";
+import { buildReviewItemsFromExtractionEnvelopeImport, buildCanonicalReviewedTrustInput, buildSurveyTrustBundle, type ReviewItem, type ReviewDecision } from "@kontourai/survey";
+import { buildReviewWorkbenchResultsFromSession, initialReviewQueueSessionState, workbenchDecisionDefinitions, type ReviewWorkbenchDecision } from "@kontourai/survey/review-workbench";
+import { buildTrustReport, evaluateReviewedGroundingPolicy, resolverFromBundle, restoreReviewedExtractionEvidence, reviewedExtractionImportRecordDigest, validateTrustBundle } from "@kontourai/surface";
 import { z } from "zod";
-import { parseReviewedExport, type JsonValue, type ReviewedExportV1 } from "./api-contracts.js";
+import { parseReviewedExport, type JsonValue, type ReviewedExport } from "./api-contracts.js";
 import { reviewedGroundingPolicy } from "./reviewed-evidence.js";
 import { candidateSchemaMismatch } from "./schema-match.js";
 
@@ -156,7 +157,7 @@ export interface MemorySourceProjection {
  * different snapshots never share an identity. An export that carries more
  * than one source's import record is refused rather than attributed to one.
  */
-export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): MemorySourceProjection {
+export function memoryClaimsFromReviewedExport(exported: ReviewedExport): MemorySourceProjection {
   // Fieldwork 0.9 and 0.10 exported a bare trust bundle: the Survey records ride in its evidence, but there is no round
   // scope beside it (no attribution, no list of undecided items, no completeness), so an unreviewed item cannot be
   // listed and a decision cannot be attributed. 0.11 introduced the envelope this reads.
@@ -165,6 +166,23 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
   }
   const output = parseReviewedExport(exported);
   const bundle = validateTrustBundle(output.bundle);
+  if (output.apiVersion === "fieldwork.kontourai.io/v2") {
+    // Survey owns this fixed policy's semantics; this checks the named profile
+    // has not been rewritten under its immutable id before Surface evaluates it.
+    const expected = {
+      id: "survey.review-outcome.v1", claimType: "survey.review-outcome.v1",
+      requiredEvidence: [], requiredMethods: ["attestation"],
+      acceptanceCriteria: ["A Survey review outcome records a named reviewer affirming the claim's value."],
+      reviewAuthority: "survey-reviewer", validityRule: { kind: "manual" },
+      stalenessTriggers: [], conflictRules: [], impactLevel: "medium",
+    };
+    const policies = bundle.policies.filter((policy) => policy.id === expected.id);
+    if (policies.length !== 1 || canonicalJson(policies[0]) !== canonicalJson(expected)
+      || bundle.claims.some((claim) => claim.verificationPolicyId !== expected.id)) {
+      throw new Error("Reviewed export does not match the Survey 9 policy profile");
+    }
+
+  }
   const resolveImportRecord = resolverFromBundle(bundle);
   const round = reviewRoundView.parse(output.reviewRound);
   const receipt = reviewedGroundingView.parse(output.reviewedGrounding);
@@ -379,6 +397,45 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     if ((surfaceClaim.status === "disputed") !== (gaps !== undefined)) {
       throw new Error(`Reviewed export claim ${surfaceClaim.id} is ${surfaceClaim.status}, which disagrees with the export's grounding refusals.`);
     }
+    if (output.apiVersion === "fieldwork.kontourai.io/v2" && decision.spec.status === "verified") {
+      const item = restored!.reviewItem as unknown as ReviewItem;
+      const original = decision as unknown as ReviewDecision;
+      const kind = original.spec.reviewerKind;
+      const actorKind = attribution.actor.kind;
+      if (kind === undefined ? actorKind !== "unattributed" && actorKind !== "legacy-synthetic-actor" : kind !== actorKind) {
+        throw new Error(`Reviewed export claim ${surfaceClaim.id} has inconsistent host attribution and Survey reviewer kind.`);
+      }
+      const choice = attribution.workbenchDecision;
+      if (typeof choice !== "string" || !Object.hasOwn(workbenchDecisionDefinitions, choice)) {
+        throw new Error(`Reviewed export claim ${surfaceClaim.id} has no valid Survey workbench decision.`);
+      }
+      const base = initialReviewQueueSessionState([item]);
+      const name = item.metadata.name;
+      const [built] = buildReviewWorkbenchResultsFromSession({
+        ...base, actorId: original.spec.actor!.id, reviewedAt: original.spec.reviewedAt!,
+        decisionsByItemName: { [name]: choice as ReviewWorkbenchDecision },
+        notesByItemName: { [name]: original.spec.rationale ?? "" },
+        selectedCandidateIdsByItemName: original.spec.candidateId === undefined ? {} : { [name]: original.spec.candidateId },
+        editedValuesByItemName: original.spec.editedValue === undefined ? {} : { [name]: original.spec.editedValue },
+      });
+      if (!built) throw new Error("Survey could not reconstruct the reviewed decision");
+      const canonical = buildCanonicalReviewedTrustInput({
+        source: bundle.source, projectionContextId: bundle.source, generatedAt: original.spec.reviewedAt!,
+        items: [item], results: [{ ...built, reviewDecision: original }],
+      });
+      const expected = validateTrustBundle(buildSurveyTrustBundle(canonical.surveyInput, { projectionContextId: canonical.projectionContextId }));
+      const expectedClaim = expected.claims.find((entry) => entry.id === surfaceClaim.id);
+      const expectedAttestation = expected.evidence.filter((entry) => entry.claimId === surfaceClaim.id && entry.method === "attestation");
+      const actualAttestation = bundle.evidence.filter((entry) => entry.claimId === surfaceClaim.id && entry.method === "attestation");
+      const expectedEvent = expected.events.filter((entry) => entry.claimId === surfaceClaim.id && entry.status === "verified");
+      const actualEvent = bundle.events.filter((entry) => entry.claimId === surfaceClaim.id && entry.status === "verified");
+      if (!expectedClaim || canonicalJson(expectedClaim.metadata?.survey) !== canonicalJson(surfaceClaim.metadata?.survey)
+        || canonicalJson(expectedClaim.confidenceBasis) !== canonicalJson(surfaceClaim.confidenceBasis)
+        || canonicalJson(expectedAttestation) !== canonicalJson(actualAttestation)
+        || canonicalJson(expectedEvent) !== canonicalJson(actualEvent)) {
+        throw new Error(`Reviewed export claim ${surfaceClaim.id} disagrees with Survey's canonical decision projection.`);
+      }
+    }
     addClaim({
       arrival: surfaceClaim.status === "verified" && doubts.length === 0 ? "reviewed" : "proposed",
       claim: memoryClaim({
@@ -487,6 +544,32 @@ export function memoryClaimsFromReviewedExport(exported: ReviewedExportV1): Memo
     if (claims[index]!.arrival === "reviewed" && entry.arrival === "proposed") claims[index] = entry;
   }
 
+  if (output.apiVersion === "fieldwork.kontourai.io/v2") {
+    for (const claim of bundle.claims.filter((entry) => entry.status === "verified")) {
+      const survey = claim.metadata?.survey as { reviewOutcomeId?: unknown; reviewerKind?: unknown; reviewerKindInferred?: unknown } | undefined;
+      const reviewId = survey?.reviewOutcomeId;
+      if (typeof reviewId !== "string") throw new Error("Reviewed export lacks its Survey review outcome");
+      const attestations = bundle.evidence.filter((evidence) => {
+        const metadata = evidence.metadata as { reviewOutcomeId?: unknown; reviewerKind?: unknown; reviewerKindInferred?: unknown } | undefined;
+        return evidence.claimId === claim.id && evidence.method === "attestation"
+          && evidence.sourceRef === `survey:review-outcome:${reviewId}`
+          && metadata?.reviewOutcomeId === reviewId
+          && metadata.reviewerKind === survey?.reviewerKind
+          && metadata.reviewerKindInferred === survey?.reviewerKindInferred;
+      });
+      const attribution = round.decisions.find((entry) => entry.claimId === claim.id);
+      if (attestations.length !== 1 || attribution === undefined || !bundle.events.some((event) => event.claimId === claim.id && event.status === "verified"
+        && event.actor === attribution.actor.id && event.createdAt === attribution.decidedAt
+        && event.actor === attestations[0]!.collectedBy && event.createdAt === attestations[0]!.observedAt
+        && event.evidenceIds?.includes(attestations[0]!.id))) {
+        throw new Error("Reviewed export lacks a verification event linked to its Survey attestation");
+      }
+    }
+    const derived = new Map(buildTrustReport(bundle).claims.map((claim) => [claim.id, claim.status]));
+    if (bundle.claims.some((claim) => claim.status === "verified" && derived.get(claim.id) !== "verified")) {
+      throw new Error("Reviewed export's verification is not supported by its policy and evidence");
+    }
+  }
   return {
     apiVersion: "fieldwork.kontourai.io/v1",
     kind: "MemorySourceProjection",
@@ -587,7 +670,7 @@ const reviewRoundView = z.object({
   complete: z.boolean(),
   // Fieldwork writes `excluded` and `decisions` on every export, empty or not; an export without them has lost something.
   excluded: z.array(z.object({ fieldPath: z.string(), itemNames: z.array(z.string()).min(1), code: z.enum(EXCLUSION_CODES) })),
-  decisions: z.array(z.object({ claimId: z.string(), reviewItemName: z.string(), decidedAt: z.string(), actor: z.object({ id: z.string() }).passthrough() }).passthrough()),
+  decisions: z.array(z.object({ claimId: z.string(), reviewItemName: z.string(), decidedAt: z.string(), actor: z.object({ id: z.string(), kind: z.unknown().optional() }).passthrough(), workbenchDecision: z.string().optional() }).passthrough()),
   groundingRefused: z.array(z.object({ claimId: z.string(), gaps: z.array(z.string()) }).passthrough()).default([]),
 }).passthrough();
 
