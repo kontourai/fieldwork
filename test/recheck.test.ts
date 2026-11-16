@@ -23,6 +23,7 @@ import { bindExtraction, canonicalSemanticReviewItems, FIELDWORK_SOURCE_KIND, im
 import { hashReviewQueueSnapshot as reviewSnapshotHash } from "@kontourai/survey/review-workbench";
 import { openRun } from "../src/server.js";
 import { apiFetch } from "./helpers.js";
+import { assertSurveyV2Verification } from "./helpers/survey-v2-policy.js";
 import { recheckAfterPartialPrior } from "./helpers/incomplete-runs.js";
 import { recheckFieldwork } from "../src/recheck.js";
 import { readRun } from "../src/run-store.js";
@@ -271,6 +272,7 @@ test("a decided recheck round exports as a receipt of that round", async () => {
 
   await decideRound(runDirectory, () => "accept-proposed");
   const exported = await exportedBundle(runDirectory);
+  assertSurveyV2Verification(exported);
   assert.equal(exported.source, stored.run.runResource);
   assert.equal(exported.claims.length, stored.run.review.snapshot.items.length);
   for (const claim of exported.claims) {
@@ -290,6 +292,7 @@ test("a carried-forward decision is distinguishable from one affirmed against th
   const runDirectory = result.run!.runDirectory;
   await decideRound(runDirectory, () => "keep-current");
   const exported = await exportedBundle(runDirectory);
+  assertSurveyV2Verification(exported);
   for (const claim of exported.claims) {
     assert.equal(claim.value, "Active");
     const round = roundOf(exported, claim.id);
@@ -321,6 +324,7 @@ test("a recheck round resolved onto an absent proposal is refused, and keeping t
   const kept = await roundFor("capture-gone-b", "No status is present");
   await decideRound(kept.run!.runDirectory, () => "keep-current");
   const exported = await exportedBundle(kept.run!.runDirectory);
+  assertSurveyV2Verification(exported);
   assert.equal(exported.claims.length, 1);
   assert.equal(exported.claims[0]!.value, "Active");
   assert.equal(roundOf(exported, exported.claims[0]!.id).evidenceObservation, "prior");
@@ -575,6 +579,7 @@ interface ExportedBundle {
   readonly claims: readonly { readonly id: string; readonly fieldOrBehavior: string; readonly value: unknown }[];
   readonly evidence: readonly {
     readonly claimId: string;
+    readonly method: string;
     readonly sourceRef: string;
     readonly excerptOrSummary?: string;
     readonly metadata?: { readonly producer?: Record<string, Record<string, string>> };
@@ -875,9 +880,10 @@ function runtimeBinding(invoke: ModelRuntime["invoke"]): FieldworkRuntimeBinding
 }
 
 function evidenceOf(bundle: ExportedBundle, claimId: string): ExportedBundle["evidence"][number] {
-  const entry = bundle.evidence.find((item) => item.claimId === claimId);
-  assert.ok(entry, `no evidence for ${claimId}`);
-  return entry;
+  const entries = bundle.evidence.filter((item) => item.claimId === claimId && item.method === "extraction"
+    && item.metadata?.producer?.["fieldwork.kontourai.io/recheck-round"] !== undefined);
+  assert.equal(entries.length, 1, `expected one recheck source evidence for ${claimId}`);
+  return entries[0]!;
 }
 
 function roundOf(bundle: ExportedBundle, claimId: string): Record<string, string> {

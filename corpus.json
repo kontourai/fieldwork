@@ -46,6 +46,11 @@
       "product": "ui",
       "via": "@kontourai/ui",
       "for": "Render the review application with shared panels and status components."
+    },
+    {
+      "product": "survey",
+      "via": "@kontourai/survey-legacy-v1",
+      "for": "Historical V1 serialization after current Survey and Surface validation."
     }
   ],
   "product": "fieldwork",

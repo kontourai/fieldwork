@@ -947,7 +947,7 @@ test("a decided recheck round exports a receipt of the round", async ({ page }) 
 
     const exported = (await reviewedExport(runDirectory)).bundle as unknown as {
       claims: { id: string; fieldOrBehavior: string; value: unknown }[];
-      evidence: { claimId: string; excerptOrSummary?: string; metadata?: { producer?: Record<string, Record<string, string>> } }[];
+      evidence: { claimId: string; method: string; excerptOrSummary?: string; metadata?: { producer?: Record<string, Record<string, string>> } }[];
     };
     // The round, not the document: the new extraction still carries seven
     // proposals, and five of them were never re-decided.
@@ -955,7 +955,10 @@ test("a decided recheck round exports a receipt of the round", async ({ page }) 
     expect([...new Set(exported.claims.map((claim) => claim.fieldOrBehavior))].sort())
       .toEqual(["commercial.annualFeeUsd", "renewal.noticeDays"]);
     for (const claim of exported.claims) {
-      const evidence = exported.evidence.find((entry) => entry.claimId === claim.id)!;
+      const sourceEvidence = exported.evidence.filter((entry) => entry.claimId === claim.id && entry.method === "extraction"
+        && entry.metadata?.producer?.["fieldwork.kontourai.io/recheck-round"] !== undefined);
+      expect(sourceEvidence).toHaveLength(1);
+      const evidence = sourceEvidence[0]!;
       const round = evidence.metadata?.producer?.["fieldwork.kontourai.io/recheck-round"];
       expect(round?.evidenceObservation).toBe("current");
       expect(round?.priorObservationId).not.toBe(round?.currentObservationId);
@@ -1134,10 +1137,20 @@ test("a proposed value that does not match its field's type says so on its card 
 });
 
 test("the run a real model produced shows the type warning on its decided card", async ({ page }) => {
-  const server = await openRun(await realRunCopy("browser"));
+  const runDirectory = await realRunCopy("browser");
+  const original = await readFile(join(runDirectory, "run.json"));
+  const server = await openRun(runDirectory);
   try {
     await page.goto(server.url);
+    const blocked = page.getByTestId("review-blocked");
+    await expect(blocked).toContainText("Upgrade this run to continue review.");
+    await expect(page.getByTestId("review-workbench-shell")).toHaveCount(0);
+    const response = page.waitForResponse((entry) => entry.url().includes("/api/v1/upgrade") && entry.request().method() === "POST");
+    await page.getByRole("button", { name: "Upgrade run" }).click();
+    expect((await response).ok()).toBe(true);
+    await expect(blocked).toHaveCount(0);
     await expect(page.getByTestId("review-workbench-shell")).toBeVisible();
+    expect(await readFile(join(runDirectory, "legacy-run-v1.json"))).toEqual(original);
     await expect(page.locator('[data-field="doc.versionNumber"]').getByTestId("proposed-value")).toHaveText("2.1 (text, not a number)");
     await expect(page.getByTestId("schema-mismatch")).toContainText("1 proposed value does not match the field's type.");
     await expect(page.locator('[data-field="doc.editorCount"]').getByTestId("proposed-value")).toHaveText("3");
@@ -1162,4 +1175,53 @@ test("a run that dropped chunks at the chunk limit counts them in what it did no
   } finally {
     await server.close();
   }
+});
+
+test("legacy upgrade failure is visible and retry does not double submit", async ({ page }) => {
+  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-upgrade-error") });
+  const path = join(run.runDirectory, "run.json");
+  const record = JSON.parse(await readFile(path, "utf8"));
+  record.schemaVersion = 1;
+  delete record.exportProfile;
+  await writeFile(path, JSON.stringify(record));
+  const server = await openRun(run.runDirectory);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let requests = 0;
+  await page.route("**/api/v1/upgrade", async (route) => {
+    requests++;
+    await held;
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ ok: false, error: { code: "REVIEW_BUSY", message: "Review storage is temporarily busy" } }) });
+  });
+  try {
+    await page.goto(server.url);
+    const button = page.getByRole("button", { name: "Upgrade run" });
+    await button.click();
+    expect(requests).toBe(1);
+    release();
+    await expect(page.getByText(/REVIEW_BUSY.*retry/i)).toBeVisible();
+    await expect(button).toBeEnabled();
+  } finally { release(); await server.close(); }
+});
+
+test("legacy upgrade disables duplicate submission while pending", async ({ page }) => {
+  const run = await runFieldwork({ taskPath: "examples/generic/task.json", sourcePath: "examples/generic/source.txt", root: await tempRoot("browser-upgrade-pending") });
+  const path = join(run.runDirectory, "run.json");
+  const record = JSON.parse(await readFile(path, "utf8"));
+  record.schemaVersion = 1;
+  delete record.exportProfile;
+  await writeFile(path, JSON.stringify(record));
+  const server = await openRun(run.runDirectory);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/v1/upgrade", async (route) => {
+    await held;
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ ok: false, error: { code: "REVIEW_BUSY", message: "Review storage is temporarily busy" } }) });
+  });
+  try {
+    await page.goto(server.url);
+    const button = page.getByRole("button", { name: "Upgrade run" });
+    await button.click();
+    await expect(button).toBeDisabled();
+  } finally { release(); await server.close(); }
 });

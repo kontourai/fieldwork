@@ -2,10 +2,10 @@
 export const fieldworkHostDescriptor = {
   apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkApplicationDescriptor",
   spec: {
-    commands: ["fieldwork run --task <file> --source <file>", "fieldwork open <run> [--port] [--reviewer <id> [--reviewer-kind human|agent]]", "fieldwork export <run> --output <file>"],
+    commands: ["fieldwork run --task <file> --source <file>", "fieldwork open <run> [--port] [--reviewer <id> [--reviewer-kind human|agent]]", "fieldwork export <run> --output <file>", "fieldwork upgrade <run> --to-profile v2"],
     resources: {
       selectedRun: "fieldwork-run:v1:<task>:<digest>",
-      reviewedOutput: "Surface-validated reviewed JSON returned to the caller",
+      reviewedOutput: "ReviewedExport v1 or v2 with a Surface-validated bundle",
     },
     launch: {
       standalone: true,

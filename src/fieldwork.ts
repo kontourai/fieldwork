@@ -9,6 +9,7 @@ import {
   importExtractionEnvelope, buildCanonicalReviewedTrustInput, buildReviewItemsFromExtractionEnvelopeImport, buildSurveyTrustBundle,
   type ExtractionEnvelopeImportOptions, type ExtractionEnvelopeImportResult, type ReviewCandidate, type ReviewItem
 } from "@kontourai/survey";
+import { buildSurveyTrustBundle as buildLegacySurveyTrustBundle } from "@kontourai/survey-legacy-v1";
 import type { ReviewWorkbenchResult } from "@kontourai/survey/review-workbench";
 import {
   assertReviewQueueAgainstExtractionImport,
@@ -28,12 +29,14 @@ import {
   type FieldworkRunViewV1,
   type FieldworkRunOutcome,
   type FieldworkRunResult,
+  type ReviewedExport,
   type ReviewedExportV1,
   type RunOptions,
 } from "./api-contracts.js";
 import { createDeterministicProvider } from "./deterministic-provider.js";
 import {
   assertPortableOutput, defaultRunRoot, extractionEnvelopeDigest, readRun, writeRun,
+  EXPORT_PROFILE_V2, publishUpgrade, readLegacySnapshot, withRunReviewLock,
   type StoredRun, type StoredRunMetadataRead
 } from "./run-store.js";
 import { REVIEW_SESSION_NAME } from "./survey-persistence.js";
@@ -78,14 +81,14 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
     ...(options.sourceAdapters === undefined ? {} : { adapters: options.sourceAdapters }),
   }, task.metadata.name);
   const executionIdentity = options.runtime ? createFieldworkExecutionIdentity(options.runtime) : undefined;
-  const identityInput = `${canonicalJson(source.identity)}:${canonicalJson(task)}${executionIdentity ? `:${canonicalJson(executionIdentity)}` : ""}`;
+  const identityInput = `${EXPORT_PROFILE_V2}:${canonicalJson(source.identity)}:${canonicalJson(task)}${executionIdentity ? `:${canonicalJson(executionIdentity)}` : ""}`;
   const runIdentity = createHash("sha256").update(identityInput).digest("hex").slice(0, 16);
   const runResource = `fieldwork-run:v1:${task.metadata.name}:${runIdentity}`;
   const root = resolve(options.root ?? defaultRunRoot);
   const runDirectory = join(root, `run-${runIdentity}`);
   if (await exists(runDirectory)) {
     const existing = await readRun(runDirectory);
-    if (existing.run.runResource !== runResource || canonicalJson(existing.run.task) !== canonicalJson(task)) {
+    if (existing.run.schemaVersion !== 2 || existing.run.exportProfile !== EXPORT_PROFILE_V2 || existing.run.runResource !== runResource || canonicalJson(existing.run.task) !== canonicalJson(task)) {
       throw new Error("Existing run identity does not match the requested task");
     }
     return {
@@ -123,7 +126,7 @@ export async function runFieldwork(options: RunOptions): Promise<FieldworkRunRes
   const { imported, extraction } = bindExtraction(task, `fieldwork-import:${task.metadata.name}:${runIdentity}`, envelope, resolution.text);
   const createdAt = new Date().toISOString();
   const run: StoredRun = {
-    schemaVersion: 1, runResource, createdAt, taskName: task.metadata.name, task,
+    schemaVersion: 2, exportProfile: EXPORT_PROFILE_V2, runResource, createdAt, taskName: task.metadata.name, task,
     execution: runtimeSession?.execution ?? fixtureExecution(),
     preparedArtifact: { ref: result.preparedArtifact.ref, digest: result.preparedArtifact.digest, contentLength: result.preparedArtifact.contentLength, file: "prepared.txt" },
     envelopeFile: "extraction-envelope.json",
@@ -328,8 +331,11 @@ function fixtureExecution(): FieldworkStoredExecution {
 export async function reviewedExport(
   runDirectory: string,
   options: { readonly maxEstimatedBytes?: number } = {},
-): Promise<ReviewedExportV1> {
-  const stored = await readRun(runDirectory);
+): Promise<ReviewedExport> {
+  return exportStored(await readRun(runDirectory), options);
+}
+
+async function exportStored(stored: Awaited<ReturnType<typeof readRun>>, options: { readonly maxEstimatedBytes?: number } = {}): Promise<ReviewedExport> {
   assertCompleteCoverage(stored.envelope);
   assertExportSizeWithinCeiling(stored, options.maxEstimatedBytes ?? FIELDWORK_LIMITS.reviewedExportEstimateBytes);
   const queue = stored.run.review.snapshot.items as readonly ReviewItem[];
@@ -338,18 +344,51 @@ export async function reviewedExport(
   }
   const projection = projectAttestedReviewedProjection(stored);
   const { refused, unchecked } = classifyGroundingRefusals(projection);
-  const bundle = preserveReviewedExportV1Metadata(
-    validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId })),
-  );
+  const currentBundle = validateTrustBundle(buildSurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId }));
+  // The current builder is always the preflight. The old serializer is selected
+  // only by the admitted legacy storage profile, never as an error fallback.
+  // Survey-owned historical serialization: https://github.com/kontourai/survey/issues/377
+  const legacy = stored.run.schemaVersion === 1;
+  const bundle = legacy
+    ? preserveReviewedExportV1Metadata(validateTrustBundle(buildLegacySurveyTrustBundle(projection.canonical.surveyInput, { projectionContextId: projection.canonical.projectionContextId })))
+    : currentBundle;
   const output = {
-    apiVersion: "fieldwork.kontourai.io/v1",
+    ...(legacy ? { apiVersion: "fieldwork.kontourai.io/v1" } : { apiVersion: "fieldwork.kontourai.io/v2", exportProfile: EXPORT_PROFILE_V2 }),
     kind: "ReviewedExport",
-    bundle: disputeContestedClaims(withReviewedGroundingEvidence(bundle, projection.enrichment), refused),
+    bundle: disputeContestedClaims(withReviewedGroundingEvidence(bundle, projection.enrichment, !legacy), refused),
     reviewedGrounding: withSchemaMismatchGaps(projection.enrichment.grounding, refused),
     reviewRound: reviewRoundScope(stored, projection, refused, unchecked),
   };
   assertPortableOutput(output);
   return parseReviewedExport(output);
+}
+
+export async function historicalReviewedExport(runDirectory: string, options: { readonly legacyRevision: number }): Promise<ReviewedExportV1> {
+  const stored = await readRun(runDirectory);
+  if (!stored.run.legacyOrigin || stored.run.legacyOrigin.revision !== options.legacyRevision) throw new Error("No historical v1 snapshot at that revision");
+  const run = await readLegacySnapshot(stored.directory, stored.run);
+  return await exportStored({ ...stored, run }) as ReviewedExportV1;
+}
+
+export async function upgradeRun(runDirectory: string): Promise<void> {
+  await withRunReviewLock(runDirectory, async (stored) => {
+    if (stored.run.schemaVersion !== 1 || !stored.run.extraction) throw new Error("Only a bound legacy run can be upgraded");
+    if (reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items)) throw new Error(RUN_FROM_OLDER_FIELDWORK_MESSAGE);
+    if (stored.run.review.snapshot.items.length === 0) throw new Error("Upgrade refused: review queue is empty");
+    assertCompleteCoverage(stored.envelope);
+    const imported = storedExtractionImport(stored);
+    if (imported.record.status.state !== "grounded") throw new Error("Upgrade refused: extraction is not grounded");
+    const extractionImport = attestStoredReviewQueue(stored, imported);
+    const applied = deriveServerReviewSessionApplyResult({
+      record: reviewSessionRecord(stored.run, stored.run.review.events.length),
+      events: stored.run.review.events, requiredResolvedItems: "none",
+      ...(extractionImport === undefined ? {} : { extractionImport }),
+    });
+    if (!applied.ok || !applied.replayedSession) {
+      throw new Error(`Upgrade refused: ${applied.issues.map((issue) => `${issue.code}: ${issue.message}`).join(" ")}`);
+    }
+    await publishUpgrade(stored.directory, stored.run);
+  });
 }
 
 /** Keep v1 export bytes stable for decisions with no host-attested reviewer kind. */
@@ -403,7 +442,9 @@ function reviewRoundScope(
     // (an array or object value). Nothing disputes such a claim, so it stays
     // verified; this says its grounding was not fully evaluated.
     ...(groundingUnchecked.length === 0 ? {} : { groundingUnchecked }),
-    decisions: projection.attribution,
+    decisions: projection.attribution.map((entry) => stored.run.schemaVersion === 2
+      ? { ...entry, workbenchDecision: projection.results.find((result) => result.reviewItemName === entry.reviewItemName)?.decision }
+      : entry),
   };
 }
 
@@ -754,7 +795,7 @@ export function projectAttestedReviewedProjection(stored: StoredRunMetadataRead 
   if (!applied.ok || !applied.replayedSession) {
     throw new Error(`Export refused: ${applied.issues.map((issue) => `${issue.code}: ${issue.message}`).join(" ")}`);
   }
-  const attributed = attributeReviewResults(applied.replayedSession, stored.run.review.events, applied.results);
+  const attributed = attributeReviewResults(applied.replayedSession, stored.run.review.events, applied.results, stored.run.schemaVersion === 2);
   const exportable = partitionExportableClaims(stored.run.runResource, queue, attributed.results);
   const { items, results, excluded } = exportable;
   if (items.length === 0) throw nothingExportable(excluded, exportable.errors);
@@ -976,10 +1017,12 @@ function nothingExportable(excluded: readonly ReviewedExportExclusion[], errors:
 function withReviewedGroundingEvidence(
   bundle: ReturnType<typeof validateTrustBundle>,
   enrichment: ReturnType<typeof buildReviewedEvidenceEnrichment>,
+  currentProfile = false,
 ): ReturnType<typeof validateTrustBundle> {
-  return enrichment.additionalEvidence.length === 0
-    ? bundle
-    : validateTrustBundle({ ...bundle, evidence: [...enrichment.additionalEvidence, ...bundle.evidence] });
+  const evidence = currentProfile
+    ? [...enrichment.additionalEvidence, ...bundle.evidence.filter((entry) => entry.method !== "extraction"), ...bundle.evidence.filter((entry) => entry.method === "extraction")]
+    : [...enrichment.additionalEvidence, ...bundle.evidence];
+  return validateTrustBundle({ ...bundle, evidence });
 }
 
 /**
@@ -1114,6 +1157,7 @@ export function reviewBlockedFor(run: StoredRun): Pick<FieldworkRunViewV1, "revi
     return { reviewBlocked: { reason: "created-by-older-fieldwork", message: RUN_FROM_OLDER_FIELDWORK_MESSAGE } };
   }
   if (run.extraction === undefined) return { reviewBlocked: { reason: "unbound-envelope", message: UNBOUND_ENVELOPE_MESSAGE } };
+  if (run.schemaVersion === 1) return { reviewBlocked: { reason: "upgrade-required", message: "Upgrade this run before recording further decisions. Its original review remains available as a historical export." } };
   return {};
 }
 

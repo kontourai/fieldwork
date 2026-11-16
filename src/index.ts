@@ -7,7 +7,7 @@ import {
 import {
   runFieldwork as internalRun,
   runFieldworkBatch as internalRunBatch,
-  reviewedExport as internalExport,
+  reviewedExport as internalExport, historicalReviewedExport as internalHistoricalExport, upgradeRun as internalUpgrade,
 } from "./fieldwork.js";
 import { acquireFieldwork as internalAcquire } from "./acquisition.js";
 import { openRun as internalOpen } from "./server.js";
@@ -19,7 +19,8 @@ import {
   fieldworkAcquisitionResultSchema as internalAcquisitionResultSchema,
   fieldworkBatchRunResultSchema as internalBatchRunResultSchema,
   preparedArtifactViewSchema as internalPreparedViewSchema,
-  reviewedExportSchema as internalReviewedExportSchema,
+  reviewedExportSchema as internalReviewedExportSchema, reviewedExportV1Schema as internalV1Schema, reviewedExportV2Schema as internalV2Schema,
+  parseReviewedExport as internalParseExport, parseReviewedExportV1 as internalParseV1, parseReviewedExportV2 as internalParseV2,
   reviewMutationResponseSchema as internalMutationSchema,
   type FieldworkAcquisitionOptions,
   type FieldworkAcquisitionResult,
@@ -33,7 +34,7 @@ import {
   type OpenRunOptions,
   type OpenRunService,
   type PreparedArtifactViewV1,
-  type ReviewedExportV1,
+  type ReviewedExport, type ReviewedExportV1, type ReviewedExportV2,
   type ReviewMutationResponseV1,
   type RunOptions
 } from "./api-contracts.js";
@@ -52,7 +53,9 @@ export const fieldworkAcquisitionResultSchema: z.ZodType<FieldworkAcquisitionRes
 export const fieldworkBatchRunResultSchema: z.ZodType<FieldworkBatchRunResult> = internalBatchRunResultSchema;
 export const reviewMutationResponseSchema: z.ZodType<ReviewMutationResponseV1> = internalMutationSchema;
 export const preparedArtifactViewSchema: z.ZodType<PreparedArtifactViewV1> = internalPreparedViewSchema;
-export const reviewedExportSchema: z.ZodType<ReviewedExportV1> = internalReviewedExportSchema;
+export const reviewedExportSchema: z.ZodType<ReviewedExport> = internalReviewedExportSchema;
+export const reviewedExportV1Schema: z.ZodType<ReviewedExportV1> = internalV1Schema;
+export const reviewedExportV2Schema: z.ZodType<ReviewedExportV2> = internalV2Schema;
 export { fieldworkHostDescriptor };
 export {
   createDatumRuntimeBinding,
@@ -72,9 +75,16 @@ export function runFieldworkBatch(options: FieldworkBatchOptions): Promise<Field
 export function acquireFieldwork(options: FieldworkAcquisitionOptions): Promise<FieldworkAcquisitionResult> {
   return internalAcquire(options);
 }
-export function reviewedExport(runDirectory: string): Promise<ReviewedExportV1> {
+export function parseReviewedExport(value: unknown): ReviewedExport { return internalParseExport(value); }
+export function parseReviewedExportV1(value: unknown): ReviewedExportV1 { return internalParseV1(value); }
+export function parseReviewedExportV2(value: unknown): ReviewedExportV2 { return internalParseV2(value); }
+export function reviewedExport(runDirectory: string): Promise<ReviewedExport> {
   return internalExport(runDirectory);
 }
+export function historicalReviewedExport(runDirectory: string, options: { readonly legacyRevision: number }): Promise<ReviewedExportV1> {
+  return internalHistoricalExport(runDirectory, options);
+}
+export function upgradeRun(runDirectory: string): Promise<void> { return internalUpgrade(runDirectory); }
 export { MEMORY_CLAIM_SCHEMA_PIN, memoryClaimsFromReviewedExport } from "./memory-source.js";
 export type {
   FieldworkMemoryClaim, FieldworkMemoryPosture, MemoryArrival, MemorySourceClaim, MemorySourceProjection,
@@ -107,7 +117,7 @@ export type {
   FieldworkPdfTableCell, FieldworkPdfTextElement, FieldworkPdfTextRange,
   FieldworkReviewerIdentity, FieldworkRunViewV1, FieldworkSourceAdapters, FieldworkTask,
   JsonObject, JsonPrimitive, JsonValue, OpenRunOptions, OpenRunService, PreparedArtifactViewV1,
-  ReviewedExportV1, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
+  ReviewedExport, ReviewedExportV1, ReviewedExportV2, ReviewMutationResponseV1, ReviewMutationSuccessV1, RunOptions
 } from "./api-contracts.js";
 export type {
   FieldworkApplication, FieldworkApplicationOpenOptions, FieldworkApplicationOptions,

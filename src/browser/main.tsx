@@ -375,6 +375,9 @@ function linkDocumentAndQueue(
 
 function App() {
   const [state, setState] = useState<FieldworkRunViewV1>(); const [notice, setNotice] = useState("");
+  const [upgradePending, setUpgradePending] = useState(false);
+  const [upgradeError, setUpgradeError] = useState("");
+  const upgrading = useRef(false);
   const [presentation, setPresentation] = useState<FieldworkHostPresentationV1>({
     apiVersion: "fieldwork.kontourai.io/v1", kind: "FieldworkHostPresentation",
     eyebrow: "Fieldwork", title: "Grounded review", theme: "dark", navigation: [],
@@ -517,8 +520,31 @@ function App() {
     {navigation.length > 0 && <nav className="fieldwork-host-navigation" aria-label="Host navigation">{navigation.map((item) => <a key={`${item.label}:${item.href}`} href={item.href}>{item.label}</a>)}</nav>}
     {/* Blocking, so it comes before everything else on every width. */}
     {state?.reviewBlocked && <aside className="fieldwork-notice fieldwork-notice-caution" data-testid="review-blocked" role="alert">
-      <p className="fieldwork-notice-lede">This run cannot be reviewed.</p>
+      <p className="fieldwork-notice-lede">{state.reviewBlocked.reason === "upgrade-required" ? "Upgrade this run to continue review." : "This run cannot be reviewed."}</p>
       <p className="fieldwork-notice-detail">{state.reviewBlocked.message}</p>
+      {state.reviewBlocked.reason === "upgrade-required" && <>
+        {upgradeError && <p role="alert">{upgradeError}</p>}
+        <button type="button" disabled={upgradePending} onClick={() => void (async () => {
+          if (upgrading.current) return;
+          upgrading.current = true;
+          setUpgradePending(true);
+          setUpgradeError("");
+          try {
+            const response = await fetch("/api/v1/upgrade", { method: "POST", headers: { ...apiHeaders, "content-type": "application/json" }, body: JSON.stringify({ toProfile: "v2" }) });
+            if (!response.ok) {
+              const result: unknown = await response.json();
+              const parsed = reviewMutationResponseSchema.safeParse(result);
+              if (parsed.success && !parsed.data.ok) {
+                const { code, message } = parsed.data.error;
+                setUpgradeError(`${code}: ${message}. ${code === "REVIEW_BUSY" ? "Please retry." : "Check the run and retry."}`);
+              } else setUpgradeError("Unable to upgrade this run. Please retry.");
+              return;
+            }
+            await load();
+          } catch { setUpgradeError("Unable to upgrade this run. Please retry."); }
+          finally { upgrading.current = false; setUpgradePending(false); }
+        })()}>Upgrade run</button>
+      </>}
     </aside>}
     {state && <ExtractionNotice extraction={state.extraction}/>}
     <div className="fieldwork-review">

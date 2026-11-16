@@ -19,6 +19,7 @@ import { inspectionExport } from "../src/inspection.js";
 import { readRun, readRunMetadata, type StoredRun } from "../src/run-store.js";
 import { openRun } from "../src/server.js";
 import { apiFetch, tempRoot } from "./helpers.js";
+import { assertSurveyV2Verification } from "./helpers/survey-v2-policy.js";
 import { ReviewedWebSourceReader } from "../src/reviewed-web-source.js";
 import { parseReviewedWebSourceDescriptor } from "../src/reviewed-web-source-contract.js";
 
@@ -235,8 +236,9 @@ test("a proposal whose excerpt does not verify is excluded, shown as an excluded
   assert.equal((exported.reviewRound as { groundingUnchecked?: unknown }).groundingUnchecked, undefined);
   // Surface derives status from verification events, not the claim's field:
   // its own trust report has to read the claim as disputed.
+  assertSurveyV2Verification(exported.bundle);
   const summary = formatTrustReportSummary(buildTrustReport(validateTrustBundle(exported.bundle as never)));
-  assert.match(summary, /^Claims: 2 \(proposed: 1, disputed: 1\)$/m);
+  assert.match(summary, /^Claims: 2 \(verified: 1, disputed: 1\)$/m);
   assert.match(summary, new RegExp(`^Disputed: ${statusClaim.id.replaceAll(".", "\\.")}$`, "m"));
   const grounding = exported.reviewedGrounding as {
     outcome: string;
@@ -413,6 +415,7 @@ test("the dispute is newer than the verified event even when that event is stamp
   const bundle = exported.bundle as unknown as ReturnType<typeof validateTrustBundle>;
   // The bundle as it was before the dispute, with the reviewer's event
   // recorded later than the exporting host's clock.
+  assertSurveyV2Verification(bundle);
   const future = "2999-01-01T00:00:00.000Z";
   const undisputed = validateTrustBundle({
     ...bundle,
@@ -420,7 +423,7 @@ test("the dispute is newer than the verified event even when that event is stamp
     events: bundle.events.filter((event) => !event.id.endsWith(".reviewed-grounding-dispute"))
       .map((event) => contested.has(event.claimId) ? { ...event, createdAt: future, ...(event.verifiedAt ? { verifiedAt: future } : {}) } : event),
   });
-  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 2 \(proposed: 2\)$/m);
+  assert.match(formatTrustReportSummary(buildTrustReport(undisputed)), /^Claims: 2 \(verified: 2\)$/m);
   const disputed = disputeContestedClaims(undisputed, refusedEntries, new Date("2026-01-01T00:00:00.000Z"));
-  assert.match(formatTrustReportSummary(buildTrustReport(disputed)), /^Claims: 2 \(proposed: 1, disputed: 1\)$/m);
+  assert.match(formatTrustReportSummary(buildTrustReport(disputed)), /^Claims: 2 \(verified: 1, disputed: 1\)$/m);
 });

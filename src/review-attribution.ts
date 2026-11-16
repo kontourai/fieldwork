@@ -125,6 +125,7 @@ export function attributeReviewResults(
   session: ReviewQueueSessionState,
   events: readonly ReviewSessionEvent[],
   results: readonly ReviewWorkbenchResult[],
+  includeReviewerKind = false,
 ): { readonly results: ReviewWorkbenchResult[]; readonly attribution: ReviewDecisionAttribution[] } {
   const deciding = new Map<string, ReviewSessionEvent>();
   for (const event of [...events].sort((left, right) => left.spec.sequence - right.spec.sequence)) {
@@ -153,7 +154,9 @@ export function attributeReviewResults(
     if (!rederived || rederived.decision !== result.decision || rederived.selectedCandidateId !== result.selectedCandidateId) {
       throw invalidStamp(result.reviewItemName);
     }
-    attributed.push(rederived);
+    attributed.push(includeReviewerKind && stamp.actorKind !== "unattributed"
+      ? { ...rederived, reviewDecision: { ...rederived.reviewDecision, spec: { ...rederived.reviewDecision.spec, reviewerKind: stamp.actorKind } } }
+      : rederived);
     attribution.push({
       reviewItemName: result.reviewItemName,
       actor: { id: actorId, kind: stamp.actorKind },

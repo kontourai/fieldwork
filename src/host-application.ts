@@ -6,7 +6,7 @@ import {
   type FieldworkLifecycleListener,
   type FieldworkReviewerIdentity,
   type OpenRunService,
-  type ReviewedExportV1,
+  type ReviewedExport,
   type RunOptions,
   type FieldworkRunResult,
 } from "./api-contracts.js";
@@ -32,7 +32,7 @@ export interface FieldworkApplication {
   subscribe(listener: FieldworkLifecycleListener): () => void;
   run(options: RunOptions): Promise<FieldworkRunResult>;
   open(options: FieldworkApplicationOpenOptions): Promise<OpenRunService>;
-  reviewedOutput(runDirectory: string): Promise<ReviewedExportV1>;
+  reviewedOutput(runDirectory: string): Promise<ReviewedExport>;
   listReviewedWebSourceRefs(cursor?: string): Promise<ReviewedWebSourceRefs>;
   /** Owner-bound web source operations. They are unavailable until a host configures an owner. */
   describeReviewedWebSource(exactRef: string): Promise<ReviewedWebSourceResult>;

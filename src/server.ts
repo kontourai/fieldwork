@@ -19,7 +19,7 @@ import {
 import { readRun, saveReview, withRunReviewLock } from "./run-store.js";
 import {
   attestStoredReviewQueue, extractionCoverageSummary, reviewQueueFromOlderFieldwork, reviewSessionRecord,
-  RUN_FROM_OLDER_FIELDWORK_MESSAGE, reviewBlockedFor, storedExtractionImport, UNBOUND_ENVELOPE_MESSAGE,
+  RUN_FROM_OLDER_FIELDWORK_MESSAGE, reviewBlockedFor, storedExtractionImport, UNBOUND_ENVELOPE_MESSAGE, upgradeRun,
 } from "./fieldwork.js";
 import { parseReviewerIdentity, stampAppendedEvents, withoutServerStamp } from "./review-attribution.js";
 import { reviewItemSchemaMismatches } from "./schema-match.js";
@@ -172,6 +172,14 @@ async function handle(
       text: stored.preparedText, artifact: stored.run.preparedArtifact
     }));
   }
+  if (url.pathname === "/api/v1/upgrade" && request.method === "POST") {
+    if (request.headers.origin !== origin) return void json(response, 403, failure("ORIGIN_REQUIRED", "Mutation Origin must match the Fieldwork loopback origin"));
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) return void json(response, 415, failure("JSON_REQUIRED", "Upgrade requires application/json"));
+    const input = await body(request);
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 1 || (input as { toProfile?: unknown }).toProfile !== "v2") return void json(response, 400, failure("INVALID_ARGUMENT", "Upgrade requires profile v2"));
+    await upgradeRun(directory);
+    return void json(response, 200, { ok: true });
+  }
   if (url.pathname === "/api/v1/review" && request.method === "POST") {
     if (request.headers.origin !== origin) return void json(response, 403, failure("ORIGIN_REQUIRED", "Mutation Origin must match the Fieldwork loopback origin"));
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
@@ -227,6 +235,7 @@ async function submit(directory: string, input: unknown, reviewer: FieldworkRevi
   const parsed = reviewRequestSchema.safeParse(input);
   if (!parsed.success) return failure("INVALID_REVIEW", "Bounded Survey events, event count, and revision are required");
   return withRunReviewLock(directory, async (stored) => {
+    if (stored.run.schemaVersion === 1) return failure("RUN_UPGRADE_REQUIRED", "Upgrade this run before recording further decisions.");
     // Decisions on a queue that can never be exported would be recorded for nothing.
     if (reviewQueueFromOlderFieldwork(stored.run.review.snapshot.items)) {
       return failure("RUN_FROM_OLDER_FIELDWORK", RUN_FROM_OLDER_FIELDWORK_MESSAGE);
